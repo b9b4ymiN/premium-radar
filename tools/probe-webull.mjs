@@ -14,13 +14,15 @@
  * ค่า key จะไม่ถูกพิมพ์ออกทาง output เด็ดขาด (โชว์แค่ความยาว)
  */
 import { createHash, createHmac, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 // ---------- load env ----------
 const args = process.argv.slice(2);
+const XVER = args.includes('--v3') ? 'v3' : 'v2';
 const env = { ...process.env };
-if (args[0]) {
-  for (const line of readFileSync(args[0], 'utf8').split('\n')) {
+const envFile = args.find((a) => !a.startsWith('--'));
+if (envFile) {
+  for (const line of readFileSync(envFile, 'utf8').split('\n')) {
     if (line.trim().startsWith('#')) continue;
     const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
     if (m) env[m[1]] = m[2];
@@ -66,6 +68,76 @@ function signRequest({ path, host, query = {}, body, appKey, appSecret, timestam
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ---------- access-token flow (--token-create / --token-check) ----------
+// ยืนยัน response shape กับ UAT โดย vcpSystem token-manager.ts:
+//   POST /openapi/auth/token/create (no body)       → {token, expires, status}
+//   POST /openapi/auth/token/check  {token} in body → รูปเดียวกัน
+// token value ถูกเขียนลง .access-token.txt เท่านั้น — ไม่พิมพ์ออกทาง output
+const SETTINGS_JSON = 'C:/Users/bfipa/AppData/Roaming/premium-radar/radar_settings.json';
+const TOKEN_FILE = 'C:/Programing/PersonalAI/option2/.access-token.txt';
+if (args.includes('--token-create') || args.includes('--token-check')) {
+  // ให้ settings.json ของแอป (key ใหม่จาก ⚙) ชนะค่า env ไฟล์เก่า
+  try {
+    const s = JSON.parse(readFileSync(SETTINGS_JSON, 'utf8'));
+    if (s.webull_app_key && s.webull_app_secret) {
+      env.WEBULL_APP_KEY = s.webull_app_key;
+      env.WEBULL_APP_SECRET = s.webull_app_secret;
+    }
+  } catch {
+    console.error('อ่าน settings.json ไม่ได้ — ลองกดบันทึกใน ⚙ ก่อน');
+    process.exit(1);
+  }
+  // re-read effective creds (declared with const at top → reassign via wrapper object instead)
+  const K = env.WEBULL_APP_KEY || env.APP_KEY || '';
+  const S = env.WEBULL_APP_SECRET || env.APP_SECRET || '';
+  const host = 'api.webull.co.th';
+  const sign2 = signRequest; // same signer, local key/secret closure below
+  // local signer with K/S override
+  function signedCall(path, { body = null, token = null } = {}) {
+    const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const nonce = randomUUID().replace(/-/g, '');
+    const sig = sign2({ path, host, query: {}, body, appKey: K, appSecret: S, timestamp, nonce });
+    const headers = {
+      'x-app-key': K,
+      'x-app-secret': S,
+      'x-timestamp': timestamp,
+      'x-signature-nonce': nonce,
+      'x-signature-version': '1.0',
+      'x-signature-algorithm': ALG,
+      'x-version': XVER,
+      'x-signature': sig,
+      accept: 'application/json',
+    };
+    if (body) headers['content-type'] = 'application/json';
+    if (token) headers['x-access-token'] = token;
+    return fetch(`https://${host}${path}`, { method: 'POST', headers, body: body ?? undefined });
+  }
+  if (args.includes('--token-create')) {
+    const r = await signedCall('/openapi/auth/token/create');
+    const text = await r.text();
+    try {
+      const j = JSON.parse(text);
+      if (j.token) writeFileSync(TOKEN_FILE, j.token, { mode: 0o600 });
+      console.log(`create -> HTTP ${r.status} status=${j.status} token=${j.token ? `(len ${j.token.length}) เขียนลบ .access-token.txt แล้ว` : 'ไม่มี'}`);
+      if (j.status === 'PENDING') console.log('SMS ส่งไปเบอร์ที่ผูกบัญชีแล้ว — ยืนยันในแอป Webull ภายใน 5 นาที แล้วรัน --token-check');
+    } catch {
+      console.log(`create -> HTTP ${r.status} ${text.slice(0, 160)}`);
+    }
+    process.exit(0);
+  }
+  // --token-check
+  const tok = readFileSync(TOKEN_FILE, 'utf8').trim();
+  const r = await signedCall('/openapi/auth/token/check', { body: JSON.stringify({ token: tok }) });
+  const text = await r.text();
+  try {
+    const j = JSON.parse(text);
+    console.log(`check -> HTTP ${r.status} status=${j.status} expires=${j.expires ?? '?'}`);
+  } catch {
+    console.log(`check -> HTTP ${r.status} ${text.slice(0, 160)}`);
+  }
+  process.exit(0);
+}
+
 async function call(host, path, { query = {}, token = null, body = null } = {}) {
   const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
   const nonce = randomUUID().replace(/-/g, '');
@@ -77,7 +149,7 @@ async function call(host, path, { query = {}, token = null, body = null } = {}) 
     'x-signature-nonce': nonce,
     'x-signature-version': '1.0',
     'x-signature-algorithm': ALG,
-    'x-version': 'v2',
+    'x-version': XVER,
     'x-signature': sig,
     accept: 'application/json',
   };
