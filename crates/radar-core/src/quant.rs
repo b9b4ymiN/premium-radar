@@ -175,6 +175,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn years_to_expiry_counts_calendar_days_to_16et() {
+        use chrono::TimeZone;
+        let now = New_York
+            .with_ymd_and_hms(2026, 11, 22, 0, 0, 0)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let expiry = NaiveDate::from_ymd_opt(2026, 12, 18).unwrap();
+        // expiry anchors at 16:00 ET → Nov 22 00:00 ET is 26d16h away
+        let dte = years_to_expiry(expiry, now) * 365.0;
+        assert!((dte - (26.0 + 16.0 / 24.0)).abs() < 0.01, "dte={dte}");
+    }
+
+    #[test]
     fn degenerate_price_returns_intrinsic() {
         assert_eq!(
             bs_price(OptType::Call, 110.0, 100.0, 0.0, 0.05, 0.0, 0.3),

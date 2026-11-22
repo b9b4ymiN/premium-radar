@@ -495,8 +495,8 @@ export default function App() {
                 <thead>
                   <tr>
                     <th>Grade</th><th>Side</th><th>Expiry</th><th>Strike</th><th>Delta</th>
-                    <th>Assign</th><th>Premium</th><th>Return</th><th>Ann%</th>
-                    <th>Capital</th><th>B/E</th><th>OI</th><th>Source</th>
+                    <th>Assign</th><th>Credit $</th><th>Return</th><th>Ann%</th>
+                    <th>Collateral $</th><th>B/E</th><th>OI</th><th>Source</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -583,11 +583,69 @@ export default function App() {
                     <GradeBadge grade={selectedRow.grade} />
                   </div>
                   <div className="detail-stats">
-                    <div className="ds"><label>Premium</label><strong className="pos">+${selectedRow.credit?.toFixed(0)}</strong></div>
+                    <div className="ds"><label>Premium / 1 ct</label><strong className="pos">+${selectedRow.credit?.toFixed(0)}</strong></div>
                     <div className="ds"><label>Annualized</label><strong>{selectedRow.ann?.toFixed(1)}%</strong></div>
                     <div className="ds"><label>Collateral</label><strong>${selectedRow.collateral?.toLocaleString()}</strong></div>
                     <div className="ds"><label>Breakeven</label><strong>${selectedRow.be?.toFixed(2)}</strong></div>
                   </div>
+                  <div style={{ fontSize: 9.5, color: "#9bacc7", marginBottom: 10 }}>
+                    ราคา option ≈ ${selectedRow.prem?.toFixed(2)}/หุ้น × 100 หุ้น/contract
+                    = ${selectedRow.credit?.toFixed(0)}/contract
+                  </div>
+                  {(() => {
+                    const r = selectedRow;
+                    const k = r.q.strike;
+                    const prem = r.prem ?? 0;
+                    const S = snap?.spot ?? 0;
+                    if (!S || !k || !prem) return null;
+                    const usd = (v: number) =>
+                      `${v >= 0 ? "+" : "-"}$${Math.abs(Math.round(v)).toLocaleString()}`;
+                    const credit = prem * 100;
+                    const isPut = r.q.option_type === "P";
+                    const be = r.be ?? (isPut ? k - prem : S - prem);
+                    const scen = isPut
+                      ? ([
+                          [`ปิด ≥ ${k.toFixed(2)} — ไม่ถูกเรียก`, `${usd(credit)} เก็บ premium`, "pos"],
+                          [`ปิด = ${be.toFixed(2)} — จุดคุ้มทุน (B/E)`, "$0", ""],
+                          [`ปิด = ${(be - S * 0.05).toFixed(2)} (ต่ำกว่า B/E 5%)`, usd((be - S * 0.05 - be) * 100), "neg"],
+                        ] as Array<[string, string, string]>)
+                      : ([
+                          [`ปิด ≥ ${k.toFixed(2)} — ถูกเรียก ขาย 100 หุ้น @${k.toFixed(2)}`, `${usd((k - S) * 100 + credit)} กำไรสูงสุด`, "pos"],
+                          [`ปิด = ${be.toFixed(2)} — จุดคุ้มทุน (B/E)`, "$0", ""],
+                          [`ปิด = ${(be - S * 0.05).toFixed(2)} (ต่ำกว่า B/E 5%)`, usd((be - S * 0.05 - S) * 100 + credit), "neg"],
+                        ] as Array<[string, string, string]>);
+                    return (
+                      <>
+                        {!isPut && r.if_called != null && (
+                          <div style={{ fontSize: 10, background: "#12251f", border: "1px solid #1e5a47", borderRadius: 6, padding: "6px 8px", marginBottom: 8, color: "#9fd8c4" }}>
+                            ถ้าถูกเรียก (if called): กำไรสูงสุด ≈ {usd(r.max_profit ?? (k - S + prem) * 100)} ·
+                            ผลตอบแทน {r.if_called.toFixed(1)}% ({r.if_called_ann?.toFixed(0) ?? "--"}% ต่อปี)
+                          </div>
+                        )}
+                        <div className="section-title">PAYOFF AT EXPIRY · ต่อ 1 CONTRACT (100 หุ้น)</div>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10, marginBottom: 8 }}>
+                          <tbody>
+                            {scen.map(([l, v, cls], i) => (
+                              <tr key={i} style={{ borderBottom: "1px solid #1e2733" }}>
+                                <td style={{ padding: "3px 0", color: "#9bacc7" }}>{l}</td>
+                                <td style={{
+                                  padding: "3px 0", textAlign: "right", fontWeight: 650,
+                                  color: cls === "pos" ? "#3ddc97" : cls === "neg" ? "#f4788c" : "#e9f1ff",
+                                }}>{v}</td>
+                              </tr>
+                            ))}
+                            {isPut && (
+                              <tr>
+                                <td colSpan={2} style={{ padding: "3px 0", color: "#8797aa", fontSize: 9.5 }}>
+                                  ถ้าถูกเรียก (ปิด &lt; {k.toFixed(2)}): ซื้อ 100 หุ้น ที่ต้นทุนสุทธิ ${be.toFixed(2)}/หุ้น
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </>
+                    );
+                  })()}
                   <div className="section-title">PROBABILITY MODEL</div>
                   <div style={{ display: "flex", gap: 3, height: 7, marginBottom: 8 }}>
                     <div style={{ flex: (selectedRow.pop ?? 0), background: "#13a98a" }} />

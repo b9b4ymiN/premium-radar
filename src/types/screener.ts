@@ -42,7 +42,11 @@ export interface EnrichedRow {
   spread_pct: number | null;
   prem: number | null;
   net_cash: number | null;
+  max_loss: number | null;
   max_profit: number | null;
+  if_called: number | null;
+  if_called_ann: number | null;
+  basis: number | null;
   grade: Grade | null;
   why: string | null;
 }
