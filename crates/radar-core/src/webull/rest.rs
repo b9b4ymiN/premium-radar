@@ -46,6 +46,10 @@ pub const MAX_EXPIRIES: usize = 12;
 /// OTM strikes kept per side per expiry.
 pub const STRIKES_EACH_SIDE: usize = 20;
 
+/// จำนวนแถวสูงสุดต่อหน้าของ contracts endpoint (P8.2 probe: ชน 1000
+/// โดยไม่มี pagination_key กลับ — ใช้ตรวจ possibly_truncated ของ Lab)
+pub const PAGE_CAP: usize = 1000;
+
 // ---------- credentials ----------
 
 /// App credentials. Key material lives in the OS keyring / env at runtime —
@@ -93,9 +97,10 @@ impl Credentials {
 
     /// Log-safe representation.
     pub fn masked(&self) -> String {
+        // never print the full app_key — first 8 chars identify, rest masked
+        let head: String = self.app_key.chars().take(8).collect();
         format!(
-            "Credentials(app_key={}, secret=***{}***)",
-            self.app_key,
+            "Credentials(app_key={head}…, secret=***{}***)",
             self.app_secret.len()
         )
     }

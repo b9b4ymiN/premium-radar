@@ -15,7 +15,9 @@ use crate::webull::contracts::parse_occ;
 use crate::webull::rest::to_f64;
 
 /// Data source badge — honest freshness labels.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum DataSource {
     #[default]
     #[serde(rename = "API")]

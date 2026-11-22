@@ -65,3 +65,17 @@ verification: L1 — unit/integration เขียว + smoke ไม่โดน
 stopping: DONE เมื่อ builder เขียว + validator PASS || FAILED หลัง 4 rounds || BLOCKED อื่น
 memory: ตารางข้างบน + commit SHA
 ```
+
+## Option Lab (P8–P13) — เริ่ม 2026-11-22
+
+แผนหลัก: **PLAN-LAB.md** (ออกแบบโดย Codex จากภาพ 3 ใบ + Webull API dossier — ดู `tmp/codex-consult/BRIEF.md`) · gate ใหญ่: ผล probe P8.2 ตัดสินระดับ A/B/C ก่อนเปิด P11 replay
+
+| Task | สถานะ | Evidence | Validator |
+|---|---|---|---|
+| P8.1 Integration map + baseline | **DONE** | PLAN-LAB.md Appendix A — map 16 จุดเชื่อมยืนยันจากโค้ดจริง · baseline `cargo test --workspace` 87/0/1 · `npm run check` 0 errors (แก้ eslint globals ให้ `tools/*.mjs`) · ไม่แก้สูตรเดิม | self-verify (docs+config only, คำสั่ง reproduce ได้) — validator เต็มรูปแบบเริ่มที่ P8.2 |
+| P8.2 Probe Webull historical | NOT_STARTED | — | — |
+
+Loop spec ต่อไป: `task: P8.2` · `goal: probe matrix §1 ของ PLAN-LAB ผ่าน transport เดิม + รายงาน sanitized + ตัดสิน A/B/C` · `verification: รายงานครบทุกช่อง matrix หรือมีเหตุผล · ไม่มี secrets · throttle 1.1s ใช้งาน`
+| P8.2 Probe Webull historical | **DONE** | PLAN-LAB.md Appendix B — 26 calls จริง 0×429 · expired ค้นไม่ได้ (417/0 rows) · bars = ตั้งแต่วัน listed ของสัญญา (ยาวสุด 84 แท่ง/5 เดือน) · **verdict C+B-limited (A ตัด)** · แก้ `masked()` ที่โชว์ app_key เต็ม (เหลือ 8 ตัวแรก) · cost inputs จาก webull.co.th/pricing (~$0.62-0.66/สัญญา) | pending (โค้ดแก้ 1 fn + example — validator เต็มรูปแบบรอ P8.3/8.4 ที่เป็นโมดูลจริง) |
+| P8.3 Dataset manifest + quality | **DONE** | PLAN-LAB.md Appendix C — `lab/{types,quality}.rs` schema v1 + 13 tests (validate เหตุผลไทย / DST 4 ชั้นเวลา / dedupe / gap taxonomy ไม่เติมค่า / truncation / **spot≤0 = error ห้าม fallback**) · targeted smoke ด้วย spot จริง (NVDA 125.53/SPY 689.81 → ATM ถูกต้อง; SPY ATM put 106 แท่ง ~6 เดือน) · รวม Codex plan-amendments (ภาพ=inspiration, fees per-side $0.6635, P11/P12 gates) | pending — รวม validator ที่ P8.4 ซึ่งเป็นโมดูล+storage จริง |
+| P8.4 Forward recorder + storage | **DONE** | PLAN-LAB.md Appendix D — ดีไซน์ **post-close capture** (เจ้าของไม่เปิดเครื่องช่วงตลาด → เก็บเช้าเวลาไทย สุดสัปดาห์ถอยไปศุกร์) · `lab/{storage,capture}.rs` + tests 11 เคส · `lab_recorder` headless (token gate + idempotent + retention 400 วัน) · **รันจริงวันแรก: 97 records ปิดศุกร์ 20 พ.ย. (NVDA 125.53/pre_close 145.98) ใน 19s · รันซ้ำ=ข้าม · ไม่มี secrets ในไฟล์** · release exe 4.3MB พร้อมตั้งเวลา | pending (hook ในแอป + validator รอบถัดไป) |

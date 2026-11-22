@@ -28,3 +28,6 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 .access-token.txt
+
+# consult scratch (images, briefs)
+tmp/

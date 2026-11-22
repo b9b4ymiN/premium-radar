@@ -3,6 +3,7 @@
 
 pub mod copilot;
 pub mod engine;
+pub mod lab;
 pub mod quant;
 pub mod screener;
 pub mod webull;
