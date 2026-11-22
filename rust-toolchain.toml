@@ -1,3 +1,4 @@
 [toolchain]
-channel = "stable"
-targets = ["x86_64-pc-windows-msvc"]
+# Pin the full triple: the machine default host is GNU, and the Tauri cdylib
+# cannot link through MinGW ld. MSVC is the supported Windows toolchain.
+channel = "stable-x86_64-pc-windows-msvc"

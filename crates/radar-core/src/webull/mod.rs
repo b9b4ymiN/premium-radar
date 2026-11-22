@@ -4,8 +4,11 @@
 pub mod contracts;
 pub mod discovery;
 pub mod pb;
+pub mod quotes;
 pub mod rest;
 pub mod sign;
+#[cfg(feature = "client")]
+pub mod auth;
 #[cfg(feature = "stream")]
 pub mod stream;
 #[cfg(feature = "client")]

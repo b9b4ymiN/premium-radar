@@ -35,8 +35,12 @@ pub fn quote_py(s: &str) -> String {
 /// The pre-hash payload: path + `&` + sorted `k=v` params (query params plus
 /// host/app-key/algorithm/nonce/version/timestamp), plus `&` + upper-case
 /// MD5 hex of the body when a body is present. Mirrors `_sign` exactly.
+/// `host` MUST be the host actually being called — the server recomputes the
+/// signature with the request host and rejects mismatches.
+#[allow(clippy::too_many_arguments)]
 pub fn sign_base(
     path: &str,
+    host: &str,
     query: &[(String, String)],
     ts: &str,
     nonce: &str,
@@ -45,7 +49,7 @@ pub fn sign_base(
 ) -> String {
     let mut allp: Vec<(String, String)> = query.to_vec();
     allp.extend([
-        ("host".to_string(), HOST.to_string()),
+        ("host".to_string(), host.to_string()),
         ("x-app-key".to_string(), app_key.to_string()),
         ("x-signature-algorithm".to_string(), "HMAC-SHA1".to_string()),
         ("x-signature-nonce".to_string(), nonce.to_string()),
@@ -71,8 +75,10 @@ pub fn sign_base(
 /// HMAC-SHA1 signature (base64) of the percent-encoded payload, keyed with
 /// `"{app_secret}&"` — exactly like the Python original. Key material comes
 /// from settings/keyring at runtime; never from source or logs.
+#[allow(clippy::too_many_arguments)]
 pub fn sign(
     path: &str,
+    host: &str,
     query: &[(String, String)],
     ts: &str,
     nonce: &str,
@@ -80,7 +86,7 @@ pub fn sign(
     app_secret: &str,
     body: &str,
 ) -> String {
-    let payload = quote_py(&sign_base(path, query, ts, nonce, app_key, body));
+    let payload = quote_py(&sign_base(path, host, query, ts, nonce, app_key, body));
     let mut mac = HmacSha1::new_from_slice(format!("{app_secret}&").as_bytes())
         .expect("hmac accepts any key length");
     mac.update(payload.as_bytes());
@@ -106,9 +112,22 @@ mod tests {
             ("a".into(), "2".into()),
             ("m".into(), "3".into()),
         ];
-        let base = sign_base("/p", &q, "T", "N", "K", "");
+        let base = sign_base("/p", HOST, &q, "T", "N", "K", "");
         assert!(base.starts_with("/p&a=2&"), "base = {base}");
         assert!(base.contains("&host=api.webull.co.th"));
         assert!(base.ends_with("&z=1"));
+    }
+
+    #[test]
+    fn host_is_signed_not_hardcoded() {
+        // The signed `host` must follow the actual request host — this is the
+        // UAT bug: signing api.webull.co.th while calling th-api.uat… gave
+        // "Header x-signature is invalid".
+        let q: Vec<(String, String)> = vec![];
+        let a = sign_base("/p", "th-api.uat.webullbroker.com", &q, "T", "N", "K", "");
+        let b = sign_base("/p", HOST, &q, "T", "N", "K", "");
+        assert!(a.contains("host=th-api.uat.webullbroker.com"));
+        assert!(b.contains("host=api.webull.co.th"));
+        assert_ne!(a, b);
     }
 }

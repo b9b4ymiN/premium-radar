@@ -44,6 +44,7 @@ fn golden_signatures_match_python() {
         .collect();
     let base = sign_base(
         &first.path,
+        &first.host,
         &first_q,
         &first.ts,
         &first.nonce,
@@ -60,6 +61,7 @@ fn golden_signatures_match_python() {
             .collect();
         let got = sign(
             &c.path,
+            &c.host,
             &q,
             &c.ts,
             &c.nonce,

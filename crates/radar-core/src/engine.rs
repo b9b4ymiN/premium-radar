@@ -15,13 +15,16 @@ use crate::webull::contracts::parse_occ;
 use crate::webull::rest::to_f64;
 
 /// Data source badge — honest freshness labels.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum DataSource {
     #[default]
+    #[serde(rename = "API")]
     Rest,
     /// สด — live WebSocket push
+    #[serde(rename = "สด")]
     Ws,
     /// ราคาปิด — daily bars fallback (market closed)
+    #[serde(rename = "ราคาปิด")]
     Bars,
 }
 
@@ -50,7 +53,7 @@ pub struct QuoteUpdate {
 }
 
 /// Stock-level quote update.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct StockUpdate {
     pub price: f64,
     pub open: f64,
@@ -64,7 +67,7 @@ pub struct StockUpdate {
 }
 
 /// Result of a full engine cycle: enriched rows + screener output + stats.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct EngineSnapshot {
     pub rows: Vec<EnrichedRow>,
     pub candidates: Vec<EnrichedRow>,

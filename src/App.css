@@ -328,3 +328,73 @@ button:focus-visible, input:focus-visible {
   .global-search { width: 140px; }
   .head-quote-stats { display: none; }
 }
+
+/* live-data badge (scan://snapshot received) */
+.tag-demo.live {
+  color: #3ddc97;
+  border-color: rgba(61, 220, 151, 0.35);
+}
+
+/* feed-state badges */
+.tag-demo.wait {
+  color: #e0b15f;
+}
+.tag-demo.err {
+  color: #f4788c;
+  border-color: rgba(244, 120, 140, 0.35);
+}
+.opportunity.muted-card {
+  opacity: 0.55;
+}
+
+/* markdown inside AI chat bubbles */
+.bubble.assistant :is(p, ul, ol, table, pre) {
+  margin: 0 0 6px;
+}
+.bubble.assistant :last-child {
+  margin-bottom: 0;
+}
+.bubble.assistant h1, .bubble.assistant h2, .bubble.assistant h3 {
+  font-size: 11.5px;
+  margin: 8px 0 4px;
+  color: #cfe0f4;
+}
+.bubble.assistant ul, .bubble.assistant ol {
+  padding-left: 16px;
+}
+.bubble.assistant li {
+  margin: 2px 0;
+}
+.bubble.assistant table {
+  border-collapse: collapse;
+  font-size: 10px;
+  width: 100%;
+}
+.bubble.assistant th, .bubble.assistant td {
+  border: 1px solid #2c3542;
+  padding: 3px 6px;
+  text-align: left;
+}
+.bubble.assistant th {
+  background: rgba(60, 90, 130, 0.25);
+  color: #cfe0f4;
+}
+.bubble.assistant code {
+  background: rgba(120, 140, 170, 0.15);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.bubble.assistant pre {
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 6px;
+  padding: 6px 8px;
+  overflow-x: auto;
+}
+.bubble.assistant blockquote {
+  border-left: 2px solid #4a91fa;
+  margin: 4px 0;
+  padding-left: 8px;
+  color: #9bacc7;
+}

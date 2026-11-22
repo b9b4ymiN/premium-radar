@@ -35,6 +35,11 @@ pub struct AppSettings {
     #[serde(default = "default_webull_url")]
     pub webull_base_url: String,
 
+    /// Optional access token (Python `ACCESS_TOKEN`) — some Webull app keys
+    /// require the extra `x-access-token` header.
+    #[serde(default)]
+    pub webull_access_token: String,
+
     // LLM configuration (user-configurable via setup screen)
     #[serde(default)]
     pub llm: Option<LlmConfig>,
@@ -67,12 +72,16 @@ impl AppSettings {
     // ---------- credential helpers ----------
 
     /// Webull credentials from settings, falling back to env vars.
+    /// Values are trimmed — paste artifacts are the #1 cause of 401s.
     pub fn webull_credentials(&self) -> Option<Credentials> {
-        if !self.webull_app_key.is_empty() && !self.webull_app_secret.is_empty() {
+        let key = self.webull_app_key.trim();
+        let secret = self.webull_app_secret.trim();
+        if !key.is_empty() && !secret.is_empty() {
             return Some(Credentials {
-                app_key: self.webull_app_key.clone(),
-                app_secret: self.webull_app_secret.clone(),
-                access_token: None,
+                app_key: key.to_string(),
+                app_secret: secret.to_string(),
+                access_token: (!self.webull_access_token.trim().is_empty())
+                    .then(|| self.webull_access_token.trim().to_string()),
             });
         }
         Credentials::from_env()
@@ -80,10 +89,10 @@ impl AppSettings {
 
     /// LLM config from settings, falling back to env vars.
     pub fn llm_config(&self) -> Option<LlmConfig> {
-        if let Some(llm) = &self.llm {
-            if llm.is_ready() {
-                return Some(llm.clone());
-            }
+        if let Some(llm) = &self.llm
+            && llm.is_ready()
+        {
+            return Some(llm.clone());
         }
         LlmConfig::from_env()
     }

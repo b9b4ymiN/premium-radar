@@ -13,9 +13,11 @@ pub const RISK_FREE_RATE: f64 = 0.043;
 /// Reference dividend yield used by the Python original.
 pub const DIV_YIELD: f64 = 0.0;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize)]
 pub enum OptType {
+    #[serde(rename = "C")]
     Call,
+    #[serde(rename = "P")]
     Put,
 }
 

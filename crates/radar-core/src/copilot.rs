@@ -72,7 +72,12 @@ impl LlmConfig {
         // Shorthand: GLM_API_KEY → Z.ai GLM-5.3
         if let Some(key) = std::env::var("GLM_API_KEY").ok().filter(|k| !k.is_empty()) {
             let model = std::env::var("GLM_MODEL").unwrap_or_else(|_| "glm-5.3".into());
-            return Some(Self::new("Z.ai GLM", "https://api.z.ai", model, key));
+            return Some(Self::new(
+                "Z.ai GLM",
+                "https://api.z.ai/api/paas/v4",
+                model,
+                key,
+            ));
         }
 
         // Shorthand: OPENAI_API_KEY → OpenAI
@@ -87,9 +92,21 @@ impl LlmConfig {
         None
     }
 
-    /// Chat completions endpoint (OpenAI-compatible path).
+    /// Chat completions endpoint (OpenAI-compatible path). Providers mount
+    /// the API at different roots, so: a base URL that already ends in a
+    /// version segment (`/v1`, `/v4`) only gets `/chat/completions` appended;
+    /// one that already IS the full endpoint is used verbatim (users often
+    /// paste the complete URL); anything else gets `/v1/chat/completions`.
     pub fn chat_url(&self) -> String {
-        format!("{}/v1/chat/completions", self.base_url)
+        let base = self.base_url.trim_end_matches('/');
+        if base.ends_with("/chat/completions") {
+            return base.to_string();
+        }
+        if base.ends_with("/v1") || base.ends_with("/v4") || base.ends_with("/v3") {
+            format!("{base}/chat/completions")
+        } else {
+            format!("{base}/v1/chat/completions")
+        }
     }
 
     /// Log-safe display — no api_key.
@@ -114,9 +131,9 @@ impl LlmConfig {
 pub struct ChatMessage {
     pub role: String, // "system" | "user" | "assistant" | "tool"
     pub content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
 }
 
@@ -301,6 +318,192 @@ impl std::fmt::Debug for LlmConfig {
     }
 }
 
+// ---------- runtime: tool execution + the grounded chat loop ----------
+
+use crate::engine::Engine;
+use crate::quant::OptType;
+
+/// Execute one screener tool call against the live engine snapshot.
+/// Returns the JSON string that goes back to the model as a `tool` message.
+pub fn execute_tool(name: &str, arguments: &str, engine: &mut Engine) -> String {
+    let args: Value = serde_json::from_str(arguments).unwrap_or(Value::Null);
+    let snap = engine.snapshot();
+    match name {
+        "top_candidates" => {
+            let count = args
+                .get("count")
+                .and_then(Value::as_i64)
+                .unwrap_or(5)
+                .clamp(1, 20) as usize;
+            let typ = args.get("type").and_then(Value::as_str).unwrap_or("all");
+            if snap.candidates.is_empty() {
+                return serde_json::json!({
+                    "error": "ยังไม่มีข้อมูลจริง — screener ยังไม่มีผลลัพธ์ (feed ยังไม่ live หรือ filters คัดทุกสัญญาออก)"
+                })
+                .to_string();
+            }
+            let wanted = |t: OptType| {
+                typ == "all"
+                    || (typ == "put" && t == OptType::Put)
+                    || (typ == "call" && t == OptType::Call)
+            };
+            let rows: Vec<Value> = snap
+                .candidates
+                .iter()
+                .filter(|r| wanted(r.q.option_type))
+                .take(count)
+                .map(|r| {
+                    serde_json::json!({
+                        "symbol": r.q.symbol,
+                        "side": r.q.option_type.as_str(),
+                        "strike": r.q.strike,
+                        "expiry": r.q.expiry.to_string(),
+                        "dte": r.dte,
+                        "grade": r.grade.map(|g| g.as_str()),
+                        "premium_usd": r.credit,
+                        "annualized_pct": r.ann.map(|v| v * 100.0),
+                        "pop_pct": r.pop.map(|v| v * 100.0),
+                        "p_itm_pct": r.p_itm.map(|v| v * 100.0),
+                        "cushion_pct": r.cushion,
+                        "delta": r.delta,
+                        "breakeven": r.be,
+                        "collateral_usd": r.collateral,
+                        "open_interest": r.q.oi,
+                        "why": r.why,
+                    })
+                })
+                .collect();
+            serde_json::json!({
+                "spot": snap.spot,
+                "returned": rows.len(),
+                "candidates": rows,
+            })
+            .to_string()
+        }
+        "contract_detail" => {
+            let Some(sym) = args.get("symbol").and_then(Value::as_str) else {
+                return serde_json::json!({"error": "missing symbol"}).to_string();
+            };
+            match snap.rows.iter().find(|r| r.q.symbol == sym) {
+                Some(r) => serde_json::json!({
+                    "contract": r,
+                    "spot": snap.spot,
+                })
+                .to_string(),
+                None => serde_json::json!({
+                    "error": format!("ไม่พบสัญญา {sym} ในตารางปัจจุบัน (อาจถูก filters คัดออก)")
+                })
+                .to_string(),
+            }
+        }
+        "chain_stats" => serde_json::json!({
+            "spot": snap.spot,
+            "stock": snap.stock,
+            "stats": snap.stats,
+        })
+        .to_string(),
+        other => serde_json::json!({"error": format!("unknown tool: {other}")}).to_string(),
+    }
+}
+
+/// Minimal connectivity probe for an LLM config: one tiny chat completion
+/// (no tools, few tokens). Returns the model's reply so the setup screen can
+/// show "it really answered".
+#[cfg(feature = "client")]
+pub fn ping(config: &LlmConfig) -> Result<String, String> {
+    let http = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("build http client: {e}"))?;
+    let body = serde_json::json!({
+        "model": config.model,
+        "messages": [{"role": "user", "content": "ตอบคำเดียวว่า: pong"}],
+        "max_tokens": 20,
+        "temperature": 0.0,
+    });
+    let resp = http
+        .post(config.chat_url())
+        .bearer_auth(&config.api_key)
+        .json(&body)
+        .send()
+        .map_err(|e| format!("เรียก LLM ไม่สำเร็จ: {e}"))?;
+    let status = resp.status().as_u16();
+    let json: Value = resp.json().unwrap_or(Value::Null);
+    if status != 200 {
+        let clip: String = json.to_string().chars().take(200).collect();
+        let hint = if status == 401 || status == 403 {
+            " (API key ไม่ถูกต้อง)"
+        } else if status == 404 {
+            " (Base URL/Model path ผิด — เช็ค URL ของผู้ให้บริการ)"
+        } else {
+            ""
+        };
+        return Err(format!("LLM {status}: {clip}{hint}"));
+    }
+    match parse_response(&json) {
+        LlmResponse::Content(c) => Ok(c),
+        _ => Ok("✓ (ได้รับ response แต่ไม่มี content)".into()),
+    }
+}
+
+/// Full copilot round-trip: system prompt + conversation history →
+/// (tool call → execute against the engine)* → final Thai answer.
+/// Any OpenAI-compatible endpoint; max 6 tool rounds per question.
+#[cfg(feature = "client")]
+pub fn chat_with_tools(
+    config: &LlmConfig,
+    history: &[ChatMessage],
+    engine: &mut Engine,
+) -> Result<String, String> {
+    let http = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .build()
+        .map_err(|e| format!("build http client: {e}"))?;
+
+    let mut messages: Vec<ChatMessage> = vec![ChatMessage::system(system_prompt())];
+    messages.extend(history.iter().cloned());
+
+    for _round in 0..6 {
+        let body = build_request(config, &messages);
+        let resp = http
+            .post(config.chat_url())
+            .bearer_auth(&config.api_key)
+            .json(&body)
+            .send()
+            .map_err(|e| format!("เรียก LLM ไม่สำเร็จ: {e}"))?;
+        let status = resp.status().as_u16();
+        let json: Value = resp.json().unwrap_or(Value::Null);
+        if status != 200 {
+            let clip: String = json.to_string().chars().take(300).collect();
+            return Err(format!("LLM {status}: {clip}"));
+        }
+        match parse_response(&json) {
+            LlmResponse::Content(c) => return Ok(c),
+            LlmResponse::ToolCall { id, name, arguments } => {
+                let result = execute_tool(&name, &arguments, engine);
+                messages.push(ChatMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: Some(serde_json::json!([{
+                        "id": id,
+                        "type": "function",
+                        "function": {"name": name, "arguments": arguments}
+                    }])),
+                    tool_call_id: None,
+                });
+                messages.push(ChatMessage {
+                    role: "tool".into(),
+                    content: result,
+                    tool_calls: None,
+                    tool_call_id: Some(id),
+                });
+            }
+            LlmResponse::Error(e) => return Err(format!("LLM response ผิดรูป: {e}")),
+        }
+    }
+    Err("AI เรียก tool ยาวเกิน 6 รอบ — ลองถามให้เจาะจงขึ้น".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,9 +520,106 @@ mod tests {
 
     #[test]
     fn glm_shorthand() {
-        let c = LlmConfig::new("Z.ai GLM", "https://api.z.ai", "glm-5.3", "test-key");
+        let c = LlmConfig::new("Z.ai GLM", "https://api.z.ai/api/paas/v4", "glm-5.3", "test-key");
         assert!(c.is_ready());
-        assert!(c.chat_url().contains("api.z.ai/v1/chat/completions"));
+        assert!(c
+            .chat_url()
+            .contains("api.z.ai/api/paas/v4/chat/completions"));
+    }
+
+    #[test]
+    fn chat_url_mounts_versioned_roots_correctly() {
+        let local = LlmConfig::new("local", "http://localhost:11434/v1", "m", "k");
+        assert_eq!(local.chat_url(), "http://localhost:11434/v1/chat/completions");
+        let openai = LlmConfig::new("o", "https://api.openai.com", "gpt-4o", "k");
+        assert_eq!(
+            openai.chat_url(),
+            "https://api.openai.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn chat_url_accepts_full_endpoint_paste() {
+        // users paste the complete endpoint — never double-append the path
+        let full = LlmConfig::new(
+            "z",
+            "https://api.z.ai/api/paas/v4/chat/completions",
+            "glm-5.3",
+            "k",
+        );
+        assert_eq!(
+            full.chat_url(),
+            "https://api.z.ai/api/paas/v4/chat/completions"
+        );
+        let full2 = LlmConfig::new("o", "https://x.test/v1/chat/completions/", "m", "k");
+        assert_eq!(full2.chat_url(), "https://x.test/v1/chat/completions");
+    }
+
+    #[test]
+    fn execute_tools_against_engine() {
+        use crate::engine::{Engine, QuoteUpdate, StockUpdate, DataSource};
+        use chrono::Utc;
+        let mut eng = Engine::new(Utc::now());
+        eng.set_symbols(
+            vec!["NVDA261218P00175000".into(), "NVDA261218C00195000".into()],
+            Some(182.45),
+        );
+        eng.push_stock(StockUpdate {
+            price: 182.45,
+            src: DataSource::Rest,
+            ..Default::default()
+        });
+        eng.push_quote(QuoteUpdate {
+            symbol: "NVDA261218P00175000".into(),
+            price: 4.2,
+            bid: 4.15,
+            ask: 4.25,
+            oi: 3120.0,
+            volume: 1842.0,
+            change: 0.1,
+            change_ratio: 0.02,
+            src: DataSource::Rest,
+        });
+
+        // top_candidates returns the seeded contract
+        let top = execute_tool("top_candidates", r#"{"count": 5}"#, &mut eng);
+        assert!(top.contains("NVDA261218P00175000"), "got: {top}");
+
+        // put-only filter
+        let puts = execute_tool("top_candidates", r#"{"count": 5, "type": "put"}"#, &mut eng);
+        assert!(puts.contains("NVDA261218P00175000"));
+
+        // contract_detail finds the row
+        let detail = execute_tool(
+            "contract_detail",
+            r#"{"symbol": "NVDA261218P00175000"}"#,
+            &mut eng,
+        );
+        assert!(detail.contains("\"contract\""));
+
+        // unknown symbol → explicit error, never invented data
+        let missing = execute_tool(
+            "contract_detail",
+            r#"{"symbol": "FAKE123"}"#,
+            &mut eng,
+        );
+        assert!(missing.contains("ไม่พบสัญญา"));
+
+        // chain_stats returns JSON without panicking
+        let stats = execute_tool("chain_stats", "{}", &mut eng);
+        assert!(stats.contains("\"spot\""));
+
+        // unknown tool name
+        assert!(execute_tool("nope", "{}", &mut eng).contains("unknown tool"));
+    }
+
+    #[test]
+    fn execute_tool_reports_empty_feed_honestly() {
+        use crate::engine::Engine;
+        use chrono::Utc;
+        let mut eng = Engine::new(Utc::now());
+        let out = execute_tool("top_candidates", "{}", &mut eng);
+        assert!(out.contains("ยังไม่มีข้อมูลจริง"), "got: {out}");
     }
 
     #[test]

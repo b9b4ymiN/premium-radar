@@ -16,7 +16,7 @@ pub const MAX_DTE: f64 = 60.0;
 pub const MAX_SPREAD_PCT: f64 = 25.0;
 pub const MIN_CREDIT: f64 = 0.05;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub enum Grade {
     A,
     B,
@@ -34,7 +34,7 @@ impl Grade {
 }
 
 /// Raw quote + OCC meta exactly as the app assembles from the feeds.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct QuoteRow {
     pub symbol: String,
     pub underlying: String,
@@ -52,7 +52,7 @@ pub struct QuoteRow {
 }
 
 /// A quote with all short-option economics attached (None = not computable).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct EnrichedRow {
     pub q: QuoteRow,
     pub t: f64,
@@ -441,7 +441,7 @@ pub fn atm_iv_for(rows: &[&EnrichedRow], spot: f64) -> (Option<f64>, Option<f64>
     (Some(mean), Some(sel[0].t))
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize)]
 pub struct ChainStats {
     pub atm_iv: Option<f64>,
     pub em: Option<f64>,

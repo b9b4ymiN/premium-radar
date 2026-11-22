@@ -1,17 +1,29 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { SetupScreen } from "./components/SetupScreen";
-import type { EnrichedRow, StockUpdate, ChainStats } from "./types/screener";
+import type { EnrichedRow, StockUpdate, ChainStats, EngineSnapshot } from "./types/screener";
 import "./App.css";
 
-// Tauri invoke (graceful fallback when running without the Tauri shell)
+// Tauri bridge (graceful fallback when running without the Tauri shell)
 const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (!hasTauri) throw new Error("Tauri not available");
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<T>(cmd, args);
 }
+async function tauriListen<T>(event: string, handler: (payload: T) => void): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  const un = await listen<T>(event, (e) => handler(e.payload));
+  return un;
+}
 
-// ---------- mock data (will be replaced by Tauri events) ----------
+interface ScanProgress {
+  phase: string; // discovery | seed | bars | live | error
+  message: string;
+}
+
+// ---------- mock data (browser preview ONLY — never inside the desktop app) ----------
 
 const MOCK_STOCK: StockUpdate = {
   price: 182.45, open: 180.02, high: 183.72, low: 179.10,
@@ -30,8 +42,9 @@ const MOCK_ROWS: Partial<EnrichedRow>[] = [
   { q: { symbol: "NVDA261218C00187500", strike: 187.5, option_type: "C", expiry: "2026-12-18", bid: 3.75, ask: 3.85, oi: 1390, volume: 600, price: 3.80, underlying: "NVDA", src: "API", change: 0, change_ratio: 0 }, grade: "C", delta: 0.27, credit: 375, collateral: 18245, ann: 22.0, pop: 0.71, cushion: 2.8, p_itm: 0.24, score: 15.6, dte: 26, iv: 0.48, be: 178.70, prem: 3.75, spread_pct: 2.6 },
 ];
 
+const MOCK_STATS: ChainStats = { atm_iv: 0.482, em: 14.9, skew: 3.1 };
+
 const WATCHLIST = ["NVDA", "TSLA", "AAPL", "AMD", "SPY", "QQQ", "MSFT", "META"];
-const EXPIRIES = ["ทุกวัน", "12 ก.พ.", "26 ก.พ.", "05 มี.ค.", "02 เม.ย."];
 
 const fmt = (n: number, d = 2) =>
   n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -59,50 +72,204 @@ export default function App() {
   const [symbol, setSymbol] = useState("NVDA");
   const [strategy, setStrategy] = useState("CSP+CC");
   const [risk, setRisk] = useState("BALANCED");
-  const [expiry, setExpiry] = useState("ทุกวัน");
   const [budget, setBudget] = useState("18000");
   const [tab, setTab] = useState("all");
   const [selected, setSelected] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [tauriReady, setTauriReady] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
+  const [setupMode, setSetupMode] = useState<"first-run" | "edit">("first-run");
 
-  // Try to connect to the Tauri backend + check if setup is needed
+  // live data from the Rust scan worker
+  const [snap, setSnap] = useState<EngineSnapshot | null>(null);
+  const [scanMsg, setScanMsg] = useState("กำลังเชื่อมต่อ backend ...");
+  const [scanPhase, setScanPhase] = useState("idle");
+
+  // AI copilot — its configuration is INDEPENDENT of the data feed
+  const [llmInfo, setLlmInfo] = useState<{ label: string; model: string } | null>(null);
+  const [chat, setChat] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
+  const [chatError, setChatError] = useState("");
+
+  // Connect listeners + restore last session once
   useEffect(() => {
     if (!hasTauri) return;
-    tauriInvoke<boolean>("needs_setup")
-      .then((needs) => setShowSetup(needs))
-      .catch(() => setTauriReady(false));
-    tauriInvoke<string>("get_status")
-      .then(() => setTauriReady(true))
-      .catch(() => setTauriReady(false));
+    const uns: Array<() => void> = [];
+    let disposed = false;
+    (async () => {
+      try {
+        uns.push(await tauriListen<ScanProgress>("scan://progress", (p) => {
+          setScanPhase(p.phase);
+          setScanMsg(p.message);
+        }));
+        uns.push(await tauriListen<EngineSnapshot>("scan://snapshot", (s) => setSnap(s)));
+
+        const needs = await tauriInvoke<boolean>("needs_setup");
+        setSetupMode("first-run");
+        setShowSetup(needs);
+
+        const st = await tauriInvoke<Record<string, unknown>>("get_settings");
+        const lastSym = typeof st?.last_symbol === "string" && st.last_symbol ? st.last_symbol : null;
+        const lastStrat = typeof st?.last_strategy === "string" && st.last_strategy ? st.last_strategy : "CSP+CC";
+        const lastRisk = typeof st?.last_risk === "string" && st.last_risk ? st.last_risk : "BALANCED";
+        const lastBudget = typeof st?.last_budget === "number" && st.last_budget > 0 ? st.last_budget : 18000;
+        setStrategy(lastStrat);
+        setRisk(lastRisk);
+        setBudget(String(lastBudget));
+        if (lastSym) setSymbol(lastSym);
+        // sync engine filters with the restored UI state (no expiry pinned yet)
+        await tauriInvoke("set_filters", { strategy: lastStrat, risk: lastRisk, expiry: null, budget: lastBudget }).catch(() => {});
+        if (!disposed) setTauriReady(true);
+      } catch {
+        setTauriReady(false);
+      }
+    })();
+    return () => { disposed = true; uns.forEach((u) => u()); };
   }, []);
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // Start / restart the scan whenever the symbol changes (or setup completes);
+  // opening Setup stops any running scan (it may be failing on bad keys).
+  useEffect(() => {
+    if (!tauriReady || showSetup) return;
+    setExpirySel("ทุกวัน");
+    tauriInvoke("start_scan", { symbol }).catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      setScanMsg(msg);
+      setScanPhase("error");
+      if (msg.includes("Setup")) setShowSetup(true);
+    });
+  }, [symbol, tauriReady, showSetup]);
+
+  useEffect(() => {
+    if (showSetup && tauriReady) tauriInvoke("stop_scan").catch(() => {});
+  }, [showSetup, tauriReady]);
+
+  // Track AI configuration separately from the data feed (setup may change it)
+  useEffect(() => {
+    if (!tauriReady || showSetup) return;
+    tauriInvoke<Record<string, unknown>>("get_settings")
+      .then((st) => {
+        const llm = st?.llm as Record<string, unknown> | null | undefined;
+        const ready = !!llm
+          && typeof llm.base_url === "string" && llm.base_url
+          && typeof llm.model === "string" && llm.model
+          && typeof llm.api_key === "string" && llm.api_key;
+        setLlmInfo(ready
+          ? { label: (typeof llm!.label === "string" && llm!.label) || "AI", model: llm!.model as string }
+          : null);
+      })
+      .catch(() => {});
+  }, [tauriReady, showSetup]);
+
+  // Send a question to the copilot (function-calling over live engine data)
+  const sendChat = useCallback(async () => {
+    const q = chatInput.trim();
+    if (!q || chatBusy || !hasTauri) return;
+    setChatInput("");
+    setChatError("");
+    const next = [...chat, { role: "user" as const, content: q }];
+    setChat(next);
+    setChatBusy(true);
+    try {
+      const answer = await tauriInvoke<string>("ask_copilot", { messages: next });
+      setChat([...next, { role: "assistant", content: answer }]);
+    } catch (e) {
+      setChatError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setChatBusy(false);
+    }
+  }, [chat, chatInput, chatBusy]);
+
   const applyFilters = useCallback(async (s: string, r: string, e: string | null, b: number) => {
     if (!tauriReady) return;
     try {
-      await tauriInvoke("set_filters", { strategy: s, risk: r, expiry: e, budget: b });
-    } catch { /* mock mode */ }
+      const res = await tauriInvoke<EngineSnapshot>("set_filters", { strategy: s, risk: r, expiry: e, budget: b });
+      if (res) setSnap(res);
+    } catch { /* browser preview mode */ }
   }, [tauriReady]);
 
-  const rows = MOCK_ROWS as EnrichedRow[];
-  const stock = MOCK_STOCK;
+  // Inside the desktop app we NEVER fall back to mock data — an empty table
+  // with the scan status is honest; synthetic rows are browser-preview only.
+  const isLive = snap !== null;
+  const rows: EnrichedRow[] = isLive ? snap!.candidates : (hasTauri ? [] : (MOCK_ROWS as EnrichedRow[]));
+  const stock: StockUpdate | null = snap?.stock ?? (hasTauri ? null : MOCK_STOCK);
+  const stats: ChainStats | null = snap?.stats ?? (hasTauri ? null : MOCK_STATS);
   const selectedRow = rows.find(r => r.q.symbol === selected) ?? rows[0];
-  const chg = stock.change;
-  const chgPct = stock.change_ratio * 100;
+  const chg = stock?.change ?? 0;
+  const chgPct = (stock?.change_ratio ?? 0) * 100;
   const chgCls = chg >= 0 ? "pos" : "neg";
 
-  const stats: ChainStats = {
-    atm_iv: 0.482,
-    em: 14.9,
-    skew: 3.1,
+  // expiry chips: "ทุกวัน" + real expiry dates from the loaded rows
+  const [expirySel, setExpirySel] = useState<string>("ทุกวัน");
+  const expiryOptions = useMemo(() => {
+    const dates = Array.from(new Set(rows.map(r => r.q.expiry))).sort().slice(0, 6);
+    return ["ทุกวัน", ...dates];
+  }, [rows]);
+  const pickExpiry = (e: string) => {
+    setExpirySel(e);
+    const iso = e === "ทุกวัน" ? null : e;
+    applyFilters(strategy, risk, iso, parseFloat(budget) || 0);
   };
 
+  // derived metric values
+  const pcOi = useMemo(() => {
+    const p = rows.filter(r => r.q.option_type === "P").reduce((s, r) => s + (r.q.oi || 0), 0);
+    const c = rows.filter(r => r.q.option_type === "C").reduce((s, r) => s + (r.q.oi || 0), 0);
+    return c > 0 ? p / c : null;
+  }, [rows]);
+  const closest = useMemo(
+    () => (rows.length ? rows.reduce((a, b) => ((a.dte ?? 1e9) <= (b.dte ?? 1e9) ? a : b)) : null),
+    [rows],
+  );
+
+  // top-3 opportunity cards from the screener output
+  const opps = useMemo(() => {
+    const cand = rows.filter(r => r.delta != null && r.credit != null);
+    if (cand.length === 0) return null;
+    const byAbsDelta = [...cand].sort((a, b) => Math.abs(a.delta!) - Math.abs(b.delta!));
+    const defensive = byAbsDelta[0];
+    const balanced = byAbsDelta.find(r => Math.abs(r.delta!) >= 0.15 && Math.abs(r.delta!) <= 0.30)
+      ?? byAbsDelta[Math.min(1, byAbsDelta.length - 1)];
+    const topAnn = [...cand].sort((a, b) => (b.ann ?? 0) - (a.ann ?? 0))[0];
+    const fc = (r: EnrichedRow) => `${symbol} ${r.q.strike}${r.q.option_type} · ${r.q.expiry.slice(5).replace("-", "/")}`;
+    const fm = (r: EnrichedRow) => `+$${r.credit?.toFixed(0)} premium · ${(r.ann ?? 0).toFixed(1)}% annualized · δ ${Math.abs(r.delta ?? 0).toFixed(2)}`;
+    return [
+      { label: "LOWEST DELTA", tag: "Defensive", contract: fc(defensive), meta: fm(defensive) },
+      { label: "BALANCED SETUP", tag: "Balanced", contract: fc(balanced), meta: fm(balanced) },
+      { label: "HIGHEST ANNUALIZED", tag: "High yield", contract: fc(topAnn), meta: fm(topAnn) },
+    ];
+  }, [rows, symbol]);
+  const oppCards = opps ?? (hasTauri
+    ? [
+        { label: "LOWEST DELTA", tag: "—", contract: "รอข้อมูลจริง", meta: " " },
+        { label: "BALANCED SETUP", tag: "—", contract: "รอข้อมูลจริง", meta: " " },
+        { label: "HIGHEST ANNUALIZED", tag: "—", contract: "รอข้อมูลจริง", meta: " " },
+      ]
+    : [
+        { label: "LOWEST DELTA", tag: "Defensive", contract: `${symbol} 165P · 12 ก.พ.`, meta: `+$220 premium · ${fmt(15.0, 1)}% annualized · δ 0.10` },
+        { label: "BALANCED SETUP", tag: "Balanced", contract: `${symbol} 175P · 12 ก.พ.`, meta: `+$415 premium · ${fmt(26.0, 1)}% annualized · δ 0.18` },
+        { label: "HIGHEST ANNUALIZED", tag: "High yield", contract: `${symbol} 178P · 04 ธ.ค.`, meta: `+$285 premium · ${fmt(35.0, 1)}% annualized · δ 0.28` },
+      ]);
+
+  const feed = !tauriReady
+    ? { t: "DEMO", cls: "warn" }
+    : scanPhase === "error" ? { t: "ERROR", cls: "neg" }
+    : scanPhase === "live" ? { t: "REST · LIVE", cls: "pos" }
+    : ["discovery", "seed", "bars"].includes(scanPhase) ? { t: "SYNCING", cls: "warn" }
+    : { t: "IDLE", cls: "" };
+
+  const isError = scanPhase === "error";
+  const badge = !hasTauri
+    ? { text: "● BROWSER PREVIEW", cls: "" }
+    : isLive ? { text: "● LIVE DATA", cls: "live" }
+    : isError ? { text: "● FEED ERROR", cls: "err" }
+    : { text: "● กำลังโหลด", cls: "wait" };
 
   if (showSetup) {
     return (
       <SetupScreen
+        mode={setupMode}
         onComplete={() => setShowSetup(false)}
         onSkip={() => setShowSetup(false)}
       />
@@ -129,11 +296,17 @@ export default function App() {
           <input
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter") {
+                const q = searchText.trim().toUpperCase();
+                if (q) setSymbol(q);
+              }
+            }}
             placeholder={`Search (${symbol})`}
             aria-label="Search symbol"
           />
         </label>
-        <span className="tag-demo">● DEMO DATA</span>
+        <span className={`tag-demo ${badge.cls}`}>{badge.text}</span>
       </header>
 
       {/* ============ WORKSPACE ============ */}
@@ -144,7 +317,11 @@ export default function App() {
           <button className="iconbtn" title="Market">◔</button>
           <button className="iconbtn on" title="Options">|||</button>
           <button className="iconbtn" title="Watchlist">≡</button>
-          <button className="iconbar bottom iconbtn" title="Settings">⚙</button>
+          <button
+            className="iconbar bottom iconbtn"
+            title="Settings / API keys"
+            onClick={() => { setSetupMode("edit"); setShowSetup(true); }}
+          >⚙</button>
         </nav>
 
         {/* ---- Left Panel ---- */}
@@ -194,9 +371,9 @@ export default function App() {
           <div className="filtergroup">
             <div className="filterlabel">Expiration</div>
             <div className="expiries">
-              {EXPIRIES.map(e => (
-                <button key={e} className={`exp ${expiry === e ? "on" : ""}`} onClick={() => setExpiry(e)}>
-                  {e}
+              {expiryOptions.map(e => (
+                <button key={e} className={`exp ${expirySel === e ? "on" : ""}`} onClick={() => pickExpiry(e)}>
+                  {e === "ทุกวัน" ? e : e.slice(5).replace("-", "/")}
                 </button>
               ))}
             </div>
@@ -206,13 +383,21 @@ export default function App() {
             <div className="filterlabel">Available cash (USD)</div>
             <label className="cashfield">
               <span>$</span>
-              <input value={budget} onChange={e => setBudget(e.target.value)} type="number" min="0" step="500" />
+              <input
+                value={budget}
+                onChange={e => setBudget(e.target.value)}
+                onBlur={() => applyFilters(strategy, risk, expirySel === "ทุกวัน" ? null : expirySel, parseFloat(budget) || 0)}
+                onKeyDown={e => { if (e.key === "Enter") applyFilters(strategy, risk, expirySel === "ทุกวัน" ? null : expirySel, parseFloat(budget) || 0); }}
+                type="number"
+                min="0"
+                step="500"
+              />
             </label>
           </div>
 
           <div className="leftfoot">
-            <div><b>DATA MODE</b> <span style={{ float: "right", color: "#e0b15f" }}>Synthetic</span></div>
-            <div>Reference: 22 Nov 2026</div>
+            <div><b>DATA MODE</b> <span style={{ float: "right", color: isLive ? "#3ddc97" : isError ? "#f4788c" : "#e0b15f" }}>{isLive ? "Live · Webull TH" : isError ? "Feed error" : hasTauri ? "รอข้อมูล" : "Synthetic"}</span></div>
+            <div>{isLive ? `Feed: REST snapshot · ${new Date().toLocaleDateString()}` : "REST snapshot · 3 นาที/รอบ"}</div>
           </div>
         </aside>
 
@@ -227,21 +412,27 @@ export default function App() {
           <section className="quoteheader">
             <div>
               <div className="symbol">{symbol}</div>
-              <div style={{ fontSize: 10, color: "#8797aa", marginTop: 4 }}>NASDAQ · NVIDIA Corporation</div>
+              <div style={{ fontSize: 10, color: "#8797aa", marginTop: 4 }}>US OPTIONS · Webull TH feed</div>
             </div>
             <div>
-              <div className={`bigprice num ${chgCls}`}>
-                {fmt(stock.price)} <small className={chgCls}>{chg >= 0 ? "+" : ""}{chgPct.toFixed(2)}%</small>
+              <div className={`bigprice num ${stock ? chgCls : ""}`}>
+                {stock ? fmt(stock.price) : "--"}
+                {stock && <small className={chgCls}>{chg >= 0 ? "+" : ""}{chgPct.toFixed(2)}%</small>}
               </div>
               <div className="quotefoot num">
-                {chg >= 0 ? "+" : ""}{fmt(chg)} ({chg >= 0 ? "+" : ""}{chgPct.toFixed(2)}%) · USD
+                {stock
+                  ? <>{chg >= 0 ? "+" : ""}{fmt(chg)} ({chg >= 0 ? "+" : ""}{chgPct.toFixed(2)}%) · USD</>
+                  : "รอราคาจาก feed ..."}
               </div>
             </div>
             <div className="head-quote-stats">
-              {[["Open", stock.open], ["High", stock.high], ["Low", stock.low], ["Prev", stock.pre_close]].map(([k, v]) => (
+              {(stock
+                ? [["Open", stock.open], ["High", stock.high], ["Low", stock.low], ["Prev", stock.pre_close]]
+                : [["Open", null], ["High", null], ["Low", null], ["Prev", null]]
+              ).map(([k, v]) => (
                 <div key={k as string} className="qstat">
                   <div className="qk">{k}</div>
-                  <div className="qv num">{fmt(v as number)}</div>
+                  <div className="qv num">{v == null ? "--" : fmt(v as number)}</div>
                 </div>
               ))}
             </div>
@@ -250,12 +441,12 @@ export default function App() {
           {/* 6 Metric Cards */}
           <section className="summary">
             {[
-              { label: "IV (ATM)", value: `${(stats.atm_iv! * 100).toFixed(1)}%`, suffix: "48.2 IV Rank" },
-              { label: "Expected move ±1σ", value: `±$${fmt(stats.em!)}`, suffix: "8.2%", cls: "warn" },
-              { label: "Put/Call skew", value: `+${stats.skew!.toFixed(1)} pts`, suffix: "hypothetical", cls: "neg" },
-              { label: "Put/Call OI", value: "1.24", suffix: "synthetic" },
-              { label: "Closest expiry", value: "12 ก.พ.", suffix: "26d", cls: "pos" },
-              { label: "Contracts loaded", value: "310", suffix: "model-generated" },
+              { label: "IV (ATM)", value: stats?.atm_iv != null ? `${(stats.atm_iv * 100).toFixed(1)}%` : "--", suffix: isLive ? "ATM IV" : "รอข้อมูล" },
+              { label: "Expected move ±1σ", value: stats?.em != null ? `±$${fmt(stats.em)}` : "--", suffix: "to expiry", cls: "warn" },
+              { label: "Put/Call skew", value: stats?.skew != null ? `${stats.skew >= 0 ? "+" : ""}${stats.skew.toFixed(1)} pts` : "--", suffix: isLive ? "OTM strikes" : "รอข้อมูล", cls: stats?.skew != null && stats.skew < 0 ? "neg" : "" },
+              { label: "Put/Call OI", value: pcOi != null ? pcOi.toFixed(2) : "--", suffix: isLive ? "open interest" : "รอข้อมูล" },
+              { label: "Closest expiry", value: closest ? closest.q.expiry.slice(5).replace("-", "/") : "--", suffix: closest ? `${Math.round(closest.dte)}d` : "", cls: "pos" },
+              { label: "Contracts loaded", value: String(rows.length), suffix: isLive ? "live feed" : hasTauri ? "รอข้อมูล" : "model-generated" },
             ].map(m => (
               <div key={m.label} className="metric">
                 <div className="metric-label">{m.label}</div>
@@ -268,12 +459,8 @@ export default function App() {
 
           {/* 3 Opportunity Cards */}
           <div className="opportunities">
-            {[
-              { label: "LOWEST DELTA", tag: "Defensive", contract: `${symbol} 165P · 12 ก.พ.`, meta: `+$220 premium · ${fmt(15.0, 1)}% annualized · δ 0.10` },
-              { label: "BALANCED SETUP", tag: "Balanced", contract: `${symbol} 175P · 12 ก.พ.`, meta: `+$415 premium · ${fmt(26.0, 1)}% annualized · δ 0.18` },
-              { label: "HIGHEST ANNUALIZED", tag: "High yield", contract: `${symbol} 178P · 04 ธ.ค.`, meta: `+$285 premium · ${fmt(35.0, 1)}% annualized · δ 0.28` },
-            ].map((o, i) => (
-              <button key={o.label} className={`opportunity ${i === 1 ? "on" : ""}`}>
+            {oppCards.map((o, i) => (
+              <button key={o.label} className={`opportunity ${i === 1 ? "on" : ""} ${opps ? "" : "muted-card"}`}>
                 <div className="otop"><span>{o.label}</span><span style={{ color: "#9caec3" }}>{o.tag}</span></div>
                 <div className="ocontract">{o.contract}</div>
                 <div className="ometas"><b className="pos">{o.meta.split("·")[0]}</b> · {o.meta.split("·").slice(1).join("·")}</div>
@@ -293,7 +480,7 @@ export default function App() {
               </div>
             </div>
             <div className="table-status">
-              <span>Funnel: 310 → OTM → delta → DTE → spread → premium → budget → <strong>{rows.length}</strong></span>
+              <span>{hasTauri ? scanMsg : "Funnel: OTM → delta → DTE → spread → premium → budget"}</span>
               <span>Rows <strong>{rows.length}</strong> · USD</span>
             </div>
             <div className="tblscroll">
@@ -306,31 +493,60 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows
-                    .filter(r => tab === "all" || (tab === "put" ? r.q.option_type === "P" : r.q.option_type === "C"))
-                    .map(r => (
-                    <tr
-                      key={r.q.symbol}
-                      className={r.q.symbol === selectedRow?.q.symbol ? "selected" : ""}
-                      onClick={() => setSelected(r.q.symbol)}
-                    >
-                      <td><GradeBadge grade={r.grade} /></td>
-                      <td style={{ color: r.q.option_type === "P" ? "#f4788c" : "#24c99a", fontWeight: 650 }}>
-                        {r.q.option_type === "P" ? "Put" : "Call"}
-                      </td>
-                      <td>{r.q.expiry.slice(5).replace("-", "/")} <small style={{ color: "#6b7d98" }}>({r.dte}d)</small></td>
-                      <td style={{ color: "#e9f1ff", fontWeight: 750 }}>{r.q.strike}</td>
-                      <td>{r.delta?.toFixed(2)}</td>
-                      <td className={((r.p_itm ?? 0) > 0.25) ? "neg" : ""}>{((r.p_itm ?? 0) * 100).toFixed(0)}%</td>
-                      <td className="pos">+{r.credit?.toFixed(0)}</td>
-                      <td>{((r.prem ?? 0) / (r.q.strike ?? 1) * 100).toFixed(2)}%</td>
-                      <td className="pos">{r.ann?.toFixed(0)}%</td>
-                      <td>${r.collateral?.toLocaleString()}</td>
-                      <td>{r.be?.toFixed(2)}</td>
-                      <td>{r.q.oi?.toLocaleString()}</td>
-                      <td><SourceDot src={r.q.src} /></td>
-                    </tr>
-                  ))}
+                  {(() => {
+                    const visible = rows.filter(r => tab === "all" || (tab === "put" ? r.q.option_type === "P" : r.q.option_type === "C"));
+                    if (visible.length === 0 && hasTauri) {
+                      return (
+                        <tr className="empty-row">
+                          <td colSpan={13} style={{ textAlign: "center", padding: "34px 16px" }}>
+                            {isError ? (
+                              <div>
+                                <div style={{ color: "#f4788c", fontSize: 12, marginBottom: 12 }}>⚠ {scanMsg}</div>
+                                <button
+                                  onClick={() => setShowSetup(true)}
+                                  style={{
+                                    background: "#2b4a75", color: "#dfe9f7", border: "1px solid #4a91fa",
+                                    borderRadius: 6, padding: "7px 18px", fontSize: 11.5, fontWeight: 650, cursor: "pointer",
+                                  }}
+                                >
+                                  เปิดหน้า Setup แก้ไข API keys
+                                </button>
+                              </div>
+                            ) : scanPhase === "live" ? (
+                              <span style={{ color: "#8797aa", fontSize: 11.5 }}>
+                                ไม่พบ contracts ที่ผ่าน filters — ลองเพิ่ม Budget, เลือก All contracts หรือเปลี่ยน Expiration
+                              </span>
+                            ) : (
+                              <span style={{ color: "#8797aa", fontSize: 11.5 }}>{scanMsg}</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    }
+                    return visible.map(r => (
+                      <tr
+                        key={r.q.symbol}
+                        className={r.q.symbol === selectedRow?.q.symbol ? "selected" : ""}
+                        onClick={() => setSelected(r.q.symbol)}
+                      >
+                        <td><GradeBadge grade={r.grade} /></td>
+                        <td style={{ color: r.q.option_type === "P" ? "#f4788c" : "#24c99a", fontWeight: 650 }}>
+                          {r.q.option_type === "P" ? "Put" : "Call"}
+                        </td>
+                        <td>{r.q.expiry.slice(5).replace("-", "/")} <small style={{ color: "#6b7d98" }}>({Math.round(r.dte)}d)</small></td>
+                        <td style={{ color: "#e9f1ff", fontWeight: 750 }}>{r.q.strike}</td>
+                        <td>{r.delta?.toFixed(2)}</td>
+                        <td className={((r.p_itm ?? 0) > 0.25) ? "neg" : ""}>{((r.p_itm ?? 0) * 100).toFixed(0)}%</td>
+                        <td className="pos">+{r.credit?.toFixed(0)}</td>
+                        <td>{((r.prem ?? 0) / (r.q.strike ?? 1) * 100).toFixed(2)}%</td>
+                        <td className="pos">{r.ann?.toFixed(0)}%</td>
+                        <td>${r.collateral?.toLocaleString()}</td>
+                        <td>{r.be?.toFixed(2)}</td>
+                        <td>{r.q.oi?.toLocaleString()}</td>
+                        <td><SourceDot src={r.q.src} /></td>
+                      </tr>
+                    ));
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -347,7 +563,7 @@ export default function App() {
           <section className="detailpanel">
             <div className="panel-heading" style={{ minHeight: "36px" }}>Contract Analysis</div>
             <div className="detail-body">
-              {selectedRow && (
+              {selectedRow ? (
                 <>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div>
@@ -355,7 +571,7 @@ export default function App() {
                         {selectedRow.q.option_type === "P" ? "ขาย Put · CSP" : "ขาย Call · CC"}{" "}
                         {symbol} ${selectedRow.q.strike}
                       </h2>
-                      <p>หมดอายุ {selectedRow.q.expiry} ({selectedRow.dte} วัน) · {selectedRow.grade}</p>
+                      <p>หมดอายุ {selectedRow.q.expiry} ({Math.round(selectedRow.dte)} วัน) · {selectedRow.grade ?? "--"}</p>
                     </div>
                     <GradeBadge grade={selectedRow.grade} />
                   </div>
@@ -378,42 +594,103 @@ export default function App() {
                   </div>
                   <div className="section-title">RISK NOTE</div>
                   <div style={{ fontSize: 10, color: "#ebc591", lineHeight: 1.6, borderLeft: "2px solid #bc8c45", paddingLeft: 8 }}>
-                    ⚠ IV สูง (48%) — ระวังวันประกาศงบ · กันชน {selectedRow.cushion?.toFixed(1)}%
+                    {selectedRow.iv != null
+                      ? `IV ${((selectedRow.iv) * 100).toFixed(0)}% · กันชน ${selectedRow.cushion?.toFixed(1)}% · โอกาสถูกแตะ ${((selectedRow.p_touch ?? 0) * 100).toFixed(0)}%`
+                      : `กันชน ${selectedRow.cushion?.toFixed(1)}% จากราคาปัจจุบัน`}
                   </div>
                 </>
+              ) : (
+                <div style={{ color: "#8797aa", fontSize: 11.5, padding: "20px 4px" }}>
+                  {isError ? "ไม่มีข้อมูล — แก้ไข API keys ในหน้า Setup ก่อน" : "รอข้อมูลจาก feed ..."}
+                </div>
               )}
             </div>
           </section>
 
-          {/* Radar Assistant */}
+          {/* Radar Assistant — real LLM chat, status independent of the feed */}
           <section className="copilot">
             <div className="panel-heading" style={{ minHeight: "34px" }}>
               <span style={{ color: "#94beff" }}>✦</span> Radar Assistant
-              <span style={{ marginLeft: "auto", fontSize: 9, color: "#8da7ca", fontWeight: 400 }}>DEMO</span>
+              <span
+                style={{
+                  marginLeft: "auto",
+                  fontSize: 9,
+                  fontWeight: 400,
+                  color: llmInfo ? "#3ddc97" : "#e0b15f",
+                }}
+              >
+                {llmInfo ? `AI · ${llmInfo.model}` : "AI ยังไม่ตั้งค่า"}
+              </span>
             </div>
-            <div className="chatlog">
-              <div className="bubble user">มีเงิน $18,000 ตัวไหนน่าทำ?</div>
-              <div className="bubble assistant">
-                <b>จากข้อมูลตัวอย่าง</b> — แนะนำ <b>NVDA 175P · 12 ก.พ.</b>{" "}
-                รับ $415 ทันที หุ้นลงได้อีก 6.4% ก่อนขาดทุน โอกาสเก็บเงินครบ 76%
+            {!llmInfo ? (
+              <div className="chatlog" style={{ display: "block", padding: "10px 12px" }}>
+                <p style={{ fontSize: 10.5, color: "#9bacc7", lineHeight: 1.6, marginBottom: 10 }}>
+                  ยังไม่ได้ตั้งค่า AI assistant — ใส่ LLM API key (Z.ai / OpenAI / Ollama)
+                  ในหน้า Setup ได้เลย ไม่เกี่ยวกับสถานะ feed ข้อมูล
+                </p>
+                <button
+                  onClick={() => { setSetupMode("edit"); setShowSetup(true); }}
+                  style={{
+                    background: "#2b4a75", color: "#dfe9f7", border: "1px solid #4a91fa",
+                    borderRadius: 6, padding: "6px 14px", fontSize: 10.5, fontWeight: 650, cursor: "pointer",
+                  }}
+                >
+                  เปิดหน้า Setup
+                </button>
               </div>
-            </div>
-            <div className="chatinput">
-              <input placeholder="Ask about this contract..." />
-              <button aria-label="Send">➤</button>
-            </div>
+            ) : (
+              <>
+                {!isLive && (
+                  <div style={{ fontSize: 9.5, color: "#e0b15f", padding: "6px 12px 0" }}>
+                    ⚠ feed ข้อมูลยังไม่ live — AI จะบอกว่าไม่มีข้อมูลจนกว่า scan สำเร็จ
+                  </div>
+                )}
+                <div className="chatlog">
+                  {chat.length === 0 && (
+                    <div className="bubble assistant">
+                      <Markdown remarkPlugins={[remarkGfm]}>
+                        {`ถามเกี่ยวกับสัญญาในตารางได้เลย เช่น "มีเงิน $18,000 ตัวไหนน่าทำ?"
+                        หรือ "NVDA 175P มีความเสี่ยงยังไง" — คำตอบอ้างอิงข้อมูลจริงเท่านั้น`}
+                      </Markdown>
+                    </div>
+                  )}
+                  {chat.map((m, i) => (
+                    <div key={i} className={`bubble ${m.role}`}>
+                      {m.role === "assistant"
+                        ? <Markdown remarkPlugins={[remarkGfm]}>{m.content}</Markdown>
+                        : m.content}
+                    </div>
+                  ))}
+                  {chatBusy && (
+                    <div className="bubble assistant">AI กำลังดึงข้อมูลและวิเคราะห์ ...</div>
+                  )}
+                  {chatError && (
+                    <div className="bubble assistant" style={{ color: "#f4788c" }}>⚠ {chatError}</div>
+                  )}
+                </div>
+                <div className="chatinput">
+                  <input
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") sendChat(); }}
+                    placeholder={isLive ? "ถามเกี่ยวกับสัญญาในตาราง..." : "ถามได้เลย (จะตอบเมื่อมีข้อมูล)..."}
+                  />
+                  <button aria-label="Send" onClick={sendChat} disabled={chatBusy}>➤</button>
+                </div>
+              </>
+            )}
           </section>
         </aside>
       </div>
 
       {/* ============ STATUS BAR ============ */}
       <footer className="statusbar">
-        <span><b>OFFLINE · DESIGN PROTOTYPE</b></span>
-        <span>{symbol} {fmt(stock.price)} <b className={chgCls}>{chg >= 0 ? "+" : ""}{chgPct.toFixed(2)}%</b></span>
-        <span>Reference data · 22 Nov 2026</span>
+        <span><b>{tauriReady ? (isLive ? "LIVE · WEBULL TH FEED" : scanMsg) : "OFFLINE · BROWSER PREVIEW"}</b></span>
+        <span>{symbol} {stock ? fmt(stock.price) : "--"} <b className={stock ? chgCls : ""}>{stock ? `${chg >= 0 ? "+" : ""}${chgPct.toFixed(2)}%` : ""}</b></span>
+        <span>{isLive ? "REST snapshot · รอบถัดไป 3 นาที" : "REST snapshot feed"}</span>
         <span className="statusright">
           <span>Contracts: {rows.length}</span>
-          <span>Feed: <b className="warn">DISCONNECTED</b></span>
+          <span>Feed: <b className={feed.cls}>{feed.t}</b></span>
           <span>PREMIUM RADAR · v0.1</span>
         </span>
       </footer>
