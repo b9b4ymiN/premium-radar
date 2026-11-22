@@ -31,7 +31,7 @@
 | P3.3-3.4 Protobuf decode + reconnect | NOT_STARTED | ต้องการ .proto schemas + prost + reconnect loop | — |
 | P4.1 state engine (pure) | **DONE** | `crates/radar-core/src/engine.rs` — coalescing store (newest-wins), WS>REST>BARS seed protection, mid-price fallback, oi/bid/ask backfill, screener+chain-stats compose. 8 unit tests. | **PASS** (9/9 DOD — validator ยืนยัน Python parity ทุกข้อ; oi_cache tertiary fallback noted for P3) |
 | P4.2-4.4 Tauri bridge + commands + settings | NOT_STARTED | รอ src-tauri (Tauri event pump + commands + settings.json) | — |
-| P5.* frontend shell | NOT_STARTED | — | — |
+| P5 Frontend shell | **DONE** | App.tsx + App.css + tokens.css — 4-column shell, 13-col scanner table, 3 opportunity cards, contract analysis, copilot chat, status bar. DESIGN.md palette + all CSS classes. | **PASS** (F1 palette + F2 CSS fixed) |
 | P6.* copilot | NOT_STARTED | — | — |
 | P7.* packaging | NOT_STARTED | ต้องการ MSVC (ดูด้านล่าง) | — |
 
