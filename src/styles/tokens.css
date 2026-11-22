@@ -7,8 +7,9 @@
   --canvas: #0b0d11;
   --header: #14171d;
   --sidebar: #11151b;
-  --surface: #151a21;
-  --raised: #1a2029;
+  --surface: #10141a;
+  --surface2: #171c24;
+  --surface3: #1c2633;
   --hover: #202938;
 
   /* Delineation */
@@ -32,7 +33,7 @@
 
   /* Font stacks (DESIGN.md §3.1) */
   --sans: 'Inter', 'IBM Plex Sans Thai', 'Noto Sans Thai', 'Segoe UI', Tahoma, Arial, sans-serif;
-  --mono: 'JetBrains Mono', 'IBM Plex Mono', Consolas, monospace;
+  --mono: 'Inter Display', 'Inter', 'Segoe UI', Arial, sans-serif;
 
   /* Numeric */
   --tabular-nums: tabular-nums;
