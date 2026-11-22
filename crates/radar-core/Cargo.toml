@@ -15,6 +15,7 @@ sha1 = "0.10"
 md-5 = "0.10"
 base64 = "0.22"
 serde_json = "1"
+prost = "0.13"
 reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 rumqttc = { version = "0.24", optional = true }
@@ -27,6 +28,7 @@ stream = ["rumqttc", "tokio"]
 
 [dev-dependencies]
 serde_json = "1"
+prost = "0.13"
 wiremock = "0.6"
 tokio = { version = "1", features = ["macros", "rt"] }
 

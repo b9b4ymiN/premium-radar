@@ -3,6 +3,7 @@
 
 pub mod contracts;
 pub mod discovery;
+pub mod pb;
 pub mod rest;
 pub mod sign;
 #[cfg(feature = "stream")]
