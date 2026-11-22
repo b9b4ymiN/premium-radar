@@ -184,6 +184,10 @@ impl StreamClient {
         opts.set_keep_alive(Duration::from_secs(30));
         // Webull: username = App Key, password = any value
         opts.set_credentials(&creds.app_key, "webull");
+        // Wire the transport: docs say :8883 is WSS, :1883 is plain TCP
+        if config.use_tls {
+            opts.set_transport(rumqttc::Transport::tls(Vec::new(), None, None));
+        }
 
         let (client, event_loop) = AsyncClient::new(opts, 64);
         Self {
@@ -196,8 +200,8 @@ impl StreamClient {
 
     /// Track a subscription for auto-resubscribe on reconnect.
     pub fn track_subscribe(&mut self, symbols: Vec<String>, topic: String) {
-        self.subscribed_topics
-            .retain(|(_, t)| t != &topic || !symbols.is_empty());
+        // remove old entries for this topic, then push the replacement
+        self.subscribed_topics.retain(|(_, t)| t != &topic);
         self.subscribed_topics.push((symbols, topic));
     }
 
@@ -274,6 +278,25 @@ mod tests {
     #[test]
     fn route_unknown_topic_none() {
         assert!(route_message("garbage", &[]).is_none());
+    }
+
+    #[test]
+    fn track_subscribe_replaces_old_topic_entries() {
+        let mut c = StreamClient::new(
+            StreamConfig::local(1883, "s"),
+            Credentials {
+                app_key: "K".into(),
+                app_secret: "S".into(),
+                access_token: None,
+            },
+        );
+        c.track_subscribe(vec!["A".into(), "B".into()], "snapshot".into());
+        c.track_subscribe(vec!["C".into()], "snapshot".into()); // replaces, not appends
+        assert_eq!(c.subscriptions().len(), 1);
+        assert_eq!(c.subscriptions()[0].0, vec!["C".to_string()]);
+        // different topic coexists
+        c.track_subscribe(vec!["X".into()], "tick".into());
+        assert_eq!(c.subscriptions().len(), 2);
     }
 
     #[test]
