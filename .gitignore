@@ -1,0 +1,21 @@
+# secrets — never commit
+.env
+.env.*
+*.key
+secrets/
+
+# build artifacts
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+
+# tool/session artifacts
+.playwright-mcp/
+.taste-skill/
+.impeccable/mocks/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
