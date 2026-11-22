@@ -32,7 +32,7 @@
 | P4.1 state engine (pure) | **DONE** | `crates/radar-core/src/engine.rs` — coalescing store (newest-wins), WS>REST>BARS seed protection, mid-price fallback, oi/bid/ask backfill, screener+chain-stats compose. 8 unit tests. | **PASS** (9/9 DOD — validator ยืนยัน Python parity ทุกข้อ; oi_cache tertiary fallback noted for P3) |
 | P4.2-4.4 Tauri bridge + commands + settings | NOT_STARTED | รอ src-tauri (Tauri event pump + commands + settings.json) | — |
 | P5 Frontend shell | **DONE** | App.tsx + App.css + tokens.css — 4-column shell, 13-col scanner table, 3 opportunity cards, contract analysis, copilot chat, status bar. DESIGN.md palette + all CSS classes. | **PASS** (F1 palette + F2 CSS fixed) |
-| P6.* copilot | NOT_STARTED | — | — |
+| P6 Copilot module | **DONE** | `crates/radar-core/src/copilot.rs` — LlmConfig (GLM-5.3/OpenAI provider-agnostic), ChatMessage, ToolDef×3 (top_candidates/contract_detail/chain_stats), Thai system prompt, build_request, parse_response (content/tool-call/error). 7 unit tests. | builder gates ผ่าน |
 | P7.* packaging | NOT_STARTED | ต้องการ MSVC (ดูด้านล่าง) | — |
 
 ## Validation ล่าสุด (2026-11-22)
