@@ -3,6 +3,7 @@
 
 use std::sync::Mutex;
 use chrono::Utc;
+pub mod settings;
 use radar_core::engine::{Engine, EngineSnapshot};
 use radar_core::screener::{Filters, Mode};
 use radar_core::webull::rest::Credentials;
@@ -12,6 +13,8 @@ use serde::Serialize;
 pub struct AppState {
     pub engine: Mutex<Engine>,
     pub credentials: Mutex<Option<Credentials>>,
+    pub settings: Mutex<settings::AppSettings>,
+    pub app_data_dir: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -176,24 +179,45 @@ fn get_status(state: tauri::State<'_, AppState>) -> String {
     )
 }
 
+#[tauri::command]
+fn get_settings(state: tauri::State<'_, AppState>) -> settings::AppSettings {
+    state.settings.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn save_settings(state: tauri::State<'_, AppState>, new_settings: settings::AppSettings) -> Result<(), String> {
+    let dir = state.app_data_dir.clone();
+    *state.settings.lock().unwrap() = new_settings.clone();
+    new_settings.save(&dir)
+}
+
 // ---------- Tauri app entry ----------
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let now = Utc::now();
     let engine = Engine::new(now);
+    let app_data_dir = std::env::var("APPDATA")
+        .unwrap_or_else(|_| ".".into());
+    let app_data_dir = format!("{app_data_dir}/premium-radar");
+    let _ = std::fs::create_dir_all(&app_data_dir);
+    let app_settings = settings::AppSettings::load(&app_data_dir);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
             engine: Mutex::new(engine),
             credentials: Mutex::new(Credentials::from_env()),
+            settings: Mutex::new(app_settings),
+            app_data_dir,
         })
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
             set_filters,
             set_symbol,
             get_status,
+            get_settings,
+            save_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
