@@ -1,11 +1,14 @@
-//! MQTT streaming layer — connection wrapper, subscribe/unsubscribe via HTTP,
-//! topic routing, and reconnect. Enabled behind the `stream` feature.
+//! MQTT streaming layer — rumqttc connection wrapper, topic routing, and a
+//! reconnect-ready subscription tracker. Enabled behind the `stream` feature.
 //!
-//! Wire protocol per Webull developer docs:
-//! - MQTT v3.1.1 over WSS (:8883/mqtt) or TCP (:1883)
-//! - ClientId = session_id, Username = App Key, Password = any
-//! - Subscribe/unsubscribe via HTTP API with matching session_id
-//! - Payloads: protobuf for quote/snapshot/tick, JSON for notice
+//! Wire protocol (verified against the official Python SDK internals,
+//! webull.data.internal.quotes_client):
+//! - MQTT v3.1.1 over TLS on port 1883 (SDK defaults: transport "tcp" +
+//!   tls_set → platform CA roots), ClientId = session_id,
+//!   Username = App Key, Password = any value
+//! - Subscribe/unsubscribe via signed POST /openapi/market-data/streaming/{subscribe,unsubscribe}
+//!   (x-version: v2) with matching session_id — see scan.rs for the caller
+//! - Payloads: protobuf for quote/snapshot/tick (no framing), JSON for notice
 //! - `echo` topic = heartbeat (null payload)
 //! - Max 5 connections/app key, 3 msg/s per connection
 
@@ -13,12 +16,15 @@ use std::time::Duration;
 
 use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet};
 
-use super::rest::{Credentials, HttpFetch};
+use super::rest::Credentials;
 
-/// MQTT broker endpoints for Webull Thailand.
+/// MQTT brokers (production / UAT).
 pub const MQTT_HOST: &str = "data-api.webull.co.th";
-pub const MQTT_PORT_TLS: u16 = 8883;
-pub const MQTT_PORT_TCP: u16 = 1883;
+pub const MQTT_HOST_UAT: &str = "data-api.uat.webullbroker.com";
+/// TLS port used by the SDK (`DataStreamingClient(mqtt_port=1883, tls_enable=True)`).
+pub const MQTT_PORT_TLS: u16 = 1883;
+/// Documented alternative TLS port.
+pub const MQTT_PORT_ALT: u16 = 8883;
 /// Connection timeout.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Max messages per second per connection (Webull limit).
@@ -27,27 +33,8 @@ pub const MAX_MSG_PER_SEC: usize = 3;
 /// A decoded streaming event.
 #[derive(Clone, Debug)]
 pub enum StreamEvent {
-    /// Option-contract snapshot (protobuf or JSON).
-    OptionSnapshot {
-        symbol: String,
-        payload: Vec<u8>,
-    },
-    /// Stock snapshot.
-    StockSnapshot {
-        symbol: String,
-        payload: Vec<u8>,
-    },
-    /// Stock order-book quote.
-    StockQuote {
-        asks: Vec<(f64, f64)>,
-        bids: Vec<(f64, f64)>,
-    },
-    /// Stock tick (trade print).
-    StockTick {
-        price: f64,
-        size: f64,
-        side: String,
-    },
+    /// Snapshot push (option contract or stock — decide by symbol: OCC vs root).
+    Snapshot { payload: Vec<u8> },
     /// Heartbeat (echo topic).
     Heartbeat,
     /// Server notice (JSON).
@@ -76,6 +63,24 @@ impl StreamConfig {
         }
     }
 
+    pub fn uat(session_id: impl Into<String>) -> Self {
+        Self {
+            host: MQTT_HOST_UAT.to_string(),
+            port: MQTT_PORT_TLS,
+            use_tls: true,
+            session_id: session_id.into(),
+        }
+    }
+
+    /// Pick the broker that matches the REST base URL environment.
+    pub fn for_base_url(base_url: &str, session_id: impl Into<String>) -> Self {
+        if base_url.contains("uat") {
+            Self::uat(session_id)
+        } else {
+            Self::thailand(session_id)
+        }
+    }
+
     /// Local test (no TLS).
     pub fn local(port: u16, session_id: impl Into<String>) -> Self {
         Self {
@@ -85,91 +90,39 @@ impl StreamConfig {
             session_id: session_id.into(),
         }
     }
-}
 
-/// Subscribe/unsubscribe a symbol for a given category via HTTP.
-/// The session_id must match the MQTT ClientId.
-pub fn subscribe_symbol<F: HttpFetch>(
-    http: &mut F,
-    base_url: &str,
-    session_id: &str,
-    symbols: &[String],
-    topic: &str, // "snapshot" | "quote" | "tick"
-) -> Result<(), super::rest::FetchError> {
-    let params: Vec<(String, String)> = vec![
-        ("session_id".into(), session_id.into()),
-        ("symbols".into(), symbols.join(",")),
-        ("topic".into(), topic.into()),
-    ];
-    let (status, body) = http.get(
-        &format!("{base_url}/openapi/market-data/subscribe"),
-        &params,
-    )?;
-    if status != 200 {
-        return Err(super::rest::FetchError::NonZero(status, body.to_string()));
+    /// rumqttc transport: raw MQTT v3.1.1 over TLS with platform CA roots
+    /// (verified against the broker: a raw CONNECT gets a real CONNACK; a
+    /// websocket upgrade is refused).
+    pub fn rumqttc_transport(&self) -> rumqttc::Transport {
+        if self.use_tls {
+            rumqttc::Transport::Tls(rumqttc::TlsConfiguration::default())
+        } else {
+            rumqttc::Transport::Tcp
+        }
     }
-    Ok(())
-}
-
-pub fn unsubscribe_symbol<F: HttpFetch>(
-    http: &mut F,
-    base_url: &str,
-    session_id: &str,
-    symbols: &[String],
-    topic: &str,
-) -> Result<(), super::rest::FetchError> {
-    let params: Vec<(String, String)> = vec![
-        ("session_id".into(), session_id.into()),
-        ("symbols".into(), symbols.join(",")),
-        ("topic".into(), topic.into()),
-    ];
-    let (status, body) = http.get(
-        &format!("{base_url}/openapi/market-data/unsubscribe"),
-        &params,
-    )?;
-    if status != 200 {
-        return Err(super::rest::FetchError::NonZero(status, body.to_string()));
-    }
-    Ok(())
 }
 
 /// Route a raw MQTT message by topic to a typed [`StreamEvent`].
 /// Returns `None` for unrecognized/irrelevant messages.
 pub fn route_message(topic: &str, payload: &[u8]) -> Option<StreamEvent> {
     match topic {
-        "snapshot" => {
-            // protobuf payload — symbol extraction needs decode
-            // for now pass raw bytes; the engine layer decodes
-            Some(StreamEvent::OptionSnapshot {
-                symbol: String::new(), // filled by decoder
-                payload: payload.to_vec(),
-            })
-        }
-        "quote" => {
-            // order book — protobuf
-            Some(StreamEvent::StockQuote {
-                asks: Vec::new(),
-                bids: Vec::new(),
-            })
-        }
-        "tick" => {
-            // trade print — protobuf
-            Some(StreamEvent::StockTick {
-                price: 0.0,
-                size: 0.0,
-                side: String::new(),
-            })
-        }
+        "snapshot" => Some(StreamEvent::Snapshot {
+            payload: payload.to_vec(),
+        }),
         "echo" => Some(StreamEvent::Heartbeat),
         "notice" => {
             let text = String::from_utf8_lossy(payload).to_string();
             Some(StreamEvent::Notice(text))
         }
+        // quote (order book) / tick (trade print) feed the stock panels —
+        // stock spot already arrives on "snapshot"; skip for now.
         _ => None,
     }
 }
 
-/// The streaming client — wraps rumqttc with auto-reconnect and resubscribe.
+/// The streaming client — wraps rumqttc; recreate on reconnect (clean session
+/// means the broker drops subscription state, so HTTP subscribe must re-run).
 pub struct StreamClient {
     config: StreamConfig,
     client: AsyncClient,
@@ -182,12 +135,9 @@ impl StreamClient {
     pub fn new(config: StreamConfig, creds: Credentials) -> Self {
         let mut opts = MqttOptions::new(&config.session_id, &config.host, config.port);
         opts.set_keep_alive(Duration::from_secs(30));
-        // Webull: username = App Key, password = any value
+        // Webull: username = App Key, password = any value (SDK uses a uuid)
         opts.set_credentials(&creds.app_key, "webull");
-        // Wire the transport: docs say :8883 is WSS, :1883 is plain TCP
-        if config.use_tls {
-            opts.set_transport(rumqttc::Transport::tls(Vec::new(), None, None));
-        }
+        opts.set_transport(config.rumqttc_transport());
 
         let (client, event_loop) = AsyncClient::new(opts, 64);
         Self {
@@ -222,7 +172,7 @@ impl StreamClient {
     }
 
     /// Process one MQTT event into a StreamEvent (or None for irrelevant packets).
-    /// Note: disconnection is detected by `Err` from `event_loop.poll()`, not an Event.
+    /// Disconnection surfaces as `Err` from `event_loop.poll()`.
     pub fn handle_event(
         &mut self,
         event: Result<Event, rumqttc::ConnectionError>,
@@ -247,10 +197,18 @@ mod tests {
     #[test]
     fn config_thailand_defaults() {
         let c = StreamConfig::thailand("test_session");
-        assert_eq!(c.host, "data-api.webull.co.th");
-        assert_eq!(c.port, 8883);
+        assert_eq!(c.host, MQTT_HOST);
+        assert_eq!(c.port, 1883);
         assert!(c.use_tls);
         assert_eq!(c.session_id, "test_session");
+    }
+
+    #[test]
+    fn config_follows_base_url_environment() {
+        let uat = StreamConfig::for_base_url("https://th-api.uat.webullbroker.com", "s");
+        assert_eq!(uat.host, MQTT_HOST_UAT);
+        let prod = StreamConfig::for_base_url("https://api.webull.co.th", "s");
+        assert_eq!(prod.host, MQTT_HOST);
     }
 
     #[test]
@@ -263,10 +221,7 @@ mod tests {
 
     #[test]
     fn route_echo_heartbeat() {
-        assert!(matches!(
-            route_message("echo", &[]),
-            Some(StreamEvent::Heartbeat)
-        ));
+        assert!(matches!(route_message("echo", &[]), Some(StreamEvent::Heartbeat)));
     }
 
     #[test]
@@ -302,6 +257,6 @@ mod tests {
     #[test]
     fn route_snapshot_produces_event() {
         let e = route_message("snapshot", &[1, 2, 3]);
-        assert!(matches!(e, Some(StreamEvent::OptionSnapshot { .. })));
+        assert!(matches!(e, Some(StreamEvent::Snapshot { .. })));
     }
 }

@@ -226,4 +226,30 @@ mod tests {
         assert_eq!(update.price, 4.20);
         assert_eq!(update.oi, 3120.0);
     }
+
+    #[test]
+    fn snapshot_roundtrip_prost() {
+        // encode → decode must survive the exact bytes a broker push carries
+        let snap = Snapshot {
+            symbol: "NVDA261218P00175000".into(),
+            price: 4.2,
+            volume: 1842.0,
+            change: 0.1,
+            change_ratio: 0.02,
+            open_interest: 3120.0,
+            bid: 4.15,
+            ask: 4.25,
+            open: 180.0,
+            high: 183.7,
+            low: 179.1,
+            pre_close: 180.14,
+            ext_price: None,
+            ovn_price: None,
+        };
+        let bytes = snap.encode_to_vec();
+        let back = decode_snapshot(&bytes).expect("roundtrip decode");
+        assert_eq!(back.symbol, "NVDA261218P00175000");
+        assert_eq!(back.price, 4.2);
+        assert_eq!(back.open_interest, 3120.0);
+    }
 }

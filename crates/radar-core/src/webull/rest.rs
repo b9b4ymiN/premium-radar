@@ -16,6 +16,8 @@ pub const PATH_OPTION_BARS: &str = "/openapi/market-data/option/bars";
 pub const PATH_OPTION_CONTRACTS: &str = "/openapi/instrument/option/contracts";
 pub const PATH_AUTH_TOKEN_CREATE: &str = "/openapi/auth/token/create";
 pub const PATH_AUTH_TOKEN_CHECK: &str = "/openapi/auth/token/check";
+pub const PATH_STREAMING_SUBSCRIBE: &str = "/openapi/market-data/streaming/subscribe";
+pub const PATH_STREAMING_UNSUBSCRIBE: &str = "/openapi/market-data/streaming/unsubscribe";
 
 /// Shared REST throttle (1 call / 1.1s across all tasks).
 pub const MIN_INTERVAL_SEC: f64 = 1.1;

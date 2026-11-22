@@ -1,7 +1,7 @@
-//! REST scan worker — discovery → seed (stock / option snapshots / bars
-//! fallback) → poll loop, pushing `scan://progress` and `scan://snapshot`
-//! events to the frontend. Port of the REST half of `Dashboard`; MQTT
-//! streaming (WS priority) layers on top later (PLAN.md P3.4).
+//! Scan worker — discovery → seed (stock / option snapshots / bars fallback)
+//! → MQTT real-time push (WS priority over REST) → REST poll fallback,
+//! pushing `scan://progress` and `scan://snapshot` events to the frontend.
+//! Port of `Dashboard._stream_worker` + `_rest_fetch` (PLAN.md P3.4).
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -10,15 +10,39 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use radar_core::engine::{Engine, EngineSnapshot};
-use radar_core::webull::discovery::fetch_symbols_flow;
+use radar_core::engine::{DataSource, Engine, EngineSnapshot, QuoteUpdate, StockUpdate};
+use radar_core::webull::contracts::parse_occ;
+use radar_core::webull::discovery::{fetch_symbols_flow, pick_ws_symbols};
+use radar_core::webull::pb;
 use radar_core::webull::quotes::{self, OI_BATCH};
-use radar_core::webull::rest::Credentials;
+use radar_core::webull::rest::{Credentials, MAX_CONTRACTS, PATH_STREAMING_SUBSCRIBE};
+use radar_core::webull::stream::{StreamClient, StreamConfig, StreamEvent};
 use radar_core::webull::transport::WebullClient;
 
-/// Poll interval while no WebSocket feed is connected (Python `_rest_tick`
-/// uses 180 s without WS, 60 s with).
-const POLL_INTERVAL_SEC: u64 = 180;
+/// REST poll interval when the real-time feed is silent (Python `_rest_tick`:
+/// 180 s without WS, 60 s with).
+const POLL_IDLE_SEC: u64 = 180;
+const POLL_WS_ALIVE_SEC: u64 = 60;
+/// WS considered alive if a message (incl. echo) arrived in the last 60 s.
+const WS_FRESH_MS: u64 = 60_000;
+/// Frontend snapshot emit throttle while WS quotes stream in.
+const EMIT_INTERVAL: Duration = Duration::from_millis(800);
+/// MQTT inactivity timeout (echo heartbeat arrives every ~30 s keepalive).
+const WS_READ_TIMEOUT: Duration = Duration::from_secs(120);
+const WS_RECONNECT_DELAY: Duration = Duration::from_secs(5);
+/// Option subscribe chunk (Python `CHUNK_SIZE = 50`; client throttle paces calls).
+const SUB_CHUNK: usize = 50;
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn clip(s: &str) -> String {
+    s.chars().take(160).collect()
+}
 
 /// Shared scan lifecycle: `stop` kills everything, `gen_ctr` invalidates older
 /// scans when the symbol changes, `running` reports liveness to the UI.
@@ -100,7 +124,7 @@ fn run(
     let stale = || stop.load(Ordering::Relaxed) || gen_ctr.load(Ordering::Relaxed) != my_gen;
     let finish = |running: &Arc<AtomicBool>| running.store(false, Ordering::SeqCst);
 
-    let mut client = WebullClient::new(creds).with_base_url(base_url);
+    let mut client = WebullClient::new(creds.clone()).with_base_url(base_url.clone());
 
     // ---- Phase 1: discovery ----
     progress(&app, "discovery", format!("ค้นหา option contracts ของ {root} ..."));
@@ -131,7 +155,9 @@ fn run(
     );
     emit_snapshot(&app, &engine);
 
-    // ---- Phase 2+3: seed pass, then poll loop ----
+    // ---- Phase 2+3: seed pass → start real-time push → poll loop ----
+    let ws_alive: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+    let mut first_pass = true;
     'outer: loop {
         if let Ok(Some(stk)) = quotes::fetch_stock_update(&mut client, &root) {
             engine.lock().unwrap().push_stock(stk);
@@ -183,9 +209,42 @@ fn run(
         }
 
         emit_snapshot(&app, &engine);
-        progress(&app, "live", "อัปเดตแล้ว — รอบถัดไปใน 3 นาที");
 
-        for _ in 0..POLL_INTERVAL_SEC {
+        // after the first seed pass, layer real-time MQTT push on top
+        // (WS quotes win over REST seeds in the engine; REST keeps polling
+        // as fallback for the contracts outside the WS window)
+        if first_pass {
+            first_pass = false;
+            let ws_symbols = pick_ws_symbols(&symbols, spot, MAX_CONTRACTS);
+            progress(
+                &app,
+                "live",
+                format!(
+                    "seed ครบ — เริ่ม real-time push ({} contracts ใกล้ spot) + REST fallback",
+                    ws_symbols.len()
+                ),
+            );
+            spawn_ws(
+                app.clone(),
+                engine.clone(),
+                stop.clone(),
+                gen_ctr.clone(),
+                my_gen,
+                creds.clone(),
+                base_url.clone(),
+                root.clone(),
+                ws_symbols,
+                ws_alive.clone(),
+            );
+        }
+
+        let ws_fresh = now_ms().saturating_sub(ws_alive.load(Ordering::Relaxed)) < WS_FRESH_MS;
+        let interval = if ws_fresh { POLL_WS_ALIVE_SEC } else { POLL_IDLE_SEC };
+        if !ws_fresh {
+            progress(&app, "live", format!("อัปเดต REST แล้ว — รอบถัดไปใน {interval} วิ"));
+        }
+
+        for _ in 0..interval {
             if stale() {
                 break 'outer;
             }
@@ -193,4 +252,230 @@ fn run(
         }
     }
     finish(&running);
+}
+
+// ---------- real-time MQTT push (P3.4 — port of `_stream_worker`) ----------
+
+/// Launch the real-time task on its own OS thread + single-threaded tokio
+/// runtime. Shares the scan's generation: a symbol change (or stop) retires
+/// this task along with its REST loop.
+#[allow(clippy::too_many_arguments)]
+fn spawn_ws(
+    app: AppHandle,
+    engine: Arc<Mutex<Engine>>,
+    stop: Arc<AtomicBool>,
+    gen_ctr: Arc<AtomicU64>,
+    scan_gen: u64,
+    creds: Credentials,
+    base_url: String,
+    root: String,
+    ws_symbols: Vec<String>,
+    ws_alive: Arc<AtomicU64>,
+) {
+    let _ = std::thread::Builder::new()
+        .name("radar-ws".into())
+        .spawn(move || {
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            rt.block_on(ws_loop(
+                app, engine, stop, gen_ctr, scan_gen, creds, base_url, root, ws_symbols, ws_alive,
+            ));
+        });
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn ws_loop(
+    app: AppHandle,
+    engine: Arc<Mutex<Engine>>,
+    stop: Arc<AtomicBool>,
+    gen_ctr: Arc<AtomicU64>,
+    scan_gen: u64,
+    creds: Credentials,
+    base_url: String,
+    root: String,
+    ws_symbols: Vec<String>,
+    ws_alive: Arc<AtomicU64>,
+) {
+    let stale = || stop.load(Ordering::Relaxed) || gen_ctr.load(Ordering::Relaxed) != scan_gen;
+    // session id mirrors the Python SDK: "th_" + uuid hex prefix
+    let session_id = format!("th_{}", &uuid::Uuid::new_v4().simple().to_string()[..10]);
+
+    let mut attempt: u32 = 0;
+    loop {
+        if stale() {
+            return;
+        }
+        attempt += 1;
+        progress(&app, "live", format!("เชื่อมต่อ real-time (ครั้งที่ {attempt}) ..."));
+
+        let config = StreamConfig::for_base_url(&base_url, session_id.clone());
+        let mut stream = StreamClient::new(config, creds.clone());
+        let mut subscribed = false;
+        let mut last_emit = std::time::Instant::now();
+
+        let run_once = async {
+            loop {
+                if stale() {
+                    return Ok(());
+                }
+                let ev = tokio::time::timeout(WS_READ_TIMEOUT, stream.event_loop().poll()).await;
+                match ev {
+                    Err(_) => return Err("120 วิไม่มีข้อความจาก server (รวม heartbeat)".into()),
+                    Ok(Err(e)) => return Err(format!("{e}")),
+                    Ok(Ok(event)) => {
+                        let Some(se) = stream.handle_event(Ok(event)) else {
+                            continue;
+                        };
+                        match se {
+                            StreamEvent::Connected if !subscribed => {
+                                subscribed = true;
+                                if let Err(e) = do_subscribe(
+                                    &creds,
+                                    &base_url,
+                                    &session_id,
+                                    &root,
+                                    &ws_symbols,
+                                )
+                                .await
+                                {
+                                    return Err(format!("subscribe ล้มเหลว: {e}"));
+                                }
+                                ws_alive.store(now_ms(), Ordering::Relaxed);
+                                progress(
+                                    &app,
+                                    "live",
+                                    format!(
+                                        "🟢 เชื่อมต่อสดแล้ว — push real-time {} contracts",
+                                        ws_symbols.len()
+                                    ),
+                                );
+                            }
+                            StreamEvent::Snapshot { payload } => {
+                                ws_alive.store(now_ms(), Ordering::Relaxed);
+                                let Some(snap) = pb::decode_snapshot(&payload) else {
+                                    continue;
+                                };
+                                let sym = snap.symbol.replace(' ', "");
+                                if parse_occ(&sym).is_some() {
+                                    // option contract snapshot — WS wins in the engine
+                                    engine.lock().unwrap().push_quote(QuoteUpdate {
+                                        symbol: sym,
+                                        price: snap.price,
+                                        volume: snap.volume,
+                                        change: snap.change,
+                                        change_ratio: snap.change_ratio,
+                                        oi: snap.open_interest,
+                                        bid: snap.bid,
+                                        ask: snap.ask,
+                                        src: DataSource::Ws,
+                                    });
+                                } else if sym == root {
+                                    engine.lock().unwrap().push_stock(StockUpdate {
+                                        price: snap.price,
+                                        open: snap.open,
+                                        high: snap.high,
+                                        low: snap.low,
+                                        pre_close: snap.pre_close,
+                                        volume: snap.volume,
+                                        change: snap.change,
+                                        change_ratio: snap.change_ratio,
+                                        src: DataSource::Ws,
+                                    });
+                                }
+                                if last_emit.elapsed() >= EMIT_INTERVAL {
+                                    last_emit = std::time::Instant::now();
+                                    emit_snapshot(&app, &engine);
+                                }
+                            }
+                            StreamEvent::Heartbeat => {
+                                ws_alive.store(now_ms(), Ordering::Relaxed);
+                            }
+                            StreamEvent::Notice(_) | StreamEvent::Connected
+                            | StreamEvent::Disconnected => {}
+                        }
+                    }
+                }
+            }
+        };
+
+        let outcome = run_once.await;
+        if stale() {
+            return;
+        }
+        match outcome {
+            Err(e) if e.contains("104") => {
+                // Webull custom CONNACK code 104 = "Invalid AppKey": this app
+                // key has no streaming entitlement on this environment.
+                // Retrying cannot fix it — fall back to REST polling for good.
+                progress(
+                    &app,
+                    "live",
+                    "⚠ real-time ไม่พร้อมใช้: AppKey นี้ไม่มีสิทธิ์ streaming (Webull 104: Invalid \
+                     AppKey) — ทำงานต่อด้วย REST snapshot (ทุก 3 นาที)",
+                );
+                return;
+            }
+            Err(e) if e.contains("105") => {
+                // connection limit (max 5/app key) — back off harder
+                progress(&app, "live", format!("real-time หลุด ({e}: connection limit) — รอ 60 วิ"));
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+            Err(e) => {
+                progress(&app, "live", format!("real-time หลุด ({e}) — ต่อใหม่ใน 5 วิ"));
+                tokio::time::sleep(WS_RECONNECT_DELAY).await;
+            }
+            Ok(()) => return,
+        }
+    }
+}
+
+/// HTTP subscribe (signed POST, x-version v2) — stock root on
+/// QUOTE+SNAPSHOT+TICK, option chunks on SNAPSHOT. The WebullClient throttle
+/// paces the calls; clean-session reconnects must re-run this.
+async fn do_subscribe(
+    creds: &Credentials,
+    base_url: &str,
+    session_id: &str,
+    root: &str,
+    ws_symbols: &[String],
+) -> Result<(), String> {
+    let creds = creds.clone();
+    let base = base_url.to_string();
+    let sid = session_id.to_string();
+    let root = root.to_string();
+    let symbols = ws_symbols.to_vec();
+    tokio::task::spawn_blocking(move || {
+        let mut http = WebullClient::new(creds).with_base_url(base);
+        let stock_body = serde_json::json!({
+            "session_id": sid, "symbols": [root], "category": "US_STOCK",
+            "sub_types": ["QUOTE", "SNAPSHOT", "TICK"],
+        })
+        .to_string();
+        let (st, b) = http
+            .post_json(PATH_STREAMING_SUBSCRIBE, &stock_body)
+            .map_err(|e| e.to_string())?;
+        if st != 200 {
+            return Err(format!("stock subscribe {st}: {}", clip(&b.to_string())));
+        }
+        for chunk in symbols.chunks(SUB_CHUNK) {
+            let body = serde_json::json!({
+                "session_id": sid, "symbols": chunk, "category": "US_OPTION",
+                "sub_types": ["SNAPSHOT"],
+            })
+            .to_string();
+            let (st, b) = http
+                .post_json(PATH_STREAMING_SUBSCRIBE, &body)
+                .map_err(|e| e.to_string())?;
+            if st != 200 {
+                return Err(format!("options subscribe {st}: {}", clip(&b.to_string())));
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

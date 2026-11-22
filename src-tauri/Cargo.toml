@@ -19,7 +19,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
-radar-core = { path = "../crates/radar-core", features = ["client"] }
+uuid = { version = "1", features = ["v4"] }
+radar-core = { path = "../crates/radar-core", features = ["client", "stream"] }
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
