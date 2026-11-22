@@ -554,6 +554,104 @@ fn lab_analyze(input: LabAnalyzeInput) -> Result<serde_json::Value, String> {
     }))
 }
 
+struct DataCreds {
+    creds: radar_core::webull::rest::Credentials,
+}
+
+/// โหลด credentials เหมือนแอป (settings + keyring) สำหรับ commands ที่ไม่แตะ engine
+fn app_state_for_data() -> Result<DataCreds, String> {
+    let app_data = std::env::var("APPDATA")
+        .map(|a| format!("{a}/premium-radar"))
+        .unwrap_or_else(|_| ".".into());
+    let mut settings = settings::AppSettings::load(&app_data);
+    settings.pull_secrets_from_keyring();
+    settings
+        .webull_credentials()
+        .map(|creds| DataCreds { creds })
+        .ok_or_else(|| "ยังไม่ได้ตั้ง credentials — เปิดหน้า Setup ก่อน".to_string())
+}
+
+/// APP v2 — ประวัติราคาหุ้น (PLAN-APP2 P15): bars + MA + summary จาก Rust
+#[tauri::command]
+fn get_stock_history(symbol: String, range: String) -> Result<serde_json::Value, String> {
+    use radar_core::market_history::{moving_average, range_summary};
+    use radar_core::webull::stocks::{fetch_stock_bars, timespan_valid};
+    let state = app_state_for_data()?;
+    let (timespan, count) = match range.as_str() {
+        "1M" => ("D", 30u32),
+        "3M" => ("D", 90),
+        "6M" => ("D", 180),
+        "1Y" => ("D", 365),
+        "5Y" => ("D", 1200),
+        _ => ("D", 180),
+    };
+    assert!(timespan_valid(timespan));
+    let mut client = radar_core::webull::transport::WebullClient::new(state.creds);
+    let bars = fetch_stock_bars(&mut client, &[symbol], timespan, count)
+        .map_err(|e| format!("ดึงข้อมูลราคาไม่สำเร็จ: {e}"))?;
+    let ma5 = moving_average(&bars, 5);
+    let ma20 = moving_average(&bars, 20);
+    let summary = range_summary(&bars);
+    Ok(serde_json::json!({
+        "bars": bars, "ma5": ma5, "ma20": ma20,
+        "summary": summary, "range": range,
+        "note": "ราคาปิดรายวัน · ฐานปรับราคาตามที่ API ส่ง (ยังไม่ยืนยัน adjusted/crude)",
+    }))
+}
+
+/// APP v2 — ข้อมูลหลักทรัพย์ (เฉพาะ fields ที่ API ให้จริง ไม่มี fundamentals)
+#[tauri::command]
+fn get_instrument_profile(symbol: String) -> Result<serde_json::Value, String> {
+    use radar_core::webull::stocks::fetch_instrument_profiles;
+    let state = app_state_for_data()?;
+    let mut client = radar_core::webull::transport::WebullClient::new(state.creds);
+    let profiles = fetch_instrument_profiles(&mut client, &[symbol])
+        .map_err(|e| format!("ดึงโปรไฟล์ไม่สำเร็จ: {e}"))?;
+    serde_json::to_value(profiles.into_iter().next()).map_err(|e| e.to_string())
+}
+
+/// APP v2 — พอร์ต read-only (P18): accounts → positions + balance
+#[tauri::command]
+fn get_portfolio() -> Result<serde_json::Value, String> {
+    use radar_core::webull::trading::{fetch_accounts, fetch_balance, fetch_positions};
+    let state = app_state_for_data()?;
+    let mut client = radar_core::webull::transport::WebullClient::new(state.creds);
+    let accounts = fetch_accounts(&mut client).map_err(|e| format!("ดึงบัญชีไม่สำเร็จ: {e}"))?;
+    // v1: บัญชีแรก (docs บอก account_type CASH เดี่ยว) — mask ไม่เผยเต็ม
+    let Some(acc) = accounts.first() else {
+        return Ok(serde_json::json!({
+            "accounts": [], "positions": [], "balance": null,
+            "note": "ไม่พบบัญชีในสิทธิ์นี้"
+        }));
+    };
+    let positions = fetch_positions(&mut client, &acc.account_id)
+        .map_err(|e| format!("ดึงสถานะถือครองไม่สำเร็จ: {e}"))?;
+    let balance = fetch_balance(&mut client, &acc.account_id)
+        .map_err(|e| {
+            // balance ล้มไม่ทำทั้งหน้าพัง — แสดง positions พร้อมบอกว่ายอดเงินดึงไม่ได้
+            let _ = e;
+        })
+        .ok();
+    let head: String = acc.account_number.chars().take(4).collect();
+    let tail: String = acc
+        .account_number
+        .chars()
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let masked = format!("{head}…{tail}");
+    Ok(serde_json::json!({
+        "account_label": acc.account_label,
+        "account_masked": masked,
+        "as_of": chrono::Utc::now().to_rfc3339(),
+        "positions": positions,
+        "balance": balance,
+    }))
+}
+
 /// Option Lab — บันทึกคำทำนาย (freeze) ห้ามแก้ย้อนหลัง (P9.4)
 #[derive(serde::Deserialize)]
 struct LabFreezeInput {
@@ -760,6 +858,9 @@ pub fn run() {
             test_connection,
             create_access_token,
             needs_setup,
+            get_stock_history,
+            get_instrument_profile,
+            get_portfolio,
             lab_analyze,
             lab_freeze_prediction,
             lab_predictions,

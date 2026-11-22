@@ -9,7 +9,9 @@ pub mod pb;
 pub mod quotes;
 pub mod rest;
 pub mod sign;
+pub mod stocks;
 #[cfg(feature = "stream")]
 pub mod stream;
+pub mod trading;
 #[cfg(feature = "client")]
 pub mod transport;

@@ -127,6 +127,10 @@ impl WebullClient {
 }
 
 impl HttpFetch for WebullClient {
+    fn post_json(&mut self, path: &str, body: &str) -> Result<(u16, Value), FetchError> {
+        WebullClient::post_json(self, path, body)
+    }
+
     /// Cache check → do_get → cache put on 200 (mirrors `webull_get`).
     fn get(&mut self, path: &str, params: &[(String, String)]) -> Result<(u16, Value), FetchError> {
         let key = SnapCache::key(path, params);

@@ -4,6 +4,7 @@
 pub mod copilot;
 pub mod engine;
 pub mod lab;
+pub mod market_history;
 pub mod quant;
 pub mod screener;
 pub mod webull;

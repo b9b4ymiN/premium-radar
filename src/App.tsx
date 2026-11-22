@@ -3,6 +3,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SetupScreen } from "./components/SetupScreen";
 import OptionLab from "./components/OptionLab/OptionLab";
+import PriceChart from "./components/PriceChart/PriceChart";
 import type { EnrichedRow, StockUpdate, ChainStats, EngineSnapshot } from "./types/screener";
 import "./App.css";
 
@@ -298,7 +299,7 @@ export default function App() {
         </div>
         <nav className="headnav">
           <button className="navtab active">Options</button>
-          <button className="navtab">Analytics</button>
+          <button className="navtab" onClick={() => setMainTab("lab")}>Analytics · Lab</button>
         </nav>
         <label className="global-search">
           <span>⌕</span>
@@ -453,6 +454,10 @@ export default function App() {
             </section>
           ) : (
           <>
+          {/* กราฟราคาจริง (P15.4) — chart slot ตาม DESIGN.md */}
+          <section className="pricechart-slot">
+            <PriceChart symbol={symbol} />
+          </section>
           {/* 6 Metric Cards */}
           <section className="summary">
             {[

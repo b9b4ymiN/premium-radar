@@ -4,11 +4,9 @@
 
 use std::time::Instant;
 
-use radar_core::webull::rest::{
-    Credentials, FetchError, HttpFetch, PATH_OPTION_BARS,
-};
+use radar_core::webull::rest::{Credentials, FetchError, HttpFetch, PATH_OPTION_BARS};
 use radar_core::webull::transport::WebullClient;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct P {
     client: WebullClient,
@@ -33,7 +31,9 @@ impl P {
             }
             Err(e) => {
                 println!("[{ms:>5}ms] NET GET {step} — {e}");
-                self.log.push(json!({"step": step, "method": "GET", "path": path, "status": 0, "ms": ms}));
+                self.log.push(
+                    json!({"step": step, "method": "GET", "path": path, "status": 0, "ms": ms}),
+                );
                 (0, Value::Null)
             }
         }
@@ -56,7 +56,9 @@ impl P {
             }
             Err(e) => {
                 println!("[{ms:>5}ms] NET POST {step} — {e}");
-                self.log.push(json!({"step": step, "method": "POST", "path": path, "status": 0, "ms": ms}));
+                self.log.push(
+                    json!({"step": step, "method": "POST", "path": path, "status": 0, "ms": ms}),
+                );
                 (0, Value::Null)
             }
         }
@@ -67,11 +69,27 @@ fn bars_depth(body: &Value) -> Vec<(String, usize, String, String)> {
     let mut out = Vec::new();
     if let Some(arr) = body.get("result").and_then(Value::as_array) {
         for it in arr {
-            let sym = it.get("symbol").and_then(Value::as_str).unwrap_or("?").to_string();
-            let bars = it.get("result").and_then(Value::as_array).cloned().unwrap_or_default();
+            let sym = it
+                .get("symbol")
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+                .to_string();
+            let bars = it
+                .get("result")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
             let n = bars.len();
-            let first = bars.first().and_then(|b| b.get("time")).map(|t| t.to_string()).unwrap_or_default();
-            let last = bars.last().and_then(|b| b.get("time")).map(|t| t.to_string()).unwrap_or_default();
+            let first = bars
+                .first()
+                .and_then(|b| b.get("time"))
+                .map(|t| t.to_string())
+                .unwrap_or_default();
+            let last = bars
+                .last()
+                .and_then(|b| b.get("time"))
+                .map(|t| t.to_string())
+                .unwrap_or_default();
             out.push((sym, n, first, last));
         }
     }
@@ -88,7 +106,10 @@ fn main() {
         .webull_credentials()
         .expect("no creds — run app setup");
     println!("creds: {}", creds.masked());
-    let mut p = P { client: WebullClient::new(creds), log: Vec::new() };
+    let mut p = P {
+        client: WebullClient::new(creds),
+        log: Vec::new(),
+    };
     let mut report = json!({"probed_at": chrono::Utc::now().to_string()});
 
     // 1) stock bars — POST ทั้ง 2 รูปแบบ path
@@ -104,7 +125,9 @@ fn main() {
         let d = bars_depth(&v);
         println!("    depth: {d:?}");
         report["stock_bars_daily"] = json!({"path": path, "status": st, "depth": d});
-        if st == 200 { break; }
+        if st == 200 {
+            break;
+        }
     }
     // minute bars
     for path in [
@@ -119,7 +142,9 @@ fn main() {
         let d = bars_depth(&v);
         println!("    depth: {d:?}");
         report["stock_bars_m5"] = json!({"path": path, "status": st, "depth": d});
-        if st == 200 { break; }
+        if st == 200 {
+            break;
+        }
     }
 
     // 2) depths (order book)
@@ -139,7 +164,9 @@ fn main() {
         );
         let n_bids = v.get("bids").and_then(Value::as_array).map(|a| a.len());
         report["depths"] = json!({"path": path, "status": st, "bid_levels": n_bids});
-        if st == 200 { break; }
+        if st == 200 {
+            break;
+        }
     }
 
     // 3) accounts → positions + balance
@@ -149,12 +176,18 @@ fn main() {
         let list = radar_core::webull::rest::extract_list(&v);
         report["accounts"] = json!({"path": path, "status": st, "count": list.len()});
         if st == 200 && !list.is_empty() {
-            account_id = list[0].get("account_id").and_then(Value::as_str).map(String::from);
+            account_id = list[0]
+                .get("account_id")
+                .and_then(Value::as_str)
+                .map(String::from);
             break;
         }
     }
     if let Some(aid) = account_id {
-        for path in ["/openapi/trading/assets/positions/list", "/trading/assets/positions/list"] {
+        for path in [
+            "/openapi/trading/assets/positions/list",
+            "/trading/assets/positions/list",
+        ] {
             let (st, v) = p.try_get(
                 &format!("positions {path}"),
                 path,
@@ -166,17 +199,25 @@ fn main() {
                 .filter_map(|r| r.get("symbol").and_then(Value::as_str).map(String::from))
                 .collect();
             println!("    positions: {}", syms.join(","));
-            report["positions"] = json!({"path": path, "status": st, "count": list.len(), "symbols": syms});
-            if st == 200 { break; }
+            report["positions"] =
+                json!({"path": path, "status": st, "count": list.len(), "symbols": syms});
+            if st == 200 {
+                break;
+            }
         }
-        for path in ["/openapi/trading/assets/balances/get", "/trading/assets/balances/get"] {
+        for path in [
+            "/openapi/trading/assets/balances/get",
+            "/trading/assets/balances/get",
+        ] {
             let (st, v) = p.try_get(
                 &format!("balance {path}"),
                 path,
                 &[("account_id".into(), aid.clone())],
             );
             report["balance"] = json!({"path": path, "status": st, "keys": v.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()).unwrap_or_default()});
-            if st == 200 { break; }
+            if st == 200 {
+                break;
+            }
         }
     }
 
@@ -199,8 +240,11 @@ fn main() {
             .filter_map(|r| r.get("name").and_then(Value::as_str).map(String::from))
             .collect();
         println!("    names: {names:?}");
-        report["instrument"] = json!({"path": path, "status": st, "count": list.len(), "names": names});
-        if st == 200 { break; }
+        report["instrument"] =
+            json!({"path": path, "status": st, "count": list.len(), "names": names});
+        if st == 200 {
+            break;
+        }
     }
 
     // 5) (อ้างอิง) option bars GET ยังเวิร์กไหม — ใช้ path เดิม

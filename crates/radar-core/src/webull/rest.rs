@@ -297,6 +297,13 @@ impl std::error::Error for FetchError {}
 /// (status, json body). Implementations provide transport (mock / reqwest).
 pub trait HttpFetch {
     fn get(&mut self, path: &str, params: &[(String, String)]) -> Result<(u16, Value), FetchError>;
+
+    /// POST JSON แบบเซ็นเหมือนกัน (stocks/bars ใช้) — default คืน error
+    fn post_json(&mut self, _path: &str, _body: &str) -> Result<(u16, Value), FetchError> {
+        Err(FetchError::Network(
+            "post_json not supported by this client".into(),
+        ))
+    }
 }
 
 /// `http_get_json`: fetch + raise on non-200.
