@@ -437,3 +437,18 @@ button:focus-visible, input:focus-visible {
 .pc-status { color: var(--muted); font-size: 11px; padding: 14px 0; text-align: center; }
 .pc-status.err { color: #f4788c; }
 .pc-note { color: var(--muted); font-size: 8.5px; }
+
+/* ============ PORTFOLIO (P18) ============ */
+.portfolio { display: flex; flex-direction: column; gap: 10px; }
+.pf-head { display: flex; justify-content: space-between; align-items: center; }
+.pf-title { font-size: 14px; font-weight: 600; }
+.pf-title small { color: var(--muted); font-weight: 400; }
+.pf-sub { color: var(--muted); font-size: 9.5px; }
+.pf-refresh { background: transparent; border: 1px solid var(--divider); color: var(--text); padding: 5px 12px; border-radius: 3px; font-size: 11px; cursor: pointer; }
+.pf-refresh:disabled { opacity: 0.5; }
+.pf-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+.pf-err { color: #f4788c; font-size: 11.5px; }
+.pf-note { color: var(--muted); font-size: 11px; }
+.pf-strat { color: var(--muted); font-size: 9px; margin-left: 4px; }
+.pf-leg { color: var(--muted); font-size: 8.5px; }
+.pf-empty { color: var(--muted); text-align: center; padding: 18px 0; }
