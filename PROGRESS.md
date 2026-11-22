@@ -82,3 +82,12 @@ Loop spec ต่อไป: `task: P8.2` · `goal: probe matrix §1 ของ PLA
 | P9 Contract Lab (core+UI) | **DONE** | payoff/probability engines + tests · `lab_analyze`/`lab_freeze_prediction`/`lab_predictions` commands · OptionLab.tsx (summary band + payoff SVG + named-event probs + scenario table + CC toggle + freeze) บนแท็บ "Option Lab · ทดลองกลยุทธ์" · freeze append-only + dedupe 1 สัญญา/วัน | **validator อิสระ PASS-WITH-NOTES → แก้ครบ F1-F7 (commit f8220f4)** |
 | P10/P12/P13 engines | **DONE (engine readiness)** | calibration.rs (Brier/reliability/Wilson/guardrails) · compare.rs (18-config + honest statuses) · portfolio.rs (reserve-aware ledger + 30% drawdown ceiling) — empirical รายงานรอข้อมูลสะสมตามแผน | engine ✓ · evidence ตาม calendar time |
 | ตั้งเวลา lab_recorder | **DONE** | schtasks "PremiumRadar Lab Recorder" 08:00 ทุกวัน · ทดสอบ /Run จริง exit 0 (รอบแรกเก็บจริง: จันทร์ 08:00) | ลบได้: schtasks /Delete /TN "PremiumRadar Lab Recorder" /F |
+
+## APP v2 (P14–P20) — เริ่ม 2026-11-23
+
+แผนหลัก: **PLAN-APP2.md** (ออกแบบโดย Codex จาก llms.txt + probe จริง) · ขอบเขต: Home / กราฟราคา (bars 4.8 ปี verified) / Watchlists / Portfolio read-only (accounts+positions+balance = 200 ครบ) / ข้อมูลหลักทรัพย์ / audit ปิดทุกปุ่มตาย · Depths gated (param ยังไม่รู้แน่), fundamentals ไม่มีใน API
+
+| Task | สถานะ | Evidence |
+|---|---|---|
+| P14.2 (บางส่วน) | **DONE** | PLAN-APP2 Appendix A — balance path แก้จน 200 + schema จริง · depths 3 รูปแบบไม่ผ่าน → gated |
+| P14.1/14.3/14.4 | NOT_STARTED | — |
