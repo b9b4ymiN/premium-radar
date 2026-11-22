@@ -479,7 +479,11 @@ pub fn chat_with_tools(
         }
         match parse_response(&json) {
             LlmResponse::Content(c) => return Ok(c),
-            LlmResponse::ToolCall { id, name, arguments } => {
+            LlmResponse::ToolCall {
+                id,
+                name,
+                arguments,
+            } => {
                 let result = execute_tool(&name, &arguments, engine);
                 messages.push(ChatMessage {
                     role: "assistant".into(),
@@ -520,17 +524,26 @@ mod tests {
 
     #[test]
     fn glm_shorthand() {
-        let c = LlmConfig::new("Z.ai GLM", "https://api.z.ai/api/paas/v4", "glm-5.3", "test-key");
+        let c = LlmConfig::new(
+            "Z.ai GLM",
+            "https://api.z.ai/api/paas/v4",
+            "glm-5.3",
+            "test-key",
+        );
         assert!(c.is_ready());
-        assert!(c
-            .chat_url()
-            .contains("api.z.ai/api/paas/v4/chat/completions"));
+        assert!(
+            c.chat_url()
+                .contains("api.z.ai/api/paas/v4/chat/completions")
+        );
     }
 
     #[test]
     fn chat_url_mounts_versioned_roots_correctly() {
         let local = LlmConfig::new("local", "http://localhost:11434/v1", "m", "k");
-        assert_eq!(local.chat_url(), "http://localhost:11434/v1/chat/completions");
+        assert_eq!(
+            local.chat_url(),
+            "http://localhost:11434/v1/chat/completions"
+        );
         let openai = LlmConfig::new("o", "https://api.openai.com", "gpt-4o", "k");
         assert_eq!(
             openai.chat_url(),
@@ -557,7 +570,7 @@ mod tests {
 
     #[test]
     fn execute_tools_against_engine() {
-        use crate::engine::{Engine, QuoteUpdate, StockUpdate, DataSource};
+        use crate::engine::{DataSource, Engine, QuoteUpdate, StockUpdate};
         use chrono::Utc;
         let mut eng = Engine::new(Utc::now());
         eng.set_symbols(
@@ -598,11 +611,7 @@ mod tests {
         assert!(detail.contains("\"contract\""));
 
         // unknown symbol → explicit error, never invented data
-        let missing = execute_tool(
-            "contract_detail",
-            r#"{"symbol": "FAKE123"}"#,
-            &mut eng,
-        );
+        let missing = execute_tool("contract_detail", r#"{"symbol": "FAKE123"}"#, &mut eng);
         assert!(missing.contains("ไม่พบสัญญา"));
 
         // chain_stats returns JSON without panicking

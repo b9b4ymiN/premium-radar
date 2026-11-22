@@ -47,8 +47,7 @@ fn set_filters(
         "AGGR" => (0.25, 0.40),
         _ => (0.0, 1.0), // ALL
     };
-    let sel_exp = expiry
-        .and_then(|e| chrono::NaiveDate::parse_from_str(&e, "%Y-%m-%d").ok());
+    let sel_exp = expiry.and_then(|e| chrono::NaiveDate::parse_from_str(&e, "%Y-%m-%d").ok());
     let filters = Filters {
         mode,
         sel_exp,
@@ -84,7 +83,9 @@ fn start_scan(
         settings.webull_base_url.clone()
     };
 
-    state.scan.spawn(app, state.engine.clone(), creds, base_url, symbol.clone());
+    state
+        .scan
+        .spawn(app, state.engine.clone(), creds, base_url, symbol.clone());
 
     // remember the last symbol for the next session (persist goes through
     // the keyring path so the scrubbed file never regains plaintext secrets)
@@ -121,7 +122,10 @@ fn get_settings(state: tauri::State<'_, AppState>) -> AppSettings {
 }
 
 #[tauri::command]
-fn save_settings(state: tauri::State<'_, AppState>, mut new_settings: AppSettings) -> Result<(), String> {
+fn save_settings(
+    state: tauri::State<'_, AppState>,
+    mut new_settings: AppSettings,
+) -> Result<(), String> {
     let dir = state.app_data_dir.clone();
     new_settings.save_with_keyring(&dir)?;
     *state.settings.lock().unwrap() = new_settings;
@@ -162,7 +166,9 @@ fn save_credentials(
         && !model.is_empty()
         && !key.is_empty()
     {
-        s.llm = Some(radar_core::copilot::LlmConfig::new(label, base_url, model, key));
+        s.llm = Some(radar_core::copilot::LlmConfig::new(
+            label, base_url, model, key,
+        ));
     }
 
     s.save_with_keyring(&dir)?;
@@ -185,10 +191,16 @@ pub struct ConnectionTestResult {
 fn streaming_verdict(creds: &radar_core::webull::rest::Credentials, base_url: &str) -> String {
     let sid = format!("probe_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
     let config = radar_core::webull::stream::StreamConfig::for_base_url(base_url, sid);
-    let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
         return "unknown".into();
     };
-    match rt.block_on(radar_core::webull::stream::probe_entitlement(config, creds.clone())) {
+    match rt.block_on(radar_core::webull::stream::probe_entitlement(
+        config,
+        creds.clone(),
+    )) {
         radar_core::webull::stream::Entitlement::Entitled => "entitled".into(),
         radar_core::webull::stream::Entitlement::ConnectionLimit => "limit".into(),
         radar_core::webull::stream::Entitlement::NotEntitled => "none".into(),
@@ -248,7 +260,8 @@ fn test_connection(
         app_secret: secret.clone(),
         access_token: token.clone(),
     };
-    let mut client = radar_core::webull::transport::WebullClient::new(creds).with_base_url(base_url.clone());
+    let mut client =
+        radar_core::webull::transport::WebullClient::new(creds).with_base_url(base_url.clone());
 
     // Token status probe — SIGNING ONLY (no x-access-token attached, matching
     // the vcpSystem bootstrap), and NON-FATAL: an endpoint 401 here must not
@@ -260,8 +273,8 @@ fn test_connection(
             app_secret: secret.clone(),
             access_token: None,
         };
-        let mut authc =
-            radar_core::webull::transport::WebullClient::new(auth_only).with_base_url(base_url.clone());
+        let mut authc = radar_core::webull::transport::WebullClient::new(auth_only)
+            .with_base_url(base_url.clone());
         tok_note = match radar_core::webull::auth::check_token(&mut authc, tok) {
             Ok(tc) if tc.status == radar_core::webull::auth::TokenStatus::Normal => {
                 let exp = tc
@@ -408,7 +421,8 @@ fn create_access_token(
         app_secret: secret,
         access_token: None,
     };
-    let mut client = radar_core::webull::transport::WebullClient::new(creds).with_base_url(base_url);
+    let mut client =
+        radar_core::webull::transport::WebullClient::new(creds).with_base_url(base_url);
     match radar_core::webull::auth::create_token(&mut client) {
         Ok(c) => CreateTokenResult {
             ok: true,
@@ -462,9 +476,10 @@ fn test_llm(
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| cur.trim().to_string())
     };
-    let stored = s.llm.clone().unwrap_or_else(|| {
-        radar_core::copilot::LlmConfig::new("", "", "", "")
-    });
+    let stored = s
+        .llm
+        .clone()
+        .unwrap_or_else(|| radar_core::copilot::LlmConfig::new("", "", "", ""));
     let cfg = radar_core::copilot::LlmConfig {
         label: pick(llm_label, &stored.label),
         base_url: pick(llm_base_url, &stored.base_url),
@@ -483,7 +498,11 @@ fn test_llm(
     match radar_core::copilot::ping(&cfg) {
         Ok(reply) => ConnectionTestResult {
             webull_ok: true,
-            detail: format!("AI ตอบกลับจริง ({}): {}", cfg.model, reply.chars().take(80).collect::<String>()),
+            detail: format!(
+                "AI ตอบกลับจริง ({}): {}",
+                cfg.model,
+                reply.chars().take(80).collect::<String>()
+            ),
             streaming: None,
         },
         Err(e) => ConnectionTestResult {

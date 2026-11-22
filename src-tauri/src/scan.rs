@@ -127,9 +127,19 @@ fn run(
     let mut client = WebullClient::new(creds.clone()).with_base_url(base_url.clone());
 
     // ---- Phase 1: discovery ----
-    progress(&app, "discovery", format!("ค้นหา option contracts ของ {root} ..."));
+    progress(
+        &app,
+        "discovery",
+        format!("ค้นหา option contracts ของ {root} ..."),
+    );
     let mut on_progress = |msg: String| progress(&app, "discovery", msg);
-    let flow = fetch_symbols_flow(&mut client, &root, quotes::ny_today(), None, Some(&mut on_progress));
+    let flow = fetch_symbols_flow(
+        &mut client,
+        &root,
+        quotes::ny_today(),
+        None,
+        Some(&mut on_progress),
+    );
     let (symbols, spot) = match flow {
         Ok(v) => v,
         Err(e) => {
@@ -151,7 +161,11 @@ fn run(
     progress(
         &app,
         "seed",
-        format!("พบ {} contracts · spot {:.2} — กำลังดึงราคา ...", symbols.len(), spot),
+        format!(
+            "พบ {} contracts · spot {:.2} — กำลังดึงราคา ...",
+            symbols.len(),
+            spot
+        ),
     );
     emit_snapshot(&app, &engine);
 
@@ -184,7 +198,11 @@ fn run(
                     progress(
                         &app,
                         "seed",
-                        format!("ดึงราคา snapshot {}/{}", ((i + 1) * OI_BATCH).min(total), total),
+                        format!(
+                            "ดึงราคา snapshot {}/{}",
+                            ((i + 1) * OI_BATCH).min(total),
+                            total
+                        ),
                     );
                     emit_snapshot(&app, &engine);
                 }
@@ -194,7 +212,11 @@ fn run(
 
         // bars fallback for contracts the snapshot could not price
         if !empty.is_empty() {
-            progress(&app, "bars", format!("ดึงราคาปิดย้อนหลัง {} contracts", empty.len()));
+            progress(
+                &app,
+                "bars",
+                format!("ดึงราคาปิดย้อนหลัง {} contracts", empty.len()),
+            );
         }
         for batch in empty.chunks(OI_BATCH) {
             if stale() {
@@ -239,9 +261,17 @@ fn run(
         }
 
         let ws_fresh = now_ms().saturating_sub(ws_alive.load(Ordering::Relaxed)) < WS_FRESH_MS;
-        let interval = if ws_fresh { POLL_WS_ALIVE_SEC } else { POLL_IDLE_SEC };
+        let interval = if ws_fresh {
+            POLL_WS_ALIVE_SEC
+        } else {
+            POLL_IDLE_SEC
+        };
         if !ws_fresh {
-            progress(&app, "live", format!("อัปเดต REST แล้ว — รอบถัดไปใน {interval} วิ"));
+            progress(
+                &app,
+                "live",
+                format!("อัปเดต REST แล้ว — รอบถัดไปใน {interval} วิ"),
+            );
         }
 
         for _ in 0..interval {
@@ -310,7 +340,11 @@ async fn ws_loop(
             return;
         }
         attempt += 1;
-        progress(&app, "live", format!("เชื่อมต่อ real-time (ครั้งที่ {attempt}) ..."));
+        progress(
+            &app,
+            "live",
+            format!("เชื่อมต่อ real-time (ครั้งที่ {attempt}) ..."),
+        );
 
         let config = StreamConfig::for_base_url(&base_url, session_id.clone());
         let mut stream = StreamClient::new(config, creds.clone());
@@ -333,14 +367,9 @@ async fn ws_loop(
                         match se {
                             StreamEvent::Connected if !subscribed => {
                                 subscribed = true;
-                                if let Err(e) = do_subscribe(
-                                    &creds,
-                                    &base_url,
-                                    &session_id,
-                                    &root,
-                                    &ws_symbols,
-                                )
-                                .await
+                                if let Err(e) =
+                                    do_subscribe(&creds, &base_url, &session_id, &root, &ws_symbols)
+                                        .await
                                 {
                                     return Err(format!("subscribe ล้มเหลว: {e}"));
                                 }
@@ -394,7 +423,8 @@ async fn ws_loop(
                             StreamEvent::Heartbeat => {
                                 ws_alive.store(now_ms(), Ordering::Relaxed);
                             }
-                            StreamEvent::Notice(_) | StreamEvent::Connected
+                            StreamEvent::Notice(_)
+                            | StreamEvent::Connected
                             | StreamEvent::Disconnected => {}
                         }
                     }
@@ -421,7 +451,11 @@ async fn ws_loop(
             }
             Err(e) if e.contains("105") => {
                 // connection limit (max 5/app key) — back off harder
-                progress(&app, "live", format!("real-time หลุด ({e}: connection limit) — รอ 60 วิ"));
+                progress(
+                    &app,
+                    "live",
+                    format!("real-time หลุด ({e}: connection limit) — รอ 60 วิ"),
+                );
                 tokio::time::sleep(Duration::from_secs(60)).await;
             }
             Err(e) => {

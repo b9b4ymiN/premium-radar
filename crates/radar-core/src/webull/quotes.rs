@@ -128,7 +128,11 @@ pub fn bars_to_seeds(data: &Value) -> Vec<QuoteUpdate> {
             continue;
         }
         let last = bars[bars.len() - 1].1;
-        let prev = if bars.len() > 1 { Some(bars[bars.len() - 2].1) } else { None };
+        let prev = if bars.len() > 1 {
+            Some(bars[bars.len() - 2].1)
+        } else {
+            None
+        };
         let close = to_f64(last.get("close").unwrap_or(&Value::Null), 0.0);
         if close <= 0.0 {
             continue;

@@ -145,11 +145,7 @@ impl WebullClient {
     /// One signed+throttled POST with a JSON body (MD5 body hash enters the
     /// canonical string per the broker spec). Used by the auth token
     /// endpoints — never cached, no retry.
-    pub fn post_json(
-        &mut self,
-        path: &str,
-        body: &str,
-    ) -> Result<(u16, Value), FetchError> {
+    pub fn post_json(&mut self, path: &str, body: &str) -> Result<(u16, Value), FetchError> {
         let wait = self.throttle.wait_duration(self.throttle.last());
         if !wait.is_zero() {
             std::thread::sleep(wait);

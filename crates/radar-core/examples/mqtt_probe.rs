@@ -18,20 +18,27 @@ use radar_core::webull::transport::WebullClient;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let key = std::env::var("APP_KEY").or(std::env::var("WEBULL_APP_KEY")).unwrap_or_default();
-    let secret =
-        std::env::var("APP_SECRET").or(std::env::var("WEBULL_APP_SECRET")).unwrap_or_default();
+    let key = std::env::var("APP_KEY")
+        .or(std::env::var("WEBULL_APP_KEY"))
+        .unwrap_or_default();
+    let secret = std::env::var("APP_SECRET")
+        .or(std::env::var("WEBULL_APP_SECRET"))
+        .unwrap_or_default();
     let token = std::env::var("ACCESS_TOKEN")
         .or(std::env::var("WEBULL_ACCESS_TOKEN"))
         .ok()
         .filter(|t| !t.is_empty());
-    let base_url = std::env::var("BASE_URL")
-        .unwrap_or_else(|_| "https://th-api.uat.webullbroker.com".into());
+    let base_url =
+        std::env::var("BASE_URL").unwrap_or_else(|_| "https://th-api.uat.webullbroker.com".into());
     if key.is_empty() || secret.is_empty() {
         eprintln!("ต้องมี APP_KEY/APP_SECRET ใน env");
         std::process::exit(1);
     }
-    let creds = Credentials { app_key: key, app_secret: secret, access_token: token };
+    let creds = Credentials {
+        app_key: key,
+        app_secret: secret,
+        access_token: token,
+    };
     println!("base_url = {base_url}");
 
     let session_id = format!("probe_{}", &uuid_like());
@@ -45,7 +52,10 @@ async fn main() {
     if let Ok(t) = std::env::var("MQTT_TLS") {
         config.use_tls = t != "0";
     }
-    println!("mqtt = {}:{} (tls={})", config.host, config.port, config.use_tls);
+    println!(
+        "mqtt = {}:{} (tls={})",
+        config.host, config.port, config.use_tls
+    );
     let mut stream = StreamClient::new(config, creds.clone());
 
     // drive the event loop with an overall deadline
@@ -69,7 +79,9 @@ async fn main() {
             }
             Ok(Ok(e)) => e,
         };
-        let Some(se) = stream.handle_event(Ok(event)) else { continue };
+        let Some(se) = stream.handle_event(Ok(event)) else {
+            continue;
+        };
         match se {
             StreamEvent::Connected => {
                 println!("[probe] ✅ MQTT CONNECTED (session {session_id}) — subscribing ...");
@@ -106,7 +118,10 @@ async fn main() {
                 }
             }
             StreamEvent::Heartbeat => println!("[probe] 💓 echo"),
-            StreamEvent::Notice(t) => println!("[probe] 📢 notice: {}", &t.chars().take(140).collect::<String>()),
+            StreamEvent::Notice(t) => println!(
+                "[probe] 📢 notice: {}",
+                &t.chars().take(140).collect::<String>()
+            ),
             _ => {}
         }
     }
@@ -149,6 +164,9 @@ fn clip(s: &str) -> String {
 fn uuid_like() -> String {
     // cheap unique suffix without pulling uuid into radar-core's dev deps
     use std::time::{SystemTime, UNIX_EPOCH};
-    let ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
     format!("{ms:x}")
 }

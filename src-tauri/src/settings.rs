@@ -3,11 +3,11 @@
 //! (Webull key/secret/token, LLM API key) are moved to the OS keyring when
 //! available and kept in the file only as a fallback.
 
-use std::fs;
-use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 use radar_core::copilot::LlmConfig;
 use radar_core::webull::rest::Credentials;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
 
 /// OS keyring service name for all Premium Radar secrets.
 const KEYRING_SERVICE: &str = "premium-radar";
@@ -50,10 +50,18 @@ pub struct AppSettings {
     pub llm: Option<LlmConfig>,
 }
 
-fn default_symbol() -> String { "NVDA".into() }
-fn default_strategy() -> String { "CSP+CC".into() }
-fn default_risk() -> String { "BALANCED".into() }
-fn default_webull_url() -> String { "https://api.webull.co.th".into() }
+fn default_symbol() -> String {
+    "NVDA".into()
+}
+fn default_strategy() -> String {
+    "CSP+CC".into()
+}
+fn default_risk() -> String {
+    "BALANCED".into()
+}
+fn default_webull_url() -> String {
+    "https://api.webull.co.th".into()
+}
 
 /// Manual Default so `AppSettings::default()` matches the serde field
 /// defaults exactly (the derived Default zeroed every field — a fresh install
@@ -140,12 +148,14 @@ impl AppSettings {
             ("webull_access_token", self.webull_access_token.clone()),
             (
                 "llm_api_key",
-                self.llm.as_ref().map(|c| c.api_key.clone()).unwrap_or_default(),
+                self.llm
+                    .as_ref()
+                    .map(|c| c.api_key.clone())
+                    .unwrap_or_default(),
             ),
         ];
         for (account, value) in &fields {
-            let entry =
-                keyring::Entry::new(KEYRING_SERVICE, account).map_err(|e| e.to_string())?;
+            let entry = keyring::Entry::new(KEYRING_SERVICE, account).map_err(|e| e.to_string())?;
             if value.is_empty() {
                 // a field the user cleared — drop any stale entry (NoEntry is fine)
                 let _ = entry.delete_credential();
@@ -225,10 +235,16 @@ impl AppSettings {
         let webull_ok = self.webull_credentials().is_some();
         let llm = self.llm_config();
         let llm_ok = llm.is_some();
-        let llm_name = llm.map(|l| format!("{} ({})", l.label, l.model)).unwrap_or_default();
+        let llm_name = llm
+            .map(|l| format!("{} ({})", l.label, l.model))
+            .unwrap_or_default();
         format!(
             "Webull: {} | LLM: {}{}",
-            if webull_ok { "✓ connected" } else { "✗ not set" },
+            if webull_ok {
+                "✓ connected"
+            } else {
+                "✗ not set"
+            },
             if llm_ok { "✓ " } else { "✗ " },
             llm_name,
         )
@@ -282,7 +298,12 @@ mod tests {
             last_budget: 25000.0,
             webull_app_key: "test_key".into(),
             webull_app_secret: "test_secret".into(),
-            llm: Some(LlmConfig::new("Test LLM", "https://api.test.com", "test-model", "test-llm-key")),
+            llm: Some(LlmConfig::new(
+                "Test LLM",
+                "https://api.test.com",
+                "test-model",
+                "test-llm-key",
+            )),
             ..Default::default()
         };
         let json = serde_json::to_string(&s).unwrap();

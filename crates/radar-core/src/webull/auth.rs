@@ -62,7 +62,9 @@ fn parse_token_payload(data: &Value) -> (TokenStatus, Option<String>, Option<u64
     };
     (
         status,
-        data.get("token").and_then(Value::as_str).map(str::to_string),
+        data.get("token")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         data.get("expires").and_then(Value::as_u64),
     )
 }
@@ -77,7 +79,10 @@ pub fn check_token(client: &mut WebullClient, token: &str) -> Result<TokenCheck,
         return Err(FetchError::NonZero(status, data.to_string()));
     }
     let (st, _, expires_ms) = parse_token_payload(&data);
-    Ok(TokenCheck { status: st, expires_ms })
+    Ok(TokenCheck {
+        status: st,
+        expires_ms,
+    })
 }
 
 /// POST `/openapi/auth/token/create` with an EMPTY body (no MD5 part in the
@@ -90,7 +95,11 @@ pub fn create_token(client: &mut WebullClient) -> Result<CreatedToken, FetchErro
         return Err(FetchError::NonZero(status, data.to_string()));
     }
     let (st, token, expires_ms) = parse_token_payload(&data);
-    Ok(CreatedToken { status: st, token, expires_ms })
+    Ok(CreatedToken {
+        status: st,
+        token,
+        expires_ms,
+    })
 }
 
 #[cfg(test)]
@@ -100,8 +109,9 @@ mod tests {
 
     #[test]
     fn parse_pending_with_token_value() {
-        let (st, tok, exp) =
-            parse_token_payload(&json!({"token": "abc123", "expires": 1796654338228u64, "status": "PENDING"}));
+        let (st, tok, exp) = parse_token_payload(
+            &json!({"token": "abc123", "expires": 1796654338228u64, "status": "PENDING"}),
+        );
         assert_eq!(st, TokenStatus::Pending);
         assert_eq!(tok.as_deref(), Some("abc123"));
         assert_eq!(exp, Some(1796654338228));

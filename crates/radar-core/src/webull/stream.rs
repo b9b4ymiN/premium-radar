@@ -34,7 +34,9 @@ pub const MAX_MSG_PER_SEC: usize = 3;
 #[derive(Clone, Debug)]
 pub enum StreamEvent {
     /// Snapshot push (option contract or stock — decide by symbol: OCC vs root).
-    Snapshot { payload: Vec<u8> },
+    Snapshot {
+        payload: Vec<u8>,
+    },
     /// Heartbeat (echo topic).
     Heartbeat,
     /// Server notice (JSON).
@@ -282,7 +284,10 @@ mod tests {
 
     #[test]
     fn route_echo_heartbeat() {
-        assert!(matches!(route_message("echo", &[]), Some(StreamEvent::Heartbeat)));
+        assert!(matches!(
+            route_message("echo", &[]),
+            Some(StreamEvent::Heartbeat)
+        ));
     }
 
     #[test]
