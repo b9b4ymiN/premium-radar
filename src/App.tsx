@@ -6,6 +6,7 @@ import OptionLab from "./components/OptionLab/OptionLab";
 import PriceChart from "./components/PriceChart/PriceChart";
 import PortfolioPage from "./components/PortfolioPage/PortfolioPage";
 import WatchlistPage from "./components/WatchlistPage/WatchlistPage";
+import HomePage from "./components/HomePage/HomePage";
 import type { EnrichedRow, StockUpdate, ChainStats, EngineSnapshot } from "./types/screener";
 import "./App.css";
 
@@ -78,7 +79,7 @@ export default function App() {
   const [risk, setRisk] = useState("BALANCED");
   const [budget, setBudget] = useState("18000");
   const [tab, setTab] = useState("all");
-  const [mainTab, setMainTab] = useState<"monitor" | "lab" | "portfolio" | "watchlist">("monitor");
+  const [mainTab, setMainTab] = useState<"home" | "monitor" | "lab" | "portfolio" | "watchlist">("home");
   const [selected, setSelected] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [tauriReady, setTauriReady] = useState(false);
@@ -416,6 +417,7 @@ export default function App() {
         {/* ---- Main ---- */}
         <main className="main">
           <div className="main-tabs">
+            <button className={`mtab ${mainTab === "home" ? "on" : ""}`} onClick={() => setMainTab("home")}>หน้าแรก</button>
             <button className={`mtab ${mainTab === "monitor" ? "on" : ""}`} onClick={() => setMainTab("monitor")}>Options Monitor</button>
             <button className={`mtab ${mainTab === "lab" ? "on" : ""}`} onClick={() => setMainTab("lab")}>Option Lab · ทดลองกลยุทธ์</button>
             <button className={`mtab ${mainTab === "portfolio" ? "on" : ""}`} onClick={() => setMainTab("portfolio")}>Portfolio</button>
@@ -452,7 +454,14 @@ export default function App() {
             </div>
           </section>
 
-          {mainTab === "watchlist" ? (
+          {mainTab === "home" ? (
+            <section className="labmodule">
+              <HomePage
+                onOpenRadar={sym => { setSymbol(sym.toUpperCase()); setMainTab("monitor"); }}
+                goTab={t => setMainTab(t)}
+              />
+            </section>
+          ) : mainTab === "watchlist" ? (
             <section className="labmodule">
               <WatchlistPage onOpenRadar={sym => { setSymbol(sym.toUpperCase()); setMainTab("monitor"); }} />
             </section>

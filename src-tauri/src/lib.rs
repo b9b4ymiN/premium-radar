@@ -610,6 +610,51 @@ fn get_instrument_profile(symbol: String) -> Result<serde_json::Value, String> {
     serde_json::to_value(profiles.into_iter().next()).map_err(|e| e.to_string())
 }
 
+/// Home overview (P17.1) — quotes ของ active watchlist + สถานะ Lab capture
+#[tauri::command]
+fn get_home_overview() -> Result<serde_json::Value, String> {
+    use radar_core::webull::quotes::fetch_stock_update;
+    let data = app_state_for_data()?;
+    let mut client = radar_core::webull::transport::WebullClient::new(data.creds);
+    let store = load_watchlists();
+    let symbols: Vec<String> = store
+        .active_list()
+        .map(|l| l.symbols.iter().take(20).cloned().collect())
+        .unwrap_or_default();
+    let mut quotes = Vec::new();
+    for sym in &symbols {
+        if let Ok(Some(u)) = fetch_stock_update(&mut client, sym) {
+            quotes.push(serde_json::json!({
+                "symbol": sym,
+                "price": u.price,
+                "change_pct": if u.pre_close > 0.0 { Some(u.change_ratio * 100.0) } else { None },
+                "source": format!("{:?}", u.src),
+                "volume": u.volume,
+            }));
+        }
+    }
+    // สถานะ Lab capture (อ่านจาก storage จริง ไม่เดา)
+    let app_data = std::env::var("APPDATA")
+        .map(|a| format!("{a}/premium-radar"))
+        .unwrap_or_else(|_| ".".into());
+    let lab =
+        radar_core::lab::storage::LabStorage::open(std::path::Path::new(&app_data).join("lab"));
+    let (capture_days, last_capture) = match &lab {
+        Ok(st) => {
+            let dates = st.captured_dates().unwrap_or_default();
+            let last = dates.last().map(|d| d.to_string());
+            (dates.len(), last)
+        }
+        Err(_) => (0, None),
+    };
+    Ok(serde_json::json!({
+        "watchlist_name": store.active_list().map(|l| l.name.clone()),
+        "quotes": quotes,
+        "lab": {"capture_days": capture_days, "last_capture": last_capture},
+        "fetched_at": chrono::Utc::now().to_rfc3339(),
+    }))
+}
+
 /// Watchlists (P16) — persistence ที่ app-data/watchlists.json
 fn watchlist_store_path() -> std::path::PathBuf {
     let app_data = std::env::var("APPDATA")
@@ -933,6 +978,7 @@ pub fn run() {
             needs_setup,
             get_stock_history,
             get_instrument_profile,
+            get_home_overview,
             list_watchlists,
             save_watchlist,
             get_portfolio,

@@ -467,3 +467,10 @@ button:focus-visible, input:focus-visible {
 .wl-actions { display: flex; gap: 3px; }
 .wl-actions button { padding: 2px 7px; }
 .wl-open { border-color: var(--accent, #4b8cf7); color: var(--accent, #4b8cf7); }
+
+/* ============ HOME (P17) ============ */
+.homepage { display: flex; flex-direction: column; gap: 10px; }
+.hp-row { cursor: pointer; }
+.hp-shortcuts { display: flex; gap: 8px; flex-wrap: wrap; }
+.hp-shortcuts button { background: transparent; border: 1px solid var(--divider); color: var(--text); padding: 7px 14px; border-radius: 3px; font-size: 12px; cursor: pointer; }
+.hp-shortcuts button:hover { border-color: var(--accent, #4b8cf7); }
