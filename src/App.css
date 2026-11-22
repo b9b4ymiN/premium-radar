@@ -474,3 +474,16 @@ button:focus-visible, input:focus-visible {
 .hp-shortcuts { display: flex; gap: 8px; flex-wrap: wrap; }
 .hp-shortcuts button { background: transparent; border: 1px solid var(--divider); color: var(--text); padding: 7px 14px; border-radius: 3px; font-size: 12px; cursor: pointer; }
 .hp-shortcuts button:hover { border-color: var(--accent, #4b8cf7); }
+
+/* left-panel watchlist ตาม design v2 (Symbol | Last / Chg%) */
+.watch-header { display: flex; justify-content: space-between; padding: 6px 12px 2px; font-size: 8.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.watchlist { display: flex; flex-direction: column; padding: 0 6px; }
+.watch-row { display: flex; justify-content: space-between; align-items: center; border: 0; border-bottom: 1px solid #1c222b; background: none; color: var(--text); font-size: 11.5px; padding: 6px 7px; cursor: pointer; text-align: left; }
+.watch-row:hover { background: #1a2029; }
+.watch-row.on { background: #1b385e; box-shadow: inset 2px 0 0 #4b8cf7; }
+.watch-row b { font-size: 11.5px; }
+.watch-row small.pos { color: #3ddc97; }
+.watch-row small.neg { color: #f4788c; }
+.watch-row .muted { color: var(--muted); }
+.watch-bottom { display: flex; align-items: center; gap: 6px; padding: 7px 12px; font-size: 9.5px; color: var(--muted); cursor: pointer; border-top: 1px solid var(--divider); }
+.watch-bottom:hover { color: var(--text); }

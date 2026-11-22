@@ -49,7 +49,6 @@ const MOCK_ROWS: Partial<EnrichedRow>[] = [
 
 const MOCK_STATS: ChainStats = { atm_iv: 0.482, em: 14.9, skew: 3.1 };
 
-const WATCHLIST = ["NVDA", "TSLA", "AAPL", "AMD", "SPY", "QQQ", "MSFT", "META"];
 
 const fmt = (n: number, d = 2) =>
   n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -80,6 +79,10 @@ export default function App() {
   const [budget, setBudget] = useState("18000");
   const [tab, setTab] = useState("all");
   const [mainTab, setMainTab] = useState<"home" | "monitor" | "lab" | "portfolio" | "watchlist">("home");
+  // watchlist จริงสำหรับ left panel (quotes + ชื่อลิสต์ มาจาก Rust ทีเดียว)
+  const [wlQuotes, setWlQuotes] = useState<Array<{ symbol: string; price: number; change_pct: number | null }>>([]);
+  const [wlName, setWlName] = useState<string | null>(null);
+  const [wlTick, setWlTick] = useState(0); // bump เมื่อ Watchlists page แก้ข้อมล
   const [selected, setSelected] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [tauriReady, setTauriReady] = useState(false);
@@ -201,6 +204,19 @@ export default function App() {
       if (res) setSnap(res);
     } catch { /* browser preview mode */ }
   }, [tauriReady]);
+
+  // left-panel watchlist: quotes ของลิสต์ active (Rust คำนวณ/จัด)
+  useEffect(() => {
+    let live = true;
+    const load = () => {
+      tauriInvoke<{ watchlist_name: string | null; quotes: Array<{ symbol: string; price: number; change_pct: number | null }> }>("get_home_overview")
+        .then(o => { if (live) { setWlQuotes(o.quotes ?? []); setWlName(o.watchlist_name); } })
+        .catch(() => { if (live) { setWlQuotes([]); } });
+    };
+    load();
+    const t = window.setInterval(load, 60_000);
+    return () => { live = false; window.clearInterval(t); };
+  }, [wlTick]);
 
   // Inside the desktop app we NEVER fall back to mock data — an empty table
   // with the scan status is honest; synthetic rows are browser-preview only.
@@ -330,6 +346,7 @@ export default function App() {
           <button className="iconbtn" title="Market — ยังไม่มีหน้านี้ (ใช้หน้าแรก+กราฟ)" disabled>◔</button>
           <button className={`iconbtn ${mainTab === "monitor" ? "on" : ""}`} title="Options Monitor" onClick={() => setMainTab("monitor")}>|||</button>
           <button className={`iconbtn ${mainTab === "watchlist" ? "on" : ""}`} title="Watchlists" onClick={() => setMainTab("watchlist")}>≡</button>
+          <button className={`iconbtn ${mainTab === "portfolio" ? "on" : ""}`} title="Portfolio · พอร์ตจริง (อ่านอย่างเดียว)" onClick={() => setMainTab("portfolio")}>◫</button>
           <button
             className="iconbar bottom iconbtn"
             title="Settings / API keys"
@@ -339,17 +356,39 @@ export default function App() {
 
         {/* ---- Left Panel ---- */}
         <aside className="leftpanel">
-          <div className="panel-heading">Watchlist</div>
-          <div className="watch-grid">
-            {WATCHLIST.map(s => (
+          <div className="panel-heading">
+            Watchlist
+            <div className="end">
+              <button className="tiny-icon" title="จัดการลิสต์เต็มรูปแบบ" onClick={() => setMainTab("watchlist")}>⤢</button>
+            </div>
+          </div>
+          <div className="watch-header"><span>Symbol</span><span>Last / Chg%</span></div>
+          <div className="watchlist">
+            {wlQuotes.map(q => (
               <button
-                key={s}
-                className={`watch-btn ${s === symbol ? "on" : ""}`}
-                onClick={() => setSymbol(s)}
+                key={q.symbol}
+                className={`watch-row ${q.symbol === symbol ? "on" : ""}`}
+                onClick={() => { setSymbol(q.symbol); setMainTab("monitor"); }}
               >
-                {s}
+                <b>{q.symbol}</b>
+                <span className="num">
+                  {q.price.toFixed(2)}
+                  {" "}
+                  <small className={(q.change_pct ?? 0) >= 0 ? "pos" : "neg"}>
+                    {q.change_pct != null ? `${q.change_pct >= 0 ? "+" : ""}${q.change_pct.toFixed(1)}%` : "--"}
+                  </small>
+                </span>
               </button>
             ))}
+            {wlQuotes.length === 0 && (
+              <button className="watch-row" onClick={() => setMainTab("watchlist")}>
+                <b>+ เพิ่มหุ้น</b>
+                <span className="num muted">จัดลิสต์ →</span>
+              </button>
+            )}
+          </div>
+          <div className="watch-bottom" onClick={() => setMainTab("watchlist")}>
+            {wlName ?? "Watchlist"} <span style={{ marginLeft: "auto" }}>{wlQuotes.length} ตัว</span>
           </div>
 
           <div className="filterhead">STRATEGY SCANNER</div>
@@ -463,7 +502,7 @@ export default function App() {
             </section>
           ) : mainTab === "watchlist" ? (
             <section className="labmodule">
-              <WatchlistPage onOpenRadar={sym => { setSymbol(sym.toUpperCase()); setMainTab("monitor"); }} />
+              <WatchlistPage onOpenRadar={sym => { setSymbol(sym.toUpperCase()); setMainTab("monitor"); }} onChanged={() => setWlTick(t => t + 1)} />
             </section>
           ) : mainTab === "portfolio" ? (
             <section className="labmodule">

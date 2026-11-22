@@ -11,8 +11,8 @@ interface List { id: string; name: string; symbols: string[] }
 interface Store { lists: List[]; active: string | null }
 
 export default function WatchlistPage({
-  onOpenRadar,
-}: { onOpenRadar: (symbol: string) => void }) {
+  onOpenRadar, onChanged,
+}: { onOpenRadar: (symbol: string) => void; onChanged?: () => void }) {
   const [store, setStore] = useState<Store | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [addText, setAddText] = useState("");
@@ -27,6 +27,7 @@ export default function WatchlistPage({
     setErr(null);
     try {
       setStore(await invokeCmd<Store>("save_watchlist", { listId: listId ?? null, action, payload }));
+      onChanged?.(); // ให้ left panel รีเฟรช quotes ทันที
     } catch (e) {
       setErr(String(e));
     }
