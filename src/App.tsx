@@ -301,7 +301,7 @@ export default function App() {
           </div>
         </div>
         <nav className="headnav">
-          <button className="navtab active">Options</button>
+          <button className={`navtab ${mainTab === "monitor" ? "active" : ""}`} onClick={() => setMainTab("monitor")}>Options</button>
           <button className="navtab" onClick={() => setMainTab("lab")}>Analytics · Lab</button>
         </nav>
         <label className="global-search">
@@ -326,10 +326,10 @@ export default function App() {
       <div className="workspace">
         {/* ---- Icon Rail ---- */}
         <nav className="iconbar">
-          <button className="iconbtn" title="Home">⌂</button>
-          <button className="iconbtn" title="Market">◔</button>
-          <button className="iconbtn on" title="Options">|||</button>
-          <button className="iconbtn" title="Watchlist">≡</button>
+          <button className={`iconbtn ${mainTab === "home" ? "on" : ""}`} title="หน้าแรก" onClick={() => setMainTab("home")}>⌂</button>
+          <button className="iconbtn" title="Market — ยังไม่มีหน้านี้ (ใช้หน้าแรก+กราฟ)" disabled>◔</button>
+          <button className={`iconbtn ${mainTab === "monitor" ? "on" : ""}`} title="Options Monitor" onClick={() => setMainTab("monitor")}>|||</button>
+          <button className={`iconbtn ${mainTab === "watchlist" ? "on" : ""}`} title="Watchlists" onClick={() => setMainTab("watchlist")}>≡</button>
           <button
             className="iconbar bottom iconbtn"
             title="Settings / API keys"
@@ -501,7 +501,7 @@ export default function App() {
           {/* 3 Opportunity Cards */}
           <div className="opportunities">
             {oppCards.map((o, i) => (
-              <button key={o.label} className={`opportunity ${i === 1 ? "on" : ""} ${opps ? "" : "muted-card"}`}>
+              <button key={o.label} className={`opportunity ${i === 1 ? "on" : ""} ${opps ? "" : "muted-card"}`} onClick={() => { const hit = rows.find(r => r.q.symbol === (o as { contract?: string }).contract); if (hit) setSelected(hit.q.symbol); }}>
                 <div className="otop"><span>{o.label}</span><span style={{ color: "#9caec3" }}>{o.tag}</span></div>
                 <div className="ocontract">{o.contract}</div>
                 <div className="ometas"><b className="pos">{o.meta.split("·")[0]}</b> · {o.meta.split("·").slice(1).join("·")}</div>
@@ -517,7 +517,7 @@ export default function App() {
               <button className={`t-tab ${tab === "call" ? "on" : ""}`} onClick={() => setTab("call")}>Call · CC</button>
               <div className="tabletools">
                 <button className="tool-pill on">Scanner</button>
-                <button className="tool-pill">Option Chain</button>
+                <button className="tool-pill" disabled title="มุม Option Chain ยังไม่เปิดใช้ — ใช้แท็บ Option Lab วิเคราะห์รายสัญญาแทน">Option Chain</button>
               </div>
             </div>
             <div className="table-status">

@@ -91,3 +91,6 @@ Loop spec ต่อไป: `task: P8.2` · `goal: probe matrix §1 ของ PLA
 |---|---|---|
 | P14.2 (บางส่วน) | **DONE** | PLAN-APP2 Appendix A — balance path แก้จน 200 + schema จริง · depths 3 รูปแบบไม่ผ่าน → gated |
 | P14.1/14.3/14.4 | NOT_STARTED | — |
+| P19.2 ปุ่มตายทั้งแอป = 0 | **DONE** | icon rail 4 ปุ่ม wire จริง (Market disabled พร้อมเหตุผล) · navtab Options wire · การ์ด opportunity เลือกสัญญา · pill Option Chain disabled พร้อมเหตุผล | — |
+| P20.5 คู่มือไทย | **DONE** | USAGE-TH.md — ติดตั้ง/token/ทุกหน้า/ความหมายตัวเลข/Lab/ขอบเขตที่ตั้งใจไว้ | — |
+| P11 replay engine (รุ่นแรก) | **DONE** | lab/replay.rs — no-look-ahead (entry quote + expiry stock available-at gates), hold-to-expiry + ledger จำลอง, unresolved ≠ ขาดทุน · 4 tests (win/assigned/look-ahead/missing) | orchestration จาก archive จริง = รอข้อมูลสะสม |

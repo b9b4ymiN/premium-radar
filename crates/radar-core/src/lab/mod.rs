@@ -10,5 +10,6 @@ pub mod payoff;
 pub mod portfolio;
 pub mod probability;
 pub mod quality;
+pub mod replay;
 pub mod storage;
 pub mod types;
