@@ -245,6 +245,11 @@ impl Engine {
         }
     }
 
+    /// Current spot price.
+    pub fn spot(&self) -> Option<f64> {
+        self.spot
+    }
+
     /// Count of rows with a live (non-seed) WS source.
     pub fn live_count(&self) -> usize {
         self.latest

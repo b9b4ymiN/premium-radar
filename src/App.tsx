@@ -1,6 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { EnrichedRow, StockUpdate, ChainStats } from "./types/screener";
 import "./App.css";
+
+// Tauri invoke (graceful fallback when running without the Tauri shell)
+const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (!hasTauri) throw new Error("Tauri not available");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(cmd, args);
+}
 
 // ---------- mock data (will be replaced by Tauri events) ----------
 
@@ -55,6 +63,23 @@ export default function App() {
   const [tab, setTab] = useState("all");
   const [selected, setSelected] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
+  const [tauriReady, setTauriReady] = useState(false);
+
+  // Try to connect to the Tauri backend
+  useEffect(() => {
+    if (!hasTauri) return;
+    tauriInvoke<string>("get_status")
+      .then(() => setTauriReady(true))
+      .catch(() => setTauriReady(false));
+  }, []);
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const applyFilters = useCallback(async (s: string, r: string, e: string | null, b: number) => {
+    if (!tauriReady) return;
+    try {
+      await tauriInvoke("set_filters", { strategy: s, risk: r, expiry: e, budget: b });
+    } catch { /* mock mode */ }
+  }, [tauriReady]);
 
   const rows = MOCK_ROWS as EnrichedRow[];
   const stock = MOCK_STOCK;
@@ -128,7 +153,7 @@ export default function App() {
             <div className="filterlabel">Strategy</div>
             <div className="toggle-row">
               {["CSP+CC", "CSP", "CC"].map(s => (
-                <button key={s} className={`toggle ${strategy === s ? "on" : ""}`} onClick={() => setStrategy(s)}>
+                <button key={s} className={`toggle ${strategy === s ? "on" : ""}`} onClick={() => { setStrategy(s); applyFilters(s, risk, null, parseFloat(budget) || 0); }}>
                   {s === "CSP+CC" ? "All" : s === "CSP" ? "Put" : "Call"}
                 </button>
               ))}
@@ -144,7 +169,7 @@ export default function App() {
                 ["BALANCED", "Moderate", "δ .15–.30"],
                 ["AGGR", "High", "δ .25–.40"],
               ].map(([v, label, meta]) => (
-                <button key={v} className={`choice ${risk === v ? "on" : ""}`} onClick={() => setRisk(v)}>
+                <button key={v} className={`choice ${risk === v ? "on" : ""}`} onClick={() => { setRisk(v); applyFilters(strategy, v, null, parseFloat(budget) || 0); }}>
                   <span>{label}</span>
                   <small>{meta}</small>
                 </button>
