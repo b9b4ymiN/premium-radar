@@ -15,6 +15,17 @@ sha1 = "0.10"
 md-5 = "0.10"
 base64 = "0.22"
 serde_json = "1"
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
+
+[features]
+default = []
+client = ["reqwest", "uuid"]
+
+[dev-dependencies]
+serde_json = "1"
+wiremock = "0.6"
+tokio = { version = "1", features = ["macros", "rt"] }
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }

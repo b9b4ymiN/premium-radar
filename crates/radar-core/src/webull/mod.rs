@@ -5,3 +5,5 @@ pub mod contracts;
 pub mod discovery;
 pub mod rest;
 pub mod sign;
+#[cfg(feature = "client")]
+pub mod transport;
