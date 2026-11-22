@@ -45,12 +45,12 @@ pub fn sign_base(
 ) -> String {
     let mut allp: Vec<(String, String)> = query.to_vec();
     allp.extend([
-        ("host", HOST),
-        ("x-app-key", app_key),
-        ("x-signature-algorithm", "HMAC-SHA1"),
-        ("x-signature-nonce", nonce),
-        ("x-signature-version", "1.0"),
-        ("x-timestamp", ts),
+        ("host".to_string(), HOST.to_string()),
+        ("x-app-key".to_string(), app_key.to_string()),
+        ("x-signature-algorithm".to_string(), "HMAC-SHA1".to_string()),
+        ("x-signature-nonce".to_string(), nonce.to_string()),
+        ("x-signature-version".to_string(), "1.0".to_string()),
+        ("x-timestamp".to_string(), ts.to_string()),
     ]);
     allp.sort_by(|a, b| a.0.cmp(&b.0));
     let str1 = allp

@@ -5,7 +5,9 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, NaiveDate, Utc};
 
-use crate::quant::{bs_greeks, implied_vol, ncdf, years_to_expiry, OptType, DIV_YIELD, RISK_FREE_RATE};
+use crate::quant::{
+    DIV_YIELD, OptType, RISK_FREE_RATE, bs_greeks, implied_vol, ncdf, years_to_expiry,
+};
 
 pub const MIN_DELTA: f64 = 0.10;
 pub const MAX_DELTA: f64 = 0.40;
@@ -93,19 +95,43 @@ pub fn enrich_rows_raw(rows: Vec<QuoteRow>, spot: f64, now: DateTime<Utc>) -> Ve
     let mut tcache: HashMap<NaiveDate, f64> = HashMap::new();
     rows.into_iter()
         .map(|q| {
-            let t = *tcache.entry(q.expiry).or_insert_with(|| years_to_expiry(q.expiry, now));
+            let t = *tcache
+                .entry(q.expiry)
+                .or_insert_with(|| years_to_expiry(q.expiry, now));
             let mut r = EnrichedRow {
                 q,
                 t,
                 dte: t * 365.0,
                 chg_pct: 0.0,
                 vol_oi: None,
-                iv: None, delta: None, gamma: None, vega: None, theta: None,
-                pop: None, credit: None, collateral: None, yld: None, ann: None,
-                be: None, cushion: None, p_itm: None, p_touch: None, sig_dist: None,
-                strike_dist: None, day_inc: None, if_called: None, if_called_ann: None,
-                basis: None, score: None, spread_pct: None, prem: None, net_cash: None,
-                max_loss: None, max_profit: None, grade: None, why: None,
+                iv: None,
+                delta: None,
+                gamma: None,
+                vega: None,
+                theta: None,
+                pop: None,
+                credit: None,
+                collateral: None,
+                yld: None,
+                ann: None,
+                be: None,
+                cushion: None,
+                p_itm: None,
+                p_touch: None,
+                sig_dist: None,
+                strike_dist: None,
+                day_inc: None,
+                if_called: None,
+                if_called_ann: None,
+                basis: None,
+                score: None,
+                spread_pct: None,
+                prem: None,
+                net_cash: None,
+                max_loss: None,
+                max_profit: None,
+                grade: None,
+                why: None,
             };
             r.chg_pct = r.q.change_ratio * 100.0;
             r.vol_oi = (r.q.oi != 0.0).then(|| r.q.volume / r.q.oi);
@@ -128,7 +154,11 @@ pub fn enrich_rows_raw(rows: Vec<QuoteRow>, spot: f64, now: DateTime<Utc>) -> Ve
             }
             if px > 0.0 {
                 let base = if cp == OptType::Put { k } else { spot };
-                let be = if cp == OptType::Put { k - px } else { spot - px };
+                let be = if cp == OptType::Put {
+                    k - px
+                } else {
+                    spot - px
+                };
                 r.credit = Some(px * 100.0);
                 r.collateral = Some(base * 100.0);
                 r.yld = Some(px / base * 100.0);
@@ -142,14 +172,17 @@ pub fn enrich_rows_raw(rows: Vec<QuoteRow>, spot: f64, now: DateTime<Utc>) -> Ve
                     r.pop = Some(ncdf(d2));
                 }
                 if r.q.bid > 0.0 && r.q.ask > 0.0 {
-                    r.spread_pct =
-                        Some((r.q.ask - r.q.bid) / ((r.q.ask + r.q.bid) / 2.0) * 100.0);
+                    r.spread_pct = Some((r.q.ask - r.q.bid) / ((r.q.ask + r.q.bid) / 2.0) * 100.0);
                 }
                 if let Some(iv) = iv {
                     let d2k = ((spot / k).ln()
                         + (RISK_FREE_RATE - DIV_YIELD - 0.5 * iv * iv) * r.t)
                         / (iv * r.t.sqrt());
-                    let p_itm = if cp == OptType::Put { ncdf(-d2k) } else { ncdf(d2k) };
+                    let p_itm = if cp == OptType::Put {
+                        ncdf(-d2k)
+                    } else {
+                        ncdf(d2k)
+                    };
                     r.p_itm = Some(p_itm);
                     r.p_touch = Some((2.0 * p_itm).min(1.0));
                     r.sig_dist = Some((spot - be) / (spot * iv * r.t.sqrt()));
@@ -252,7 +285,13 @@ pub fn grade_pick(r: &EnrichedRow) -> (Grade, String) {
     } else if oi == 0.0 {
         why.push("ไม่มีข้อมูล OI".to_string());
     }
-    let grade = if pts >= 7 { Grade::A } else if pts >= 4 { Grade::B } else { Grade::C };
+    let grade = if pts >= 7 {
+        Grade::A
+    } else if pts >= 4 {
+        Grade::B
+    } else {
+        Grade::C
+    };
     (grade, format!("คะแนน {pts}/10  →  {}", why.join(" | ")))
 }
 
@@ -318,7 +357,8 @@ pub fn candidates_in_input_order<'a>(
     spot: f64,
     f: &Filters,
 ) -> Vec<&'a EnrichedRow> {
-    rows.iter().copied()
+    rows.iter()
+        .copied()
         .filter(|r| {
             if spot == 0.0 || r.ann.is_none() || r.delta.is_none() {
                 return false;
@@ -339,7 +379,11 @@ pub fn candidates_in_input_order<'a>(
             if !(f.dmin..=f.dmax).contains(&d) {
                 return false;
             }
-            let (dte_lo, dte_hi) = if f.relax { (0.0, 400.0) } else { (MIN_DTE, MAX_DTE) };
+            let (dte_lo, dte_hi) = if f.relax {
+                (0.0, 400.0)
+            } else {
+                (MIN_DTE, MAX_DTE)
+            };
             if !(dte_lo..=dte_hi).contains(&r.dte) {
                 return false;
             }
@@ -347,10 +391,8 @@ pub fn candidates_in_input_order<'a>(
             if r.credit.unwrap_or(0.0) < min_credit {
                 return false;
             }
-            if let Some(sp) = r.spread_pct {
-                if !f.relax && sp > MAX_SPREAD_PCT {
-                    return false;
-                }
+            if !f.relax && r.spread_pct.is_some_and(|sp| sp > MAX_SPREAD_PCT) {
+                return false;
             }
             true
         })
@@ -359,13 +401,20 @@ pub fn candidates_in_input_order<'a>(
 
 /// `short_candidates` followed by the app pipeline's budget cap and a stable
 /// sort by score descending (`expected_app_order` in the fixtures).
-pub fn short_candidates<'a>(rows: &[&'a EnrichedRow], spot: f64, f: &Filters) -> Vec<&'a EnrichedRow> {
+pub fn short_candidates<'a>(
+    rows: &[&'a EnrichedRow],
+    spot: f64,
+    f: &Filters,
+) -> Vec<&'a EnrichedRow> {
     let mut out: Vec<&EnrichedRow> = candidates_in_input_order(rows, spot, f)
         .into_iter()
         .filter(|r| f.budget <= 0.0 || r.collateral.unwrap_or(f64::MAX) <= f.budget)
         .collect();
     out.sort_by(|a, b| {
-        b.score.unwrap_or(0.0).partial_cmp(&a.score.unwrap_or(0.0)).unwrap_or(std::cmp::Ordering::Equal)
+        b.score
+            .unwrap_or(0.0)
+            .partial_cmp(&a.score.unwrap_or(0.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     out
 }

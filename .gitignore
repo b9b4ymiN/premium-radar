@@ -4,18 +4,26 @@
 *.key
 secrets/
 
-# build artifacts
+# node / frontend build
 node_modules/
 dist/
+dist-ssr/
+*.local
+
+# rust build
 src-tauri/target/
 src-tauri/gen/
 
 # tool/session artifacts
 .playwright-mcp/
 .taste-skill/
-.impeccable/mocks/
+logs/
 *.log
+npm-debug.log*
 
-# OS
+# editor/OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
 .DS_Store
 Thumbs.db

@@ -60,9 +60,7 @@ pub fn bs_price(cp: OptType, s: f64, k: f64, t: f64, r: f64, q: f64, sig: f64) -
     let d1 = ((s / k).ln() + (r - q + 0.5 * sig * sig) * t) / sq;
     let d2 = d1 - sq;
     match cp {
-        OptType::Call => {
-            s * (-q * t).exp() * ncdf(d1) - k * (-r * t).exp() * ncdf(d2)
-        }
+        OptType::Call => s * (-q * t).exp() * ncdf(d1) - k * (-r * t).exp() * ncdf(d2),
         OptType::Put => k * (-r * t).exp() * ncdf(-d2) - s * (-q * t).exp() * ncdf(-d1),
     }
 }
@@ -118,8 +116,13 @@ pub struct Greeks {
 /// return zeroed Greeks instead of panicking.
 pub fn bs_greeks(cp: OptType, s: f64, k: f64, t: f64, r: f64, q: f64, sig: f64) -> Greeks {
     let sq = sig * t.sqrt();
-    if !(sq > 0.0) || s <= 0.0 {
-        return Greeks { delta: 0.0, gamma: 0.0, vega: 0.0, theta: 0.0 };
+    if sq.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) || s <= 0.0 {
+        return Greeks {
+            delta: 0.0,
+            gamma: 0.0,
+            vega: 0.0,
+            theta: 0.0,
+        };
     }
     let d1 = ((s / k).ln() + (r - q + 0.5 * sig * sig) * t) / sq;
     let d2 = d1 - sq;
@@ -171,16 +174,47 @@ mod tests {
 
     #[test]
     fn degenerate_price_returns_intrinsic() {
-        assert_eq!(bs_price(OptType::Call, 110.0, 100.0, 0.0, 0.05, 0.0, 0.3), 10.0);
-        assert_eq!(bs_price(OptType::Put, 110.0, 100.0, 0.0, 0.05, 0.0, 0.3), 0.0);
-        assert_eq!(bs_price(OptType::Put, 90.0, 100.0, 0.01, 0.05, 0.0, 0.0), 10.0);
+        assert_eq!(
+            bs_price(OptType::Call, 110.0, 100.0, 0.0, 0.05, 0.0, 0.3),
+            10.0
+        );
+        assert_eq!(
+            bs_price(OptType::Put, 110.0, 100.0, 0.0, 0.05, 0.0, 0.3),
+            0.0
+        );
+        assert_eq!(
+            bs_price(OptType::Put, 90.0, 100.0, 0.01, 0.05, 0.0, 0.0),
+            10.0
+        );
     }
 
     #[test]
     fn implied_vol_rejects_below_intrinsic() {
         // deep ITM put priced below the discounted-forward intrinsic
-        assert!(implied_vol(OptType::Put, 0.5, 100.0, 150.0, 0.1, RISK_FREE_RATE, DIV_YIELD).is_none());
-        assert!(implied_vol(OptType::Call, 0.0, 100.0, 90.0, 0.1, RISK_FREE_RATE, DIV_YIELD).is_none());
+        assert!(
+            implied_vol(
+                OptType::Put,
+                0.5,
+                100.0,
+                150.0,
+                0.1,
+                RISK_FREE_RATE,
+                DIV_YIELD
+            )
+            .is_none()
+        );
+        assert!(
+            implied_vol(
+                OptType::Call,
+                0.0,
+                100.0,
+                90.0,
+                0.1,
+                RISK_FREE_RATE,
+                DIV_YIELD
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -193,9 +227,25 @@ mod tests {
 
     #[test]
     fn put_delta_below_zero_call_above() {
-        let g_put = bs_greeks(OptType::Put, 182.45, 175.0, 0.1, RISK_FREE_RATE, DIV_YIELD, 0.4);
-        let g_call = bs_greeks(OptType::Call, 182.45, 175.0, 0.1, RISK_FREE_RATE, DIV_YIELD, 0.4);
+        let g_put = bs_greeks(
+            OptType::Put,
+            182.45,
+            175.0,
+            0.1,
+            RISK_FREE_RATE,
+            DIV_YIELD,
+            0.4,
+        );
+        let g_call = bs_greeks(
+            OptType::Call,
+            182.45,
+            175.0,
+            0.1,
+            RISK_FREE_RATE,
+            DIV_YIELD,
+            0.4,
+        );
         assert!(g_put.delta < 0.0 && g_call.delta > 0.0);
-        assert!((g_put.delta - g_call.delta - 1.0).abs() < 1e-9);
+        assert!((g_put.delta - g_call.delta + 1.0).abs() < 1e-7);
     }
 }

@@ -5,16 +5,18 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::Deserialize;
 use std::path::PathBuf;
 
-use premium_radar_lib::quant::{bs_greeks, bs_price, implied_vol, years_to_expiry, OptType};
-use premium_radar_lib::webull::contracts::parse_occ;
+use radar_core::quant::{OptType, bs_greeks, bs_price, implied_vol, years_to_expiry};
+use radar_core::webull::contracts::parse_occ;
 
 fn fixture_path(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures").join(name)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures")
+        .join(name)
 }
 
 fn load<T: for<'de> Deserialize<'de>>(name: &str) -> T {
-    let raw = std::fs::read(fixture_path(name))
-        .unwrap_or_else(|e| panic!("read fixture {name}: {e}"));
+    let raw =
+        std::fs::read(fixture_path(name)).unwrap_or_else(|e| panic!("read fixture {name}: {e}"));
     serde_json::from_str(std::str::from_utf8(&raw).unwrap())
         .unwrap_or_else(|e| panic!("parse fixture {name}: {e}"))
 }
@@ -50,29 +52,52 @@ struct BsCase {
 #[derive(Deserialize)]
 struct BsExpected {
     price: f64,
-    delta: f64,
-    gamma: f64,
-    vega: f64,
-    theta: f64,
+    // greeks are absent on degenerate cases (Python skips div-zero inputs)
+    #[serde(default)]
+    delta: Option<f64>,
+    #[serde(default)]
+    gamma: Option<f64>,
+    #[serde(default)]
+    vega: Option<f64>,
+    #[serde(default)]
+    theta: Option<f64>,
 }
 
 #[test]
 fn golden_bs_price_and_greeks() {
     let f: BsFile = load("quant_bs.json");
-    assert!(f.cases.len() >= 100, "expected a full grid, got {}", f.cases.len());
+    assert!(
+        f.cases.len() >= 100,
+        "expected a full grid, got {}",
+        f.cases.len()
+    );
     for (i, c) in f.cases.iter().enumerate() {
         let opt = cp(&c.cp);
         let price = bs_price(opt, c.s, c.k, c.t, c.r, c.q, c.vol);
         assert!(
             (price - c.expected.price).abs() < TOL,
             "case {i} ({}) price: got {price}, want {}",
-            c._tag, c.expected.price
+            c._tag,
+            c.expected.price
         );
         let g = bs_greeks(opt, c.s, c.k, c.t, c.r, c.q, c.vol);
-        assert!((g.delta - c.expected.delta).abs() < TOL, "case {i} delta");
-        assert!((g.gamma - c.expected.gamma).abs() < TOL, "case {i} gamma");
-        assert!((g.vega - c.expected.vega).abs() < TOL, "case {i} vega");
-        assert!((g.theta - c.expected.theta).abs() < TOL, "case {i} theta");
+        if let Some(w) = c.expected.delta {
+            assert!(
+                (g.delta - w).abs() < TOL,
+                "case {i} ({}) delta: {} vs {w}",
+                c._tag,
+                g.delta
+            );
+        }
+        if let Some(w) = c.expected.gamma {
+            assert!((g.gamma - w).abs() < TOL, "case {i} gamma");
+        }
+        if let Some(w) = c.expected.vega {
+            assert!((g.vega - w).abs() < TOL, "case {i} vega");
+        }
+        if let Some(w) = c.expected.theta {
+            assert!((g.theta - w).abs() < TOL, "case {i} theta");
+        }
     }
 }
 
@@ -112,7 +137,10 @@ fn golden_implied_vol() {
             (g, w) => panic!("case {i} solvability mismatch: got {g:?}, want {w:?}"),
         }
     }
-    assert!(solved >= 100, "expected a meaningful solved set, got {solved}");
+    assert!(
+        solved >= 100,
+        "expected a meaningful solved set, got {solved}"
+    );
 }
 
 // ---------- occ_parse.json ----------
@@ -131,7 +159,7 @@ struct OccCase {
     symbol: String,
     expected: Option<OccExpected>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct OccExpected {
     underlying: String,
     option_type: String,
@@ -166,5 +194,8 @@ fn golden_occ_parse_and_years() {
             (g, w) => panic!("case {i} parse mismatch: got {g:?}, want {w:?}"),
         }
     }
-    assert!(valid >= 20 && invalid >= 3, "valid={valid} invalid={invalid}");
+    assert!(
+        valid >= 20 && invalid >= 3,
+        "valid={valid} invalid={invalid}"
+    );
 }

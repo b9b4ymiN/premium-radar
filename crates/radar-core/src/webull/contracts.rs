@@ -27,13 +27,18 @@ pub fn parse_occ(symbol: &str) -> Option<OccMeta> {
     let s = symbol.trim().replace(' ', "");
     let m = re.captures(&s)?;
     let root = m.get(1)?.as_str().to_string();
-    let yy: i32 = 2000 + m.get(2)?.as_str().parse().ok()?;
+    let yy: i32 = 2000 + m.get(2)?.as_str().parse::<i32>().ok()?;
     let mm: u32 = m.get(3)?.as_str().parse().ok()?;
     let dd: u32 = m.get(4)?.as_str().parse().ok()?;
     let option_type = OptType::parse(m.get(5)?.as_str())?;
     let strike = m.get(6)?.as_str().parse::<f64>().ok()? / 1000.0;
     let expiry = NaiveDate::from_ymd_opt(yy, mm, dd)?;
-    Some(OccMeta { underlying: root, expiry, option_type, strike })
+    Some(OccMeta {
+        underlying: root,
+        expiry,
+        option_type,
+        strike,
+    })
 }
 
 #[cfg(test)]

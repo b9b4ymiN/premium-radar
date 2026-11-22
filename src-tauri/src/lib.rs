@@ -1,9 +1,7 @@
 // PREMIUM RADAR — Rust core.
 // Modules are added phase by phase; see PLAN.md.
 
-pub mod quant;
-pub mod screener;
-pub mod webull;
+pub use radar_core::{quant, screener, webull};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
