@@ -21,6 +21,7 @@ interface SetupScreenProps {
 interface ConnectionTestResult {
   webull_ok: boolean;
   detail: string;
+  streaming?: "entitled" | "limit" | "none" | "unknown" | null;
 }
 
 interface StoredLlm {
@@ -243,7 +244,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
             autoComplete="off"
           />
           <input
-            placeholder="Access Token (จำเป็นบน production — เอาจาก vcpSystem .env: WEBULL_ACCESS_TOKEN)"
+            placeholder="Access Token (จำเป็นบน production — สร้างด้วย node tools/probe-webull.mjs --token-create แล้วยืนยัน SMS ในแอป Webull)"
             value={webullToken}
             onChange={(e) => setWebullToken(e.target.value)}
             style={inputStyle}
@@ -285,6 +286,24 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
               >
                 {testResult.webull_ok ? "✓ " : "✕ "}
                 {testResult.detail}
+                {testResult.streaming === "entitled" && (
+                  <span style={{ color: "#3ddc97" }}> · 📡 ราคาสด: มีสิทธิ์ streaming</span>
+                )}
+                {testResult.streaming === "limit" && (
+                  <span style={{ color: "#e8c170" }}>
+                    {" "}
+                    · 📡 ราคาสด: มีสิทธิ์ (ครบโควตา 5 จุดชั่วคราว — ลองใหม่ใน ~1 นาที)
+                  </span>
+                )}
+                {testResult.streaming === "none" && (
+                  <span style={{ color: "#e8c170" }}>
+                    {" "}
+                    · 📡 ราคาสด: AppKey นี้ไม่มีสิทธิ์ streaming (สแกนยังใช้ REST ได้ปกติ)
+                  </span>
+                )}
+                {testResult.streaming === "unknown" && (
+                  <span style={{ color: "#8da7ca" }}> · 📡 ราคาสด: ตรวจไม่ได้ (timeout/เครือข่าย)</span>
+                )}
               </span>
             )}
           </div>

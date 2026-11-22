@@ -190,6 +190,50 @@ impl StreamClient {
     }
 }
 
+/// Verdict of a connect-only streaming probe (no subscribe, no data).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Entitlement {
+    /// CONNACK accepted — this app key may stream on this environment.
+    Entitled,
+    /// Webull CONNACK 105: auth passed but the 5-connection cap is hit —
+    /// the key is still entitled.
+    ConnectionLimit,
+    /// Webull CONNACK 104 "Invalid AppKey" — no streaming entitlement.
+    NotEntitled,
+    /// Network/TLS failure or timeout before a verdict — unknown.
+    Unreachable,
+}
+
+/// Map a rumqttc connection error message to an entitlement verdict. Exposed
+/// for tests; production code should prefer [`probe_entitlement`].
+fn classify_connect_error(msg: &str) -> Entitlement {
+    if msg.contains("104") {
+        Entitlement::NotEntitled
+    } else if msg.contains("105") {
+        Entitlement::ConnectionLimit
+    } else {
+        Entitlement::Unreachable
+    }
+}
+
+/// Setup-diagnostic probe: MQTT CONNECT only (no subscribe), classified into
+/// an [`Entitlement`]. Dropping the client on return disconnects cleanly, so
+/// this never leaks one of the 5 per-key connection slots for long.
+pub async fn probe_entitlement(config: StreamConfig, creds: Credentials) -> Entitlement {
+    let mut stream = StreamClient::new(config, creds);
+    let deadline = tokio::time::Duration::from_secs(8);
+    loop {
+        let ev = match tokio::time::timeout(deadline, stream.event_loop().poll()).await {
+            Err(_) => return Entitlement::Unreachable,
+            Ok(Err(e)) => return classify_connect_error(&format!("{e}")),
+            Ok(Ok(incoming)) => stream.handle_event(Ok(incoming)),
+        };
+        if matches!(ev, Some(StreamEvent::Connected)) {
+            return Entitlement::Entitled;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,6 +245,23 @@ mod tests {
         assert_eq!(c.port, 1883);
         assert!(c.use_tls);
         assert_eq!(c.session_id, "test_session");
+    }
+
+    #[test]
+    fn classify_entitlement_from_connack_text() {
+        assert_eq!(
+            classify_connect_error("I/O: Invalid Connect return code: 104"),
+            Entitlement::NotEntitled
+        );
+        assert_eq!(
+            classify_connect_error("I/O: Invalid Connect return code: 105"),
+            Entitlement::ConnectionLimit
+        );
+        // unrelated failures must not be misread as an entitlement verdict
+        assert_eq!(
+            classify_connect_error("tls handshake eof"),
+            Entitlement::Unreachable
+        );
     }
 
     #[test]

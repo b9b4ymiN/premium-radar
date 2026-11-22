@@ -171,6 +171,26 @@ fn save_credentials(
 pub struct ConnectionTestResult {
     pub webull_ok: bool,
     pub detail: String,
+    /// Streaming (MQTT) entitlement verdict from a connect-only probe:
+    /// "entitled" | "limit" | "none" | "unknown" — None when REST already failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub streaming: Option<String>,
+}
+
+/// Connect-only MQTT probe on a dedicated runtime (the command thread is sync).
+/// Verdict only — never blocks longer than ~8 s.
+fn streaming_verdict(creds: &radar_core::webull::rest::Credentials, base_url: &str) -> String {
+    let sid = format!("probe_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+    let config = radar_core::webull::stream::StreamConfig::for_base_url(base_url, sid);
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
+        return "unknown".into();
+    };
+    match rt.block_on(radar_core::webull::stream::probe_entitlement(config, creds.clone())) {
+        radar_core::webull::stream::Entitlement::Entitled => "entitled".into(),
+        radar_core::webull::stream::Entitlement::ConnectionLimit => "limit".into(),
+        radar_core::webull::stream::Entitlement::NotEntitled => "none".into(),
+        radar_core::webull::stream::Entitlement::Unreachable => "unknown".into(),
+    }
 }
 
 /// Probe the Webull API with either the given keys (setup screen, unsaved) or
@@ -216,6 +236,7 @@ fn test_connection(
         return ConnectionTestResult {
             webull_ok: false,
             detail: "ยังไม่ได้ใส่ App Key / Secret".into(),
+            streaming: None,
         };
     }
 
@@ -256,14 +277,23 @@ fn test_connection(
         }
     };
 
+    // creds for the MQTT entitlement probe (client above owns the first set)
+    let probe_creds = radar_core::webull::rest::Credentials {
+        app_key: key.clone(),
+        app_secret: secret.clone(),
+        access_token: None,
+    };
+
     match probe(&mut client, "AAPL") {
         Ok(Some(price)) => ConnectionTestResult {
             webull_ok: true,
             detail: format!("เชื่อมต่อสำเร็จ — AAPL ${price:.2}{tok_note}"),
+            streaming: Some(streaming_verdict(&probe_creds, &base_url)),
         },
         Ok(None) => ConnectionTestResult {
             webull_ok: false,
             detail: "ตอบกลับ 200 แต่ไม่พบข้อมูล (เช็คสิทธิ์ดูข้อมูล US ของ app key นี้)".into(),
+            streaming: None,
         },
         Err(with_tok_err) if token.is_some() => {
             // The token may be the problem — retry the same probe WITHOUT it.
@@ -281,6 +311,7 @@ fn test_connection(
                         "ใส่ Access Token แล้วโดน 401 แต่ตัด token ออกแล้วผ่าน (AAPL ${price:.2}) \
                          — token นี้ใช้ไม่ได้: ลบค่าในช่อง Access Token ทิ้งแล้วบันทึกได้เลย"
                     ),
+                    streaming: None,
                 },
                 _ => ConnectionTestResult {
                     webull_ok: false,
@@ -289,15 +320,16 @@ fn test_connection(
                          key อาจเป็นของ UAT (ลอง Base URL https://th-api.uat.webullbroker.com) \
                          หรือ app key นี้ไม่มีสิทธิ์ market-data"
                     ),
+                    streaming: None,
                 },
             }
         }
         Err(e) => {
             let d = e.to_string();
             let hint = if d.contains("401") || d.to_lowercase().contains("unauthorized") {
-                " — Key/Secret ถูกแต่ไม่ผ่าน: ลองใส่ Access Token ของ vcpSystem \
-                 (.env: WEBULL_ACCESS_TOKEN) หรือลอง Base URL ของ UAT \
-                 (https://th-api.uat.webullbroker.com) ถ้า key เป็นคู่ทดสอบ"
+                " — Key/Secret ถูกแต่ไม่ผ่าน: สร้าง Access Token ใหม่ด้วย \
+                 `node tools/probe-webull.mjs --token-create` (ยืนยัน SMS ในแอป Webull) \
+                 หรือลอง Base URL ของ UAT (https://th-api.uat.webullbroker.com) ถ้า key เป็นคู่ทดสอบ"
             } else if d.contains("403") {
                 " — key ถูกต้องแต่ไม่มีสิทธิ์เรียก endpoint นี้"
             } else {
@@ -306,6 +338,7 @@ fn test_connection(
             ConnectionTestResult {
                 webull_ok: false,
                 detail: format!("{d}{hint}"),
+                streaming: None,
             }
         }
     }
@@ -359,16 +392,19 @@ fn test_llm(
         return ConnectionTestResult {
             webull_ok: false,
             detail: "ยังไม่ได้ใส่ Base URL / Model / API Key ของ AI".into(),
+            streaming: None,
         };
     }
     match radar_core::copilot::ping(&cfg) {
         Ok(reply) => ConnectionTestResult {
             webull_ok: true,
             detail: format!("AI ตอบกลับจริง ({}): {}", cfg.model, reply.chars().take(80).collect::<String>()),
+            streaming: None,
         },
         Err(e) => ConnectionTestResult {
             webull_ok: false,
             detail: e,
+            streaming: None,
         },
     }
 }
