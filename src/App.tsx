@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { SetupScreen } from "./components/SetupScreen";
 import type { EnrichedRow, StockUpdate, ChainStats } from "./types/screener";
 import "./App.css";
 
@@ -64,10 +65,14 @@ export default function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [tauriReady, setTauriReady] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
 
-  // Try to connect to the Tauri backend
+  // Try to connect to the Tauri backend + check if setup is needed
   useEffect(() => {
     if (!hasTauri) return;
+    tauriInvoke<boolean>("needs_setup")
+      .then((needs) => setShowSetup(needs))
+      .catch(() => setTauriReady(false));
     tauriInvoke<string>("get_status")
       .then(() => setTauriReady(true))
       .catch(() => setTauriReady(false));
@@ -94,6 +99,15 @@ export default function App() {
     skew: 3.1,
   };
 
+
+  if (showSetup) {
+    return (
+      <SetupScreen
+        onComplete={() => setShowSetup(false)}
+        onSkip={() => setShowSetup(false)}
+      />
+    );
+  }
 
   return (
     <div className="app">

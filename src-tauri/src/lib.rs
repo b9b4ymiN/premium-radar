@@ -191,6 +191,55 @@ fn save_settings(state: tauri::State<'_, AppState>, new_settings: settings::AppS
     new_settings.save(&dir)
 }
 
+/// Save API credentials from the first-run setup screen.
+/// Stores in settings (dev) — production should use OS keyring.
+#[tauri::command]
+fn save_credentials(
+    state: tauri::State<'_, AppState>,
+    webull_key: String,
+    webull_secret: String,
+    webull_base_url: Option<String>,
+    llm_label: Option<String>,
+    llm_base_url: Option<String>,
+    llm_model: Option<String>,
+    llm_api_key: Option<String>,
+) -> Result<settings::AppSettings, String> {
+    let dir = state.app_data_dir.clone();
+    let mut s = state.settings.lock().unwrap();
+
+    s.webull_app_key = webull_key;
+    s.webull_app_secret = webull_secret;
+    if let Some(url) = webull_base_url {
+        if !url.is_empty() {
+            s.webull_base_url = url;
+        }
+    }
+
+    if let (Some(label), Some(base_url), Some(model), Some(key)) =
+        (llm_label, llm_base_url, llm_model, llm_api_key)
+    {
+        if !base_url.is_empty() && !model.is_empty() && !key.is_empty() {
+            s.llm = Some(radar_core::copilot::LlmConfig::new(label, base_url, model, key));
+        }
+    }
+
+    s.save(&dir)?;
+    Ok(s.clone())
+}
+
+/// Test if the current configuration is ready to use.
+#[tauri::command]
+fn test_connection(state: tauri::State<'_, AppState>) -> String {
+    let s = state.settings.lock().unwrap();
+    s.status_summary()
+}
+
+/// Check if first-run setup is needed (no Webull keys configured).
+#[tauri::command]
+fn needs_setup(state: tauri::State<'_, AppState>) -> bool {
+    !state.settings.lock().unwrap().is_configured()
+}
+
 // ---------- Tauri app entry ----------
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -218,6 +267,9 @@ pub fn run() {
             get_status,
             get_settings,
             save_settings,
+            save_credentials,
+            test_connection,
+            needs_setup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
