@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SetupScreen } from "./components/SetupScreen";
+import OptionLab from "./components/OptionLab/OptionLab";
 import type { EnrichedRow, StockUpdate, ChainStats, EngineSnapshot } from "./types/screener";
 import "./App.css";
 
@@ -74,6 +75,7 @@ export default function App() {
   const [risk, setRisk] = useState("BALANCED");
   const [budget, setBudget] = useState("18000");
   const [tab, setTab] = useState("all");
+  const [mainTab, setMainTab] = useState<"monitor" | "lab">("monitor");
   const [selected, setSelected] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [tauriReady, setTauriReady] = useState(false);
@@ -411,8 +413,8 @@ export default function App() {
         {/* ---- Main ---- */}
         <main className="main">
           <div className="main-tabs">
-            <button className="mtab on">Options Monitor</button>
-            <button className="mtab">Strategy Lab</button>
+            <button className={`mtab ${mainTab === "monitor" ? "on" : ""}`} onClick={() => setMainTab("monitor")}>Options Monitor</button>
+            <button className={`mtab ${mainTab === "lab" ? "on" : ""}`} onClick={() => setMainTab("lab")}>Option Lab · ทดลองกลยุทธ์</button>
           </div>
 
           {/* Quote Header */}
@@ -445,6 +447,12 @@ export default function App() {
             </div>
           </section>
 
+          {mainTab === "lab" ? (
+            <section className="labmodule">
+              <OptionLab row={selectedRow} symbol={symbol} spot={snap?.spot ?? 0} />
+            </section>
+          ) : (
+          <>
           {/* 6 Metric Cards */}
           <section className="summary">
             {[
@@ -562,6 +570,8 @@ export default function App() {
               <span>US Options · 100 shares/contract</span>
             </div>
           </section>
+          </>
+          )}
         </main>
 
         {/* ---- Right Panel ---- */}

@@ -553,6 +553,72 @@ fn lab_analyze(input: LabAnalyzeInput) -> Result<serde_json::Value, String> {
     }))
 }
 
+/// Option Lab — บันทึกคำทำนาย (freeze) ห้ามแก้ย้อนหลัง (P9.4)
+#[derive(serde::Deserialize)]
+struct LabFreezeInput {
+    occ: String,
+    p: f64,
+    event_th: String,
+    model_note: String,
+    spot: f64,
+    strike: f64,
+    premium: f64,
+    iv: f64,
+    dte_days: f64,
+    expiry: String,
+}
+
+#[tauri::command]
+fn lab_freeze_prediction(
+    state: tauri::State<'_, AppState>,
+    input: LabFreezeInput,
+) -> Result<String, String> {
+    use radar_core::lab::types::StoredPrediction;
+    if !(0.0..=1.0).contains(&input.p) {
+        return Err("ความน่าจะเป็นต้องอยู่ช่วง 0–1".into());
+    }
+    let expiry: chrono::NaiveDate = input
+        .expiry
+        .parse()
+        .map_err(|e| format!("รูปแบบวันหมดอายุผิด: {e}"))?;
+    let now = chrono::Utc::now();
+    let pred = StoredPrediction {
+        id: format!("pred-{}", now.timestamp_nanos_opt().unwrap_or_default()),
+        occ: input.occ,
+        p: input.p,
+        event_th: input.event_th,
+        model_note: input.model_note,
+        spot: input.spot,
+        strike: input.strike,
+        premium: input.premium,
+        iv: input.iv,
+        dte_days: input.dte_days,
+        expiry,
+        created_at: now,
+    };
+    let root = std::path::Path::new(&state.app_data_dir).join("lab");
+    let store = radar_core::lab::storage::LabStorage::open(&root)
+        .map_err(|e| format!("เปิดที่เก็บ lab ไม่ได้: {e}"))?;
+    store
+        .append_prediction(&pred)
+        .map_err(|e| format!("บันทึกไม่สำเร็จ: {e}"))?;
+    Ok(pred.id)
+}
+
+/// Option Lab — คำทำนายทั้งหมดที่ freeze ไว้ (อ่านอย่างเดียว)
+#[tauri::command]
+fn lab_predictions(state: tauri::State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
+    let root = std::path::Path::new(&state.app_data_dir).join("lab");
+    let store = radar_core::lab::storage::LabStorage::open(&root)
+        .map_err(|e| format!("เปิดที่เก็บ lab ไม่ได้: {e}"))?;
+    Ok(store
+        .read_predictions()
+        .unwrap_or_default()
+        .iter()
+        .map(|p| serde_json::to_value(p).unwrap_or_default())
+        .collect())
+}
+
 /// Ask the AI copilot a question, grounded in the live engine data via
 /// function calling (top_candidates / contract_detail / chain_stats).
 #[tauri::command]
@@ -680,6 +746,8 @@ pub fn run() {
             create_access_token,
             needs_setup,
             lab_analyze,
+            lab_freeze_prediction,
+            lab_predictions,
             ask_copilot,
             test_llm,
         ])

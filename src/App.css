@@ -398,3 +398,28 @@ button:focus-visible, input:focus-visible {
   padding-left: 8px;
   color: #9bacc7;
 }
+
+/* ============ OPTION LAB ============ */
+.labmodule { flex: 1; display: flex; flex-direction: column; overflow-y: auto; padding: 10px 12px; border: 1px solid var(--divider); background: var(--surface); }
+.lab-empty { color: var(--muted); font-size: 12px; padding: 24px 8px; text-align: center; }
+.lab-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+.lab-cell { border: 1px solid var(--divider); background: var(--surface2, #10141a); padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; }
+.lab-cell label { font-size: 9.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.lab-cell strong { font-size: 19px; font-variant-numeric: tabular-nums; }
+.lab-cell small { font-size: 9.5px; color: var(--muted); }
+.lab-probs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0; }
+.lab-prob { border: 1px solid var(--divider); padding: 8px 10px; }
+.lab-prob label { display: block; font-size: 9px; color: var(--muted); margin-bottom: 4px; min-height: 24px; }
+.lab-prob strong { font-size: 16px; font-variant-numeric: tabular-nums; }
+.lab-note { display: block; color: var(--muted); font-size: 9px; margin-top: 4px; }
+.lab-cc { margin: 6px 0 10px; }
+.lab-toggle { display: flex; gap: 6px; align-items: center; font-size: 11px; color: var(--text); cursor: pointer; }
+.lab-ccline { margin-top: 6px; font-size: 11px; color: var(--muted); }
+.lab-tablewrap { margin-top: 6px; }
+.lab-table { font-size: 11px; }
+.lab-freeze { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--divider); }
+.lab-freeze-btn { background: var(--accent, #4b8cf7); color: #fff; border: 0; border-radius: 3px; padding: 7px 14px; font-size: 11.5px; cursor: pointer; }
+.lab-freeze-btn:disabled { opacity: 0.4; cursor: default; }
+.lab-freeze small { color: var(--muted); font-size: 9.5px; }
+.lab-err { color: #f4788c; font-size: 11px; margin: 8px 0; }
+.lab-chart { border: 1px solid var(--divider); padding: 8px 10px 2px; }

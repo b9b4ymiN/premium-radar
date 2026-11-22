@@ -15,7 +15,9 @@ use chrono::NaiveDate;
 use serde::Serialize;
 
 use super::quality::validate_observation;
-use super::types::{CaptureEvent, DiscoveryCoverage, LAB_SCHEMA_VERSION, Observation};
+use super::types::{
+    CaptureEvent, DiscoveryCoverage, LAB_SCHEMA_VERSION, Observation, StoredPrediction,
+};
 
 /// สถิติการเขียนหนึ่ง batch — บันทึกลง session log เสมอ
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -209,6 +211,26 @@ impl LabStorage {
             sessions,
         };
         serde_json::to_string_pretty(&bundle).map_err(io_err)
+    }
+
+    /// คำทำนาย freeze (append-only ทั้งไฟล์เดียว lab/v1/predictions.jsonl)
+    pub fn append_prediction(&self, pred: &StoredPrediction) -> std::io::Result<()> {
+        let line = serde_json::to_string(pred).map_err(io_err)?;
+        let path = self.root.join("v1").join("predictions.jsonl");
+        Self::append_line(&path, &line)
+    }
+
+    pub fn read_predictions(&self) -> std::io::Result<Vec<StoredPrediction>> {
+        let mut out = Vec::new();
+        let Ok(raw) = fs::read_to_string(self.root.join("v1").join("predictions.jsonl")) else {
+            return Ok(out);
+        };
+        for line in raw.lines().filter(|l| !l.trim().is_empty()) {
+            if let Ok(p) = serde_json::from_str::<StoredPrediction>(line) {
+                out.push(p);
+            }
+        }
+        Ok(out)
     }
 
     pub fn read_observations(&self, date: NaiveDate) -> std::io::Result<Vec<Observation>> {

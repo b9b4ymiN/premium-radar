@@ -126,6 +126,28 @@ pub struct DataGap {
     pub kind: GapKind,
 }
 
+/// คำทำนายที่ freeze ไว้ (P9.4) — append-only แก้ย้อนหลังไม่ได้
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StoredPrediction {
+    /// id เรียงตามเวลาสร้าง (nanos) — ไม่ต้อง uuid
+    pub id: String,
+    pub occ: String,
+    /// ความน่าจะเป็นที่ทำนาย (0..1)
+    pub p: f64,
+    /// นิยามเหตุการณ์ที่วัด
+    pub event_th: String,
+    pub model_note: String,
+    /// ตัวเลขที่ใช้ตอนตัดสินใจ (freeze ไว้ทั้งชุด)
+    pub spot: f64,
+    pub strike: f64,
+    pub premium: f64,
+    pub iv: f64,
+    pub dte_days: f64,
+    /// วันที่หมดอายุ (NY) — outcome resolver ใช้จับคู่ภายหลัง
+    pub expiry: chrono::NaiveDate,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
 /// เหตุการณ์ของ capture session เอง (แยกจากข้อมูลตลาด)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CaptureEvent {
