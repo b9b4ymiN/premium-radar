@@ -1,0 +1,56 @@
+[
+ {
+  "host": "api.webull.co.th",
+  "app_key": "TESTKEY123",
+  "path": "/openapi/market-data/stock/snapshot",
+  "query": {
+   "symbols": "NVDA",
+   "category": "US_STOCK"
+  },
+  "ts": "2026-11-22T10:00:00Z",
+  "nonce": "deadbeefdeadbeefdeadbeefdeadbeef",
+  "body": "",
+  "expected_sig": "jABbIsD3daPov2Uqefj5dZy/k/k="
+ },
+ {
+  "host": "api.webull.co.th",
+  "app_key": "TESTKEY123",
+  "path": "/openapi/market-data/option/snapshot",
+  "query": {
+   "symbols": "NVDA261218P00175000,NVDA261218P00170000",
+   "category": "US_OPTION"
+  },
+  "ts": "2026-11-22T10:00:01Z",
+  "nonce": "abcdef01abcdef01abcdef01abcdef01",
+  "body": "",
+  "expected_sig": "jNsMmkg/KIiuiYGWMnVLQoHeB20="
+ },
+ {
+  "host": "api.webull.co.th",
+  "app_key": "TESTKEY123",
+  "path": "/openapi/market-data/option/bars",
+  "query": {
+   "symbols": "A 270206C00250000",
+   "category": "US_OPTION",
+   "timespan": "D",
+   "count": "3"
+  },
+  "ts": "2026-11-22T09:59:59Z",
+  "nonce": "00112233001122330011223300112233",
+  "body": "",
+  "expected_sig": "yPwT2wKBGdlchvZmEj6mxe1Dbsk="
+ },
+ {
+  "host": "api.webull.co.th",
+  "app_key": "TESTKEY123",
+  "path": "/openapi/instrument/option/contracts",
+  "query": {
+   "count": "1000",
+   "direction": "1"
+  },
+  "ts": "2026-11-22T10:05:00Z",
+  "nonce": "ffeeddccffeeddccffeeddccffeeddcc",
+  "body": "x",
+  "expected_sig": "HMEK4iGsmThQ8Ynx3g/qTQDyYJs="
+ }
+]

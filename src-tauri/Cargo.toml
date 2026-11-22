@@ -21,6 +21,10 @@ libm = "0.2"
 regex = "1"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
+hmac = "0.12"
+sha1 = "0.10"
+md-5 = "0.10"
+base64 = "0.22"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
