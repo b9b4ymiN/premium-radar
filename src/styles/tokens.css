@@ -1,0 +1,39 @@
+/* PREMIUM RADAR — V2 Modern Visual Refinement
+   Source of truth: design/DESIGN.md §2 (computed after cascade override)
+   DO NOT add gloss, gradients, or heavy shadows — flat 1px dividers only. */
+
+:root {
+  /* Foundation */
+  --canvas: #0b0d11;
+  --header: #14171d;
+  --sidebar: #11151b;
+  --surface: #151a21;
+  --raised: #1a2029;
+  --hover: #202938;
+
+  /* Delineation */
+  --border: #292f39;
+  --border-soft: #222832;
+  --border-strong: #384251;
+
+  /* Typography */
+  --text: #f0f3f8;
+  --secondary: #a2adbc;
+  --dim: #778394;
+
+  /* Semantic & accent */
+  --blue: #4b8cf7;
+  --blue-soft: #1d3455;
+  --cyan: #7fb4ff;
+  --green: #24c99a;
+  --red: #f4788c;
+  --amber: #f0bd70;
+  --violet: #ac9cf8;
+
+  /* Font stacks (DESIGN.md §3.1) */
+  --sans: 'Inter', 'IBM Plex Sans Thai', 'Noto Sans Thai', 'Segoe UI', Tahoma, Arial, sans-serif;
+  --mono: 'JetBrains Mono', 'IBM Plex Mono', Consolas, monospace;
+
+  /* Numeric */
+  --tabular-nums: tabular-nums;
+}
