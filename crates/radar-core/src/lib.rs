@@ -7,4 +7,5 @@ pub mod lab;
 pub mod market_history;
 pub mod quant;
 pub mod screener;
+pub mod watchlists;
 pub mod webull;

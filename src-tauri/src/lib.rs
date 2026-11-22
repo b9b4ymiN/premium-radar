@@ -610,6 +610,79 @@ fn get_instrument_profile(symbol: String) -> Result<serde_json::Value, String> {
     serde_json::to_value(profiles.into_iter().next()).map_err(|e| e.to_string())
 }
 
+/// Watchlists (P16) — persistence ที่ app-data/watchlists.json
+fn watchlist_store_path() -> std::path::PathBuf {
+    let app_data = std::env::var("APPDATA")
+        .map(|a| format!("{a}/premium-radar"))
+        .unwrap_or_else(|_| ".".into());
+    std::path::Path::new(&app_data).join("watchlists.json")
+}
+
+fn load_watchlists() -> radar_core::watchlists::WatchlistStore {
+    let path = watchlist_store_path();
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn save_watchlists(store: &radar_core::watchlists::WatchlistStore) -> Result<(), String> {
+    let path = watchlist_store_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let raw = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
+    std::fs::write(&path, raw).map_err(|e| format!("บันทึก watchlist ไม่สำเร็จ: {e}"))
+}
+
+#[tauri::command]
+fn list_watchlists() -> radar_core::watchlists::WatchlistStore {
+    load_watchlists()
+}
+
+#[tauri::command]
+fn save_watchlist(
+    list_id: Option<String>,
+    action: String,
+    payload: String,
+) -> Result<radar_core::watchlists::WatchlistStore, String> {
+    use radar_core::watchlists as wl;
+    let mut store = load_watchlists();
+    // ลิสต์เป็น default เมื่อยังไม่มีไฟล์ + ไม่เคยสร้าง
+    if store.lists.is_empty() {
+        store = wl::WatchlistStore::with_default("NVDA");
+    }
+    let lid = list_id
+        .or_else(|| store.active.clone())
+        .ok_or("ไม่พบลิสต์ปัจจุบัน")?;
+    let list = store
+        .lists
+        .iter_mut()
+        .find(|l| l.id == lid)
+        .ok_or_else(|| "ไม่พบลิสต์นี้".to_string())?;
+    match action.as_str() {
+        "add" => wl::add_symbol(list, &payload).map_err(|e| e.reason_th())?,
+        "remove" => wl::remove_symbol(list, &payload),
+        "up" => wl::move_symbol(list, &payload, true),
+        "down" => wl::move_symbol(list, &payload, false),
+        "newlist" => {
+            let id = store.create_list(&payload).map_err(|e| e.reason_th())?;
+            let _ = store.set_active(&id);
+            save_watchlists(&store)?;
+            return Ok(store);
+        }
+        "deletelist" => {
+            store.delete_list(&lid);
+            save_watchlists(&store)?;
+            return Ok(store);
+        }
+        "setactive" => store.set_active(&payload).map_err(|e| e.reason_th())?,
+        other => return Err(format!("ไม่รู้จัก action: {other}")),
+    }
+    save_watchlists(&store)?;
+    Ok(store)
+}
+
 /// APP v2 — พอร์ต read-only (P18): accounts → positions + balance
 #[tauri::command]
 fn get_portfolio() -> Result<serde_json::Value, String> {
@@ -860,6 +933,8 @@ pub fn run() {
             needs_setup,
             get_stock_history,
             get_instrument_profile,
+            list_watchlists,
+            save_watchlist,
             get_portfolio,
             lab_analyze,
             lab_freeze_prediction,

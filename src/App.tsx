@@ -5,6 +5,7 @@ import { SetupScreen } from "./components/SetupScreen";
 import OptionLab from "./components/OptionLab/OptionLab";
 import PriceChart from "./components/PriceChart/PriceChart";
 import PortfolioPage from "./components/PortfolioPage/PortfolioPage";
+import WatchlistPage from "./components/WatchlistPage/WatchlistPage";
 import type { EnrichedRow, StockUpdate, ChainStats, EngineSnapshot } from "./types/screener";
 import "./App.css";
 
@@ -77,7 +78,7 @@ export default function App() {
   const [risk, setRisk] = useState("BALANCED");
   const [budget, setBudget] = useState("18000");
   const [tab, setTab] = useState("all");
-  const [mainTab, setMainTab] = useState<"monitor" | "lab" | "portfolio">("monitor");
+  const [mainTab, setMainTab] = useState<"monitor" | "lab" | "portfolio" | "watchlist">("monitor");
   const [selected, setSelected] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [tauriReady, setTauriReady] = useState(false);
@@ -418,6 +419,7 @@ export default function App() {
             <button className={`mtab ${mainTab === "monitor" ? "on" : ""}`} onClick={() => setMainTab("monitor")}>Options Monitor</button>
             <button className={`mtab ${mainTab === "lab" ? "on" : ""}`} onClick={() => setMainTab("lab")}>Option Lab · ทดลองกลยุทธ์</button>
             <button className={`mtab ${mainTab === "portfolio" ? "on" : ""}`} onClick={() => setMainTab("portfolio")}>Portfolio</button>
+            <button className={`mtab ${mainTab === "watchlist" ? "on" : ""}`} onClick={() => setMainTab("watchlist")}>Watchlists</button>
           </div>
 
           {/* Quote Header */}
@@ -450,7 +452,11 @@ export default function App() {
             </div>
           </section>
 
-          {mainTab === "portfolio" ? (
+          {mainTab === "watchlist" ? (
+            <section className="labmodule">
+              <WatchlistPage onOpenRadar={sym => { setSymbol(sym.toUpperCase()); setMainTab("monitor"); }} />
+            </section>
+          ) : mainTab === "portfolio" ? (
             <section className="labmodule">
               <PortfolioPage />
             </section>

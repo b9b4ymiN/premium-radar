@@ -452,3 +452,18 @@ button:focus-visible, input:focus-visible {
 .pf-strat { color: var(--muted); font-size: 9px; margin-left: 4px; }
 .pf-leg { color: var(--muted); font-size: 8.5px; }
 .pf-empty { color: var(--muted); text-align: center; padding: 18px 0; }
+
+/* ============ WATCHLISTS (P16) ============ */
+.wlpage { display: flex; flex-direction: column; gap: 10px; }
+.wl-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.wl-select { background: var(--surface2, #10141a); color: var(--text); border: 1px solid var(--divider); padding: 5px 10px; border-radius: 3px; font-size: 12px; }
+.wl-newlist { display: flex; gap: 4px; }
+.wl-newlist input, .wl-addrow input { background: var(--surface2, #10141a); color: var(--text); border: 1px solid var(--divider); padding: 5px 10px; border-radius: 3px; font-size: 12px; width: 180px; }
+.wl-addrow { display: flex; gap: 4px; }
+.wl-addrow input { width: 260px; text-transform: uppercase; }
+.wl-head button, .wl-addrow button, .wl-actions button, .wl-open { background: transparent; border: 1px solid var(--divider); color: var(--text); padding: 4px 10px; border-radius: 3px; font-size: 11px; cursor: pointer; }
+.wl-head button:hover, .wl-addrow button:hover { border-color: var(--accent, #4b8cf7); }
+.wl-danger { color: #f4788c !important; }
+.wl-actions { display: flex; gap: 3px; }
+.wl-actions button { padding: 2px 7px; }
+.wl-open { border-color: var(--accent, #4b8cf7); color: var(--accent, #4b8cf7); }
