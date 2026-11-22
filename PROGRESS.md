@@ -28,7 +28,8 @@
 | P2.4 contract windows/band/pagination | **DONE** | รวมใน discovery.rs (WINDOWS 7 ช่วง, ±30% band, pagination loop + falsy-key fallthrough) | **PASS** |
 | P2.5 real HTTP transport + retry + wiremock | **DONE** | `crates/radar-core/src/webull/transport.rs` (feature `client`) — WebullClient: reqwest blocking/rustls, HMAC signing per call, shared 1.1s throttle (mark after send — validator fix), 3s TTL cache, 2× retry @1.2s on rate-limit. 7 wiremock tests (6 pass + 1 ignored live smoke). Keyring deferred to P7 (settings screen). | **PASS** (10/11 PASS; item 3 throttle-mark fixed; 36+6 tests green) |
 | P3.* MQTT streaming | IN_PROGRESS | branch feat/p3-p4-engine — เริ่มจาก pure state engine (P4.1) ก่อน เพราะ testable ไม่ต้อง network; MQTT wire (P3.1-3.4) ต่อทีหลัง | — |
-| P4.1-4.2 state engine (pure) | IN_PROGRESS | `crates/radar-core/src/engine.rs` — coalescing store + enrich pipeline + screener compose | — |
+| P4.1 state engine (pure) | **DONE** | `crates/radar-core/src/engine.rs` — coalescing store (newest-wins), WS>REST>BARS seed protection, mid-price fallback, oi/bid/ask backfill, screener+chain-stats compose. 8 unit tests. | **PASS** (9/9 DOD — validator ยืนยัน Python parity ทุกข้อ; oi_cache tertiary fallback noted for P3) |
+| P4.2-4.4 Tauri bridge + commands + settings | NOT_STARTED | รอ src-tauri (Tauri event pump + commands + settings.json) | — |
 | P5.* frontend shell | NOT_STARTED | — | — |
 | P6.* copilot | NOT_STARTED | — | — |
 | P7.* packaging | NOT_STARTED | ต้องการ MSVC (ดูด้านล่าง) | — |
