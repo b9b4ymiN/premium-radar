@@ -443,6 +443,116 @@ fn create_access_token(
     }
 }
 
+/// Option Lab — วิเคราะห์สัญญาเดียวครบทุกตัวเลข (PLAN-LAB P9)
+/// ค่า input มาจาก engine snapshot ที่ frontend ได้รับอยู่แล้ว —
+/// การคำนวณทั้งหมดอยู่ใน Rust ตามข้อกำหนดกลางข้อ 1
+#[derive(serde::Deserialize)]
+struct LabAnalyzeInput {
+    symbol: String,
+    /// spot ต้อง > 0 — invalid = คืน error ภาษาไทย ไม่ fallback
+    spot: f64,
+    strike: f64,
+    /// premium ต่อหุ้น (mid/credit)
+    premium: f64,
+    /// implied volatility ของสัญญา (0..1)
+    iv: f64,
+    /// วันถึงหมดอายุ (ปี — fractional ตาม engine)
+    t: f64,
+    is_call: bool,
+    /// true = วิเคราะห์แบบ covered call รวมหุ้นที่ถือ (ต้องมี basis)
+    covered: bool,
+    /// cost basis ต่อหุ้น (แสดงเฉพาะ covered)
+    basis: Option<f64>,
+}
+
+#[tauri::command]
+fn lab_analyze(input: LabAnalyzeInput) -> Result<serde_json::Value, String> {
+    use radar_core::lab::payoff::{self, CostInputs};
+    use radar_core::lab::probability;
+    let r = radar_core::quant::RISK_FREE_RATE;
+    let q = radar_core::quant::DIV_YIELD;
+    if input.spot <= 0.0 || !input.spot.is_finite() {
+        return Err(format!(
+            "spot ไม่ valid ({}) — ห้ามวิเคราะห์โดยไม่มีราคาหุ้นจริง",
+            input.spot
+        ));
+    }
+    if input.strike <= 0.0 || input.premium < 0.0 || input.t <= 0.0 || input.iv <= 0.0 {
+        return Err("strike/premium/DTE/IV ต้องเป็นค่าบวกที่ใช้ได้".into());
+    }
+    let costs = CostInputs::default();
+    let fees_rt = costs.per_side() * 2.0; // เข้า+ออก (ปิดก่อนหมดอายุ)
+    let fees_open = costs.per_side();
+    let leg = payoff::ShortLeg {
+        is_call: input.is_call,
+        k: input.strike,
+        c: input.premium,
+        m: 100.0,
+    };
+    let leg_open = payoff::analyze_leg(leg, fees_open);
+    let leg_rt = payoff::analyze_leg(leg, fees_rt);
+    let be = leg_rt.breakeven;
+    let pop = if input.is_call {
+        be.and_then(|be| probability::short_call_pop(input.spot, be, input.t, r, q, input.iv))
+    } else {
+        be.and_then(|be| probability::csp_pop(input.spot, be, input.t, r, q, input.iv))
+    };
+    let itm = probability::p_itm(
+        input.spot,
+        input.strike,
+        input.is_call,
+        input.t,
+        r,
+        q,
+        input.iv,
+    );
+    let touch = itm.map(probability::p_touch);
+    let delta = probability::leg_delta(
+        input.spot,
+        input.strike,
+        input.is_call,
+        input.t,
+        r,
+        q,
+        input.iv,
+    );
+    let (cc, cc_analysis) = if input.covered {
+        input.basis.filter(|b| *b > 0.0).map(|b| {
+            let cc = payoff::CoveredCall {
+                leg,
+                b,
+                s0: input.spot,
+            };
+            let a = payoff::analyze_cc(cc, fees_open);
+            (Some(cc), Some(a))
+        })
+    } else {
+        None
+    }
+    .unwrap_or((None, None));
+    let scenarios = payoff::scenario_table(input.spot, input.strike, |s| {
+        payoff::leg_pnl_at(leg, s, fees_rt)
+    });
+    let cc_scenarios = cc.map(|cc| {
+        payoff::scenario_table(input.spot, input.strike, |s| {
+            payoff::cc_pnl_at(cc, s, fees_rt)
+        })
+    });
+    Ok(serde_json::json!({
+        "symbol": input.symbol,
+        "fees_round_trip": fees_rt,
+        "fees_note": "ต่อสัญญา เข้า+ออก (commission+clearing+ORF+VAT · ห้ามรวม slippage)",
+        "leg": { "open": leg_open, "round_trip": leg_rt },
+        "pop": pop,
+        "p_itm": itm,
+        "p_touch": touch,
+        "delta": delta,
+        "covered_call": cc_analysis,
+        "scenarios": scenarios,
+        "cc_scenarios": cc_scenarios,
+    }))
+}
+
 /// Ask the AI copilot a question, grounded in the live engine data via
 /// function calling (top_candidates / contract_detail / chain_stats).
 #[tauri::command]
@@ -569,6 +679,7 @@ pub fn run() {
             test_connection,
             create_access_token,
             needs_setup,
+            lab_analyze,
             ask_copilot,
             test_llm,
         ])
