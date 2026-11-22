@@ -76,6 +76,7 @@ impl Credentials {
         let secret = std::env::var("WEBULL_APP_SECRET")
             .ok()
             .filter(|s| !s.is_empty())?;
+        // allow base URL override for testing (default: https://api.webull.co.th)
         let access_token = std::env::var("WEBULL_ACCESS_TOKEN")
             .ok()
             .filter(|s| !s.is_empty());

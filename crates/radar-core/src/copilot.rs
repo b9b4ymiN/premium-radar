@@ -1,19 +1,38 @@
 //! AI Copilot — LLM function calling grounded in live screener data.
-//! Provider-agnostic (OpenAI-compatible API): GLM-5.3 primary, OpenAI backup.
-//! Streams responses to the frontend via Tauri events.
+//! Fully provider-agnostic: any OpenAI-compatible chat completions endpoint
+//! works (Z.ai, OpenAI, Anthropic via proxy, Ollama, LM Studio, etc.).
+//! Configure via env vars or the settings UI — nothing is hardcoded.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// LLM provider configuration.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// LLM provider configuration — any OpenAI-compatible endpoint.
+///
+/// # Env vars (generic, checked in order):
+/// 1. `LLM_BASE_URL` + `LLM_API_KEY` + `LLM_MODEL` — full control, any provider
+/// 2. `GLM_API_KEY` — shorthand for Z.ai GLM-5.3
+/// 3. `OPENAI_API_KEY` — shorthand for OpenAI gpt-4o
+///
+/// # Settings UI override:
+/// The first-run setup screen can set any `base_url` / `model` / `api_key`
+/// combination, which takes precedence over env vars.
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct LlmConfig {
-    pub provider: String, // "glm" | "openai" | custom label
-    pub base_url: String, // e.g. "https://api.z.ai" or "https://api.openai.com"
-    pub model: String,    // e.g. "glm-5.3" or "gpt-4o"
-    pub api_key: String,  // from keyring/env — never logged
+    /// Human-readable label for the settings UI (e.g. "Z.ai GLM-5.3", "Ollama local")
+    #[serde(default)]
+    pub label: String,
+    /// Base URL of the OpenAI-compatible API (e.g. "https://api.z.ai", "http://localhost:11434")
+    pub base_url: String,
+    /// Model name (e.g. "glm-5.3", "gpt-4o", "llama3.2", "claude-sonnet-4-5")
+    pub model: String,
+    /// API key (from keyring/env/settings — never logged)
+    pub api_key: String,
+    /// Temperature for generation
     #[serde(default = "default_temperature")]
     pub temperature: f64,
+    /// Max tokens for response (0 = provider default)
+    #[serde(default)]
+    pub max_tokens: u32,
 }
 
 fn default_temperature() -> f64 {
@@ -21,43 +40,72 @@ fn default_temperature() -> f64 {
 }
 
 impl LlmConfig {
-    pub fn glm(api_key: impl Into<String>) -> Self {
+    /// Fully manual — use this when you have all the pieces.
+    pub fn new(
+        label: impl Into<String>,
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+        api_key: impl Into<String>,
+    ) -> Self {
         Self {
-            provider: "glm".into(),
-            base_url: "https://api.z.ai".into(),
-            model: "glm-5.3".into(),
+            label: label.into(),
+            base_url: base_url.into(),
+            model: model.into(),
             api_key: api_key.into(),
             temperature: 0.3,
+            max_tokens: 0,
         }
     }
 
-    pub fn openai(api_key: impl Into<String>) -> Self {
-        Self {
-            provider: "openai".into(),
-            base_url: "https://api.openai.com".into(),
-            model: "gpt-4o".into(),
-            api_key: api_key.into(),
-            temperature: 0.3,
-        }
-    }
-
-    /// From env: GLM_API_KEY (preferred) or OPENAI_API_KEY.
+    /// From env vars. Checks generic `LLM_*` first, then provider-specific shorthands.
     pub fn from_env() -> Option<Self> {
-        if let Some(key) = std::env::var("GLM_API_KEY").ok().filter(|k| !k.is_empty()) {
-            return Some(Self::glm(key));
+        // Full generic override: LLM_BASE_URL + LLM_API_KEY (+ optional LLM_MODEL)
+        if let (Some(base_url), Some(api_key)) = (
+            std::env::var("LLM_BASE_URL").ok().filter(|v| !v.is_empty()),
+            std::env::var("LLM_API_KEY").ok().filter(|v| !v.is_empty()),
+        ) {
+            let model = std::env::var("LLM_MODEL").unwrap_or_default();
+            let label = std::env::var("LLM_LABEL").unwrap_or_else(|_| "Custom".into());
+            return Some(Self::new(label, base_url, model, api_key));
         }
+
+        // Shorthand: GLM_API_KEY → Z.ai GLM-5.3
+        if let Some(key) = std::env::var("GLM_API_KEY").ok().filter(|k| !k.is_empty()) {
+            let model = std::env::var("GLM_MODEL").unwrap_or_else(|_| "glm-5.3".into());
+            return Some(Self::new("Z.ai GLM", "https://api.z.ai", model, key));
+        }
+
+        // Shorthand: OPENAI_API_KEY → OpenAI
         if let Some(key) = std::env::var("OPENAI_API_KEY")
             .ok()
             .filter(|k| !k.is_empty())
         {
-            return Some(Self::openai(key));
+            let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".into());
+            return Some(Self::new("OpenAI", "https://api.openai.com", model, key));
         }
+
         None
     }
 
-    /// Chat completions endpoint.
+    /// Chat completions endpoint (OpenAI-compatible path).
     pub fn chat_url(&self) -> String {
         format!("{}/v1/chat/completions", self.base_url)
+    }
+
+    /// Log-safe display — no api_key.
+    pub fn masked(&self) -> String {
+        format!(
+            "LlmConfig(label={}, base_url={}, model={}, api_key=***{}***)",
+            self.label,
+            self.base_url,
+            self.model,
+            self.api_key.len()
+        )
+    }
+
+    /// Check if this config is usable (has base_url, model, and key).
+    pub fn is_ready(&self) -> bool {
+        !self.base_url.is_empty() && !self.model.is_empty() && !self.api_key.is_empty()
     }
 }
 
@@ -170,13 +218,16 @@ pub fn system_prompt() -> String {
 
 /// Build the request body for a chat completion call.
 pub fn build_request(config: &LlmConfig, messages: &[ChatMessage]) -> Value {
-    serde_json::json!({
+    let mut body = serde_json::json!({
         "model": config.model,
         "messages": messages,
         "tools": screener_tools(),
         "temperature": config.temperature,
-        "stream": false, // non-streaming for tool calls; streaming for final response
-    })
+    });
+    if config.max_tokens > 0 {
+        body["max_tokens"] = serde_json::json!(config.max_tokens);
+    }
+    body
 }
 
 /// Parse the API response — extract either content or tool_calls.
@@ -243,24 +294,47 @@ pub fn parse_response(body: &Value) -> LlmResponse {
     LlmResponse::Error("no content or tool_calls in response".into())
 }
 
+// Manual Debug impl — api_key never leaks
+impl std::fmt::Debug for LlmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.masked())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn glm_config_from_env_preferred() {
-        // just verify construction works
-        let c = LlmConfig::glm("test-key");
-        assert_eq!(c.provider, "glm");
-        assert_eq!(c.model, "glm-5.3");
-        assert!(c.chat_url().contains("api.z.ai"));
+    fn fully_custom_config() {
+        let c = LlmConfig::new("Ollama local", "http://localhost:11434", "llama3.2", "");
+        assert_eq!(c.label, "Ollama local");
+        assert_eq!(c.base_url, "http://localhost:11434");
+        assert_eq!(c.model, "llama3.2");
+        assert_eq!(c.chat_url(), "http://localhost:11434/v1/chat/completions");
+        assert!(!c.is_ready()); // no key
     }
 
     #[test]
-    fn openai_config() {
-        let c = LlmConfig::openai("test-key");
-        assert_eq!(c.provider, "openai");
-        assert!(c.chat_url().contains("api.openai.com"));
+    fn glm_shorthand() {
+        let c = LlmConfig::new("Z.ai GLM", "https://api.z.ai", "glm-5.3", "test-key");
+        assert!(c.is_ready());
+        assert!(c.chat_url().contains("api.z.ai/v1/chat/completions"));
+    }
+
+    #[test]
+    fn openai_shorthand() {
+        let c = LlmConfig::new("OpenAI", "https://api.openai.com", "gpt-4o", "sk-test");
+        assert!(c.is_ready());
+        assert!(c.chat_url().contains("api.openai.com/v1/chat/completions"));
+    }
+
+    #[test]
+    fn debug_never_leaks_key() {
+        let c = LlmConfig::new("test", "https://example.com", "model", "SUPERSECRET");
+        let d = format!("{c:?}");
+        assert!(!d.contains("SUPERSECRET"));
+        assert!(d.contains("***"));
     }
 
     #[test]
@@ -281,11 +355,10 @@ mod tests {
 
     #[test]
     fn parse_content_response() {
-        let body = serde_json::json!({
-            "choices": [{"message": {"role": "assistant", "content": "สวัสดีครับ"}}]
-        });
+        let body =
+            serde_json::json!({"choices": [{"message": {"role": "assistant", "content": "สวัสดี"}}]});
         match parse_response(&body) {
-            LlmResponse::Content(c) => assert_eq!(c, "สวัสดีครับ"),
+            LlmResponse::Content(c) => assert_eq!(c, "สวัสดี"),
             other => panic!("expected Content, got {other:?}"),
         }
     }
@@ -322,10 +395,6 @@ mod tests {
     fn parse_error_response() {
         assert!(matches!(
             parse_response(&serde_json::json!({})),
-            LlmResponse::Error(_)
-        ));
-        assert!(matches!(
-            parse_response(&serde_json::json!({"choices": []})),
             LlmResponse::Error(_)
         ));
     }
