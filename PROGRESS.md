@@ -7,6 +7,7 @@
 > - Evidence ทุกอย่าง = คำสั่งที่รันจริง + ผล + commit SHA (traceability: "ทำไม task นี้ถึง DONE")
 > - ไฟล์นี้คือ **source of truth เดียวของสถานะ** — session ใหม่/agent ใหม่ อ่านไฟล์นี้ + PLAN.md แล้วทำงานต่อได้ทันที ไม่ต้องพึ่ง transcript
 > - Budget: validator 1 ตัวต่อ task; แก้ error ย้อนหลังใน same thread สูงสุด 4 rounds ก่อนเข้า FAILED
+> - **Merge gate (THP 2026-11-22): merge เข้า `main` เฉพาะเมื่อ task/phase ผ่าน DOD ครบ + validator PASS** — ก่อนเริ่มงานถัดไปเสมอ; branch ต่อ phase `feat/<phase>-<task>`
 
 ## Ledger
 
