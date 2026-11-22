@@ -13,7 +13,7 @@ pub const RISK_FREE_RATE: f64 = 0.043;
 /// Reference dividend yield used by the Python original.
 pub const DIV_YIELD: f64 = 0.0;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum OptType {
     Call,
     Put,
