@@ -347,7 +347,7 @@ async fn ws_loop(
                                 ws_alive.store(now_ms(), Ordering::Relaxed);
                                 progress(
                                     &app,
-                                    "live",
+                                    "realtime",
                                     format!(
                                         "🟢 เชื่อมต่อสดแล้ว — push real-time {} contracts",
                                         ws_symbols.len()

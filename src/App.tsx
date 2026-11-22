@@ -84,6 +84,7 @@ export default function App() {
   const [snap, setSnap] = useState<EngineSnapshot | null>(null);
   const [scanMsg, setScanMsg] = useState("กำลังเชื่อมต่อ backend ...");
   const [scanPhase, setScanPhase] = useState("idle");
+  const [wsLive, setWsLive] = useState(false);
 
   // AI copilot — its configuration is INDEPENDENT of the data feed
   const [llmInfo, setLlmInfo] = useState<{ label: string; model: string } | null>(null);
@@ -102,6 +103,11 @@ export default function App() {
         uns.push(await tauriListen<ScanProgress>("scan://progress", (p) => {
           setScanPhase(p.phase);
           setScanMsg(p.message);
+          // real-time push liveness: the backend emits phase "realtime" once
+          // the MQTT subscribe lands; any other real-time message (reconnecting,
+          // dropped, no entitlement) means the push feed is down again.
+          if (p.phase === "realtime") setWsLive(true);
+          else if (p.message.includes("real-time")) setWsLive(false);
         }));
         uns.push(await tauriListen<EngineSnapshot>("scan://snapshot", (s) => setSnap(s)));
 
@@ -133,6 +139,7 @@ export default function App() {
   useEffect(() => {
     if (!tauriReady || showSetup) return;
     setExpirySel("ทุกวัน");
+    setWsLive(false);
     tauriInvoke("start_scan", { symbol }).catch((e: unknown) => {
       const msg = e instanceof Error ? e.message : String(e);
       setScanMsg(msg);
@@ -397,7 +404,7 @@ export default function App() {
 
           <div className="leftfoot">
             <div><b>DATA MODE</b> <span style={{ float: "right", color: isLive ? "#3ddc97" : isError ? "#f4788c" : "#e0b15f" }}>{isLive ? "Live · Webull TH" : isError ? "Feed error" : hasTauri ? "รอข้อมูล" : "Synthetic"}</span></div>
-            <div>{isLive ? `Feed: REST snapshot · ${new Date().toLocaleDateString()}` : "REST snapshot · 3 นาที/รอบ"}</div>
+            <div>{isLive ? `Feed: ${wsLive ? "📡 real-time push" : "REST snapshot"} · ${new Date().toLocaleDateString()}` : "REST snapshot · 3 นาที/รอบ"}</div>
           </div>
         </aside>
 
@@ -687,7 +694,7 @@ export default function App() {
       <footer className="statusbar">
         <span><b>{tauriReady ? (isLive ? "LIVE · WEBULL TH FEED" : scanMsg) : "OFFLINE · BROWSER PREVIEW"}</b></span>
         <span>{symbol} {stock ? fmt(stock.price) : "--"} <b className={stock ? chgCls : ""}>{stock ? `${chg >= 0 ? "+" : ""}${chgPct.toFixed(2)}%` : ""}</b></span>
-        <span>{isLive ? "REST snapshot · รอบถัดไป 3 นาที" : "REST snapshot feed"}</span>
+        <span>{isLive ? (wsLive ? "📡 real-time push" : "REST snapshot · รอบถัดไป 3 นาที") : "REST snapshot feed"}</span>
         <span className="statusright">
           <span>Contracts: {rows.length}</span>
           <span>Feed: <b className={feed.cls}>{feed.t}</b></span>
