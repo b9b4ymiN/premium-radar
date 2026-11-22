@@ -115,7 +115,7 @@ impl WebullClient {
         let mut retries = RETRIES;
         loop {
             let (status, body) = self.send_once(path, params)?;
-            let retriable = is_rate_limited(status, &body) || matches!(status, 502 | 503 | 504);
+            let retriable = is_rate_limited(status, &body) || matches!(status, 502..=504);
             if retriable && retries > 0 {
                 std::thread::sleep(Duration::from_secs_f64(RETRY_DELAY_SEC));
                 retries -= 1;

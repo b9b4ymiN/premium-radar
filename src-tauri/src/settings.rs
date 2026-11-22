@@ -9,7 +9,7 @@ use radar_core::webull::rest::Credentials;
 
 /// Full app settings persisted to `<app_data>/radar_settings.json`.
 /// API keys are stored here for dev; production moves them to OS keyring.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppSettings {
     // UI preferences
     #[serde(default)]
@@ -49,6 +49,27 @@ fn default_symbol() -> String { "NVDA".into() }
 fn default_strategy() -> String { "CSP+CC".into() }
 fn default_risk() -> String { "BALANCED".into() }
 fn default_webull_url() -> String { "https://api.webull.co.th".into() }
+
+/// Manual Default so `AppSettings::default()` matches the serde field
+/// defaults exactly (the derived Default zeroed every field — a fresh install
+/// then behaved differently from a loaded-with-missing-keys file).
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            font_size_adjust: 0,
+            show_math: false,
+            last_symbol: default_symbol(),
+            last_strategy: default_strategy(),
+            last_risk: default_risk(),
+            last_budget: 0.0,
+            webull_app_key: String::new(),
+            webull_app_secret: String::new(),
+            webull_base_url: default_webull_url(),
+            webull_access_token: String::new(),
+            llm: None,
+        }
+    }
+}
 
 impl AppSettings {
     pub fn load(app_data_dir: &str) -> Self {
