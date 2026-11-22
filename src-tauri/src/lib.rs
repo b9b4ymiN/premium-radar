@@ -506,9 +506,17 @@ fn needs_setup(state: tauri::State<'_, AppState>) -> bool {
 pub fn run() {
     let now = Utc::now();
     let engine = Engine::new(now);
-    let app_data_dir = std::env::var("APPDATA")
-        .unwrap_or_else(|_| ".".into());
-    let app_data_dir = format!("{app_data_dir}/premium-radar");
+    // cross-platform app-data dir (macOS build needs HOME, Windows uses APPDATA;
+    // keep the same "premium-radar" folder name so a future port keeps one layout)
+    let app_data_dir = if cfg!(target_os = "macos") {
+        std::env::var("HOME")
+            .map(|h| format!("{h}/Library/Application Support/premium-radar"))
+            .unwrap_or_else(|_| ".".into())
+    } else {
+        std::env::var("APPDATA")
+            .map(|a| format!("{a}/premium-radar"))
+            .unwrap_or_else(|_| ".".into())
+    };
     let _ = std::fs::create_dir_all(&app_data_dir);
     let mut app_settings = settings::AppSettings::load(&app_data_dir);
     // One-time migration: plaintext secrets in the file move to the OS
