@@ -86,12 +86,13 @@ fn start_scan(
 
     state.scan.spawn(app, state.engine.clone(), creds, base_url, symbol.clone());
 
-    // remember the last symbol for the next session
+    // remember the last symbol for the next session (persist goes through
+    // the keyring path so the scrubbed file never regains plaintext secrets)
     {
         let mut s = state.settings.lock().unwrap();
         s.last_symbol = symbol;
         let dir = state.app_data_dir.clone();
-        let _ = s.save(&dir);
+        let _ = s.save_with_keyring(&dir);
     }
     Ok(())
 }
@@ -120,14 +121,16 @@ fn get_settings(state: tauri::State<'_, AppState>) -> AppSettings {
 }
 
 #[tauri::command]
-fn save_settings(state: tauri::State<'_, AppState>, new_settings: AppSettings) -> Result<(), String> {
+fn save_settings(state: tauri::State<'_, AppState>, mut new_settings: AppSettings) -> Result<(), String> {
     let dir = state.app_data_dir.clone();
-    *state.settings.lock().unwrap() = new_settings.clone();
-    new_settings.save(&dir)
+    new_settings.save_with_keyring(&dir)?;
+    *state.settings.lock().unwrap() = new_settings;
+    Ok(())
 }
 
-/// Save API credentials from the first-run setup screen.
-/// Stores in settings (dev) — production should use OS keyring.
+/// Save API credentials from the setup screen — secrets go to the OS keyring
+/// (Windows Credential Manager / macOS Keychain) with settings.json as the
+/// fallback when no keyring backend exists.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 fn save_credentials(
@@ -162,7 +165,7 @@ fn save_credentials(
         s.llm = Some(radar_core::copilot::LlmConfig::new(label, base_url, model, key));
     }
 
-    s.save(&dir)?;
+    s.save_with_keyring(&dir)?;
     Ok(s.clone())
 }
 
@@ -507,7 +510,17 @@ pub fn run() {
         .unwrap_or_else(|_| ".".into());
     let app_data_dir = format!("{app_data_dir}/premium-radar");
     let _ = std::fs::create_dir_all(&app_data_dir);
-    let app_settings = settings::AppSettings::load(&app_data_dir);
+    let mut app_settings = settings::AppSettings::load(&app_data_dir);
+    // One-time migration: plaintext secrets in the file move to the OS
+    // keyring and the file is re-saved scrubbed. Without a keyring backend
+    // the file remains the source of truth (old behavior). Either way the
+    // in-memory state is refilled to the EFFECTIVE settings below.
+    if app_settings.has_plaintext_secrets()
+        && let Err(e) = app_settings.save_with_keyring(&app_data_dir)
+    {
+        eprintln!("[settings] keyring migration ไม่สำเร็จ คงเก็บในไฟล์แทน: {e}");
+    }
+    app_settings.pull_secrets_from_keyring();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
