@@ -261,7 +261,13 @@ fn test_connection(
             radar_core::webull::transport::WebullClient::new(auth_only).with_base_url(base_url.clone());
         tok_note = match radar_core::webull::auth::check_token(&mut authc, tok) {
             Ok(tc) if tc.status == radar_core::webull::auth::TokenStatus::Normal => {
-                " · token NORMAL".into()
+                let exp = tc
+                    .expires_ms
+                    .filter(|&ms| ms > 0)
+                    .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms as i64))
+                    .map(|d| d.format("· token NORMAL (หมดอายุ %d %b %Y)").to_string())
+                    .unwrap_or_else(|| "· token NORMAL".into());
+                format!(" {exp}")
             }
             Ok(tc) => format!(" · token status = {}", tc.status.as_str()),
             Err(_) => " · (เช็ค token status ไม่สำเร็จ)".into(),
@@ -341,6 +347,82 @@ fn test_connection(
                 streaming: None,
             }
         }
+    }
+}
+
+/// Result of the in-app token creation flow.
+#[derive(serde::Serialize)]
+pub struct CreateTokenResult {
+    pub ok: bool,
+    pub status: String,
+    pub token: Option<String>,
+    pub expires_ms: Option<u64>,
+    pub detail: String,
+}
+
+/// Start access-token creation (production needs one for data endpoints):
+/// POSTs `/openapi/auth/token/create` — the token VALUE arrives immediately
+/// as PENDING and the broker SMSes a code to the account's bound phone. The
+/// user confirms in the Webull app within 5 minutes; `test_connection` then
+/// reports NORMAL.
+#[tauri::command]
+fn create_access_token(
+    state: tauri::State<'_, AppState>,
+    webull_key: Option<String>,
+    webull_secret: Option<String>,
+    webull_base_url: Option<String>,
+) -> CreateTokenResult {
+    let s = state.settings.lock().unwrap().clone();
+    let key = webull_key
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+        .unwrap_or_else(|| s.webull_app_key.trim().to_string());
+    let secret = webull_secret
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| s.webull_app_secret.trim().to_string());
+    let base_url = webull_base_url
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| {
+            if s.webull_base_url.is_empty() {
+                "https://api.webull.co.th".to_string()
+            } else {
+                s.webull_base_url.clone()
+            }
+        });
+    if key.is_empty() || secret.is_empty() {
+        return CreateTokenResult {
+            ok: false,
+            status: "NONE".into(),
+            token: None,
+            expires_ms: None,
+            detail: "ยังไม่ได้ใส่ App Key / Secret".into(),
+        };
+    }
+    let creds = radar_core::webull::rest::Credentials {
+        app_key: key,
+        app_secret: secret,
+        access_token: None,
+    };
+    let mut client = radar_core::webull::transport::WebullClient::new(creds).with_base_url(base_url);
+    match radar_core::webull::auth::create_token(&mut client) {
+        Ok(c) => CreateTokenResult {
+            ok: true,
+            status: c.status.as_str().into(),
+            token: c.token,
+            expires_ms: c.expires_ms,
+            detail: "สร้างแล้ว (PENDING) — SMS ส่งไปเบอร์ที่ผูกบัญชีแล้ว \
+                     ยืนยันในแอป Webull ภายใน 5 นาที แล้วกด ทดสอบการเชื่อมต่อ"
+                .into(),
+        },
+        Err(e) => CreateTokenResult {
+            ok: false,
+            status: "NONE".into(),
+            token: None,
+            expires_ms: None,
+            detail: format!("{e}"),
+        },
     }
 }
 
@@ -445,6 +527,7 @@ pub fn run() {
             save_settings,
             save_credentials,
             test_connection,
+            create_access_token,
             needs_setup,
             ask_copilot,
             test_llm,

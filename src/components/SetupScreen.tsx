@@ -53,6 +53,8 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
+  const [creatingToken, setCreatingToken] = useState(false);
+  const [tokenNotice, setTokenNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [testingLlm, setTestingLlm] = useState(false);
   const [llmResult, setLlmResult] = useState<ConnectionTestResult | null>(null);
   const [error, setError] = useState("");
@@ -114,6 +116,36 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
       setError(`ทดสอบไม่สำเร็จ: ${e}`);
     } finally {
       setTesting(false);
+    }
+  };
+
+  const handleCreateToken = async () => {
+    setCreatingToken(true);
+    setError("");
+    setTokenNotice(null);
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const r = await invoke<{
+        ok: boolean;
+        status: string;
+        token?: string | null;
+        expires_ms?: number | null;
+        detail: string;
+      }>("create_access_token", {
+        webullKey: webullKey.trim() || null,
+        webullSecret: webullSecret.trim() || null,
+        webullBaseUrl: webullUrl.trim() || null,
+      });
+      if (r.ok && r.token) {
+        // the token value exists immediately (PENDING) — fill it in so the
+        // user only has to confirm the SMS and press test
+        setWebullToken(r.token);
+      }
+      setTokenNotice({ ok: r.ok, text: r.detail });
+    } catch (e) {
+      setTokenNotice({ ok: false, text: `สร้าง token ไม่สำเร็จ: ${e}` });
+    } finally {
+      setCreatingToken(false);
     }
   };
 
@@ -258,6 +290,37 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
             style={inputStyle}
             autoComplete="off"
           />
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              onClick={handleCreateToken}
+              disabled={creatingToken || !hasTauri}
+              style={{
+                background: "#1a2029",
+                color: creatingToken ? "#6b7d98" : "#cfd9e6",
+                border: "1px solid #384251",
+                borderRadius: 6,
+                padding: "6px 12px",
+                fontSize: 11,
+                fontWeight: 650,
+                cursor: creatingToken || !hasTauri ? "not-allowed" : "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {creatingToken ? "กำลังสร้าง..." : "สร้าง Access Token ใหม่ (SMS)"}
+            </button>
+            {tokenNotice && (
+              <span
+                style={{
+                  fontSize: 11,
+                  lineHeight: 1.5,
+                  color: tokenNotice.ok ? "#3ddc97" : "#f4788c",
+                }}
+              >
+                {tokenNotice.ok ? "✓ " : "✕ "}
+                {tokenNotice.text}
+              </span>
+            )}
+          </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
             <button
               onClick={handleTest}
