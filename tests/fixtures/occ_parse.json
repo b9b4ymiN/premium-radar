@@ -1,0 +1,401 @@
+{
+ "meta": {
+  "reference_time": "2026-11-22T17:00:00 America/New_York",
+  "reference_time_utc": "2026-11-22T22:00:00+00:00",
+  "risk_free_rate": 0.043,
+  "div_yield": 0.0,
+  "min_delta": 0.1,
+  "max_delta": 0.4,
+  "risk_levels": {
+   "SAFE": [
+    0.1,
+    0.2
+   ],
+   "BALANCED": [
+    0.15,
+    0.3
+   ],
+   "AGGR": [
+    0.25,
+    0.4
+   ],
+   "ALL": [
+    0.0,
+    1.0
+   ]
+  },
+  "min_dte": 3,
+  "max_dte": 60,
+  "max_spread_pct": 25.0,
+  "min_credit": 0.05
+ },
+ "conventions": {
+  "regex": "^([A-Z0-9.]{1,6})(\\d{2})(\\d{2})(\\d{2})([CP])(\\d{8})$",
+  "root": "1-6 chars of [A-Z0-9.]; dots allowed; year is 20YY; strike=int/1000",
+  "clamp": "years_to_expiry clamps negative/zero remaining seconds to 3600 (so past expiries give t=1/8760, dte~=0.11) - see the 2026-01-17 case",
+  "space": "leading/trailing spaces are stripped before matching"
+ },
+ "cases": [
+  {
+   "symbol": "NVDA261218P00175000",
+   "expected": {
+    "underlying": "NVDA",
+    "option_type": "P",
+    "strike": 175.0,
+    "expiry_date": "2026-12-18",
+    "expiry_ny_1600_utc": "2026-12-18T21:00:00+00:00",
+    "t_years": 0.07111872146118721,
+    "dte_days": 25.958333333333332,
+    "dte_days_int": 25
+   }
+  },
+  {
+   "symbol": "NVDA261218C00175000",
+   "expected": {
+    "underlying": "NVDA",
+    "option_type": "C",
+    "strike": 175.0,
+    "expiry_date": "2026-12-18",
+    "expiry_ny_1600_utc": "2026-12-18T21:00:00+00:00",
+    "t_years": 0.07111872146118721,
+    "dte_days": 25.958333333333332,
+    "dte_days_int": 25
+   }
+  },
+  {
+   "symbol": "TSLA270116C00090000",
+   "expected": {
+    "underlying": "TSLA",
+    "option_type": "C",
+    "strike": 90.0,
+    "expiry_date": "2027-01-16",
+    "expiry_ny_1600_utc": "2027-01-16T21:00:00+00:00",
+    "t_years": 0.15057077625570775,
+    "dte_days": 54.95833333333333,
+    "dte_days_int": 54
+   }
+  },
+  {
+   "symbol": "AAPL261127P00150000",
+   "expected": {
+    "underlying": "AAPL",
+    "option_type": "P",
+    "strike": 150.0,
+    "expiry_date": "2026-11-27",
+    "expiry_ny_1600_utc": "2026-11-27T21:00:00+00:00",
+    "t_years": 0.01358447488584475,
+    "dte_days": 4.958333333333333,
+    "dte_days_int": 4
+   }
+  },
+  {
+   "symbol": "F270116C00020000",
+   "expected": {
+    "underlying": "F",
+    "option_type": "C",
+    "strike": 20.0,
+    "expiry_date": "2027-01-16",
+    "expiry_ny_1600_utc": "2027-01-16T21:00:00+00:00",
+    "t_years": 0.15057077625570775,
+    "dte_days": 54.95833333333333,
+    "dte_days_int": 54
+   }
+  },
+  {
+   "symbol": "AB261127P00005000",
+   "expected": {
+    "underlying": "AB",
+    "option_type": "P",
+    "strike": 5.0,
+    "expiry_date": "2026-11-27",
+    "expiry_ny_1600_utc": "2026-11-27T21:00:00+00:00",
+    "t_years": 0.01358447488584475,
+    "dte_days": 4.958333333333333,
+    "dte_days_int": 4
+   }
+  },
+  {
+   "symbol": "SPCX261204C00100000",
+   "expected": {
+    "underlying": "SPCX",
+    "option_type": "C",
+    "strike": 100.0,
+    "expiry_date": "2026-12-04",
+    "expiry_ny_1600_utc": "2026-12-04T21:00:00+00:00",
+    "t_years": 0.03276255707762557,
+    "dte_days": 11.958333333333334,
+    "dte_days_int": 11
+   }
+  },
+  {
+   "symbol": "MSFT261127C00210000",
+   "expected": {
+    "underlying": "MSFT",
+    "option_type": "C",
+    "strike": 210.0,
+    "expiry_date": "2026-11-27",
+    "expiry_ny_1600_utc": "2026-11-27T21:00:00+00:00",
+    "t_years": 0.01358447488584475,
+    "dte_days": 4.958333333333333,
+    "dte_days_int": 4
+   }
+  },
+  {
+   "symbol": "META270219P00250000",
+   "expected": {
+    "underlying": "META",
+    "option_type": "P",
+    "strike": 250.0,
+    "expiry_date": "2027-02-19",
+    "expiry_ny_1600_utc": "2027-02-19T21:00:00+00:00",
+    "t_years": 0.2437214611872146,
+    "dte_days": 88.95833333333333,
+    "dte_days_int": 88
+   }
+  },
+  {
+   "symbol": "BRK.B261218C00300000",
+   "expected": {
+    "underlying": "BRK.B",
+    "option_type": "C",
+    "strike": 300.0,
+    "expiry_date": "2026-12-18",
+    "expiry_ny_1600_utc": "2026-12-18T21:00:00+00:00",
+    "t_years": 0.07111872146118721,
+    "dte_days": 25.958333333333332,
+    "dte_days_int": 25
+   }
+  },
+  {
+   "symbol": "ALL261127P00010000",
+   "expected": {
+    "underlying": "ALL",
+    "option_type": "P",
+    "strike": 10.0,
+    "expiry_date": "2026-11-27",
+    "expiry_ny_1600_utc": "2026-11-27T21:00:00+00:00",
+    "t_years": 0.01358447488584475,
+    "dte_days": 4.958333333333333,
+    "dte_days_int": 4
+   }
+  },
+  {
+   "symbol": "QQQ270115C00200000",
+   "expected": {
+    "underlying": "QQQ",
+    "option_type": "C",
+    "strike": 200.0,
+    "expiry_date": "2027-01-15",
+    "expiry_ny_1600_utc": "2027-01-15T21:00:00+00:00",
+    "t_years": 0.1478310502283105,
+    "dte_days": 53.958333333333336,
+    "dte_days_int": 53
+   }
+  },
+  {
+   "symbol": "AMD261127P00097500",
+   "expected": {
+    "underlying": "AMD",
+    "option_type": "P",
+    "strike": 97.5,
+    "expiry_date": "2026-11-27",
+    "expiry_ny_1600_utc": "2026-11-27T21:00:00+00:00",
+    "t_years": 0.01358447488584475,
+    "dte_days": 4.958333333333333,
+    "dte_days_int": 4
+   }
+  },
+  {
+   "symbol": "SPY261127C00060250",
+   "expected": {
+    "underlying": "SPY",
+    "option_type": "C",
+    "strike": 60.25,
+    "expiry_date": "2026-11-27",
+    "expiry_ny_1600_utc": "2026-11-27T21:00:00+00:00",
+    "t_years": 0.01358447488584475,
+    "dte_days": 4.958333333333333,
+    "dte_days_int": 4
+   }
+  },
+  {
+   "symbol": "XY270116P00012345",
+   "expected": {
+    "underlying": "XY",
+    "option_type": "P",
+    "strike": 12.345,
+    "expiry_date": "2027-01-16",
+    "expiry_ny_1600_utc": "2027-01-16T21:00:00+00:00",
+    "t_years": 0.15057077625570775,
+    "dte_days": 54.95833333333333,
+    "dte_days_int": 54
+   }
+  },
+  {
+   "symbol": "NVDA260117P00175000",
+   "expected": {
+    "underlying": "NVDA",
+    "option_type": "P",
+    "strike": 175.0,
+    "expiry_date": "2026-01-17",
+    "expiry_ny_1600_utc": "2026-01-17T21:00:00+00:00",
+    "t_years": 0.00011415525114155251,
+    "dte_days": 0.041666666666666664,
+    "dte_days_int": 0
+   }
+  },
+  {
+   "symbol": "NVDA261231P00175000",
+   "expected": {
+    "underlying": "NVDA",
+    "option_type": "P",
+    "strike": 175.0,
+    "expiry_date": "2026-12-31",
+    "expiry_ny_1600_utc": "2026-12-31T21:00:00+00:00",
+    "t_years": 0.1067351598173516,
+    "dte_days": 38.958333333333336,
+    "dte_days_int": 38
+   }
+  },
+  {
+   "symbol": "NVDA270130C00175000",
+   "expected": {
+    "underlying": "NVDA",
+    "option_type": "C",
+    "strike": 175.0,
+    "expiry_date": "2027-01-30",
+    "expiry_ny_1600_utc": "2027-01-30T21:00:00+00:00",
+    "t_years": 0.1889269406392694,
+    "dte_days": 68.95833333333333,
+    "dte_days_int": 68
+   }
+  },
+  {
+   "symbol": "T261127C00025000",
+   "expected": {
+    "underlying": "T",
+    "option_type": "C",
+    "strike": 25.0,
+    "expiry_date": "2026-11-27",
+    "expiry_ny_1600_utc": "2026-11-27T21:00:00+00:00",
+    "t_years": 0.01358447488584475,
+    "dte_days": 4.958333333333333,
+    "dte_days_int": 4
+   }
+  },
+  {
+   "symbol": "GOOG270219P00100000",
+   "expected": {
+    "underlying": "GOOG",
+    "option_type": "P",
+    "strike": 100.0,
+    "expiry_date": "2027-02-19",
+    "expiry_ny_1600_utc": "2027-02-19T21:00:00+00:00",
+    "t_years": 0.2437214611872146,
+    "dte_days": 88.95833333333333,
+    "dte_days_int": 88
+   }
+  },
+  {
+   "symbol": "SPY261127P00000001",
+   "expected": {
+    "underlying": "SPY",
+    "option_type": "P",
+    "strike": 0.001,
+    "expiry_date": "2026-11-27",
+    "expiry_ny_1600_utc": "2026-11-27T21:00:00+00:00",
+    "t_years": 0.01358447488584475,
+    "dte_days": 4.958333333333333,
+    "dte_days_int": 4
+   }
+  },
+  {
+   "symbol": "SPY261127P00001234",
+   "expected": {
+    "underlying": "SPY",
+    "option_type": "P",
+    "strike": 1.234,
+    "expiry_date": "2026-11-27",
+    "expiry_ny_1600_utc": "2026-11-27T21:00:00+00:00",
+    "t_years": 0.01358447488584475,
+    "dte_days": 4.958333333333333,
+    "dte_days_int": 4
+   }
+  },
+  {
+   "symbol": "MSFT271231C00500000",
+   "expected": {
+    "underlying": "MSFT",
+    "option_type": "C",
+    "strike": 500.0,
+    "expiry_date": "2027-12-31",
+    "expiry_ny_1600_utc": "2027-12-31T21:00:00+00:00",
+    "t_years": 1.1067351598173516,
+    "dte_days": 403.9583333333333,
+    "dte_days_int": 403
+   }
+  },
+  {
+   "symbol": "BABA261218C00095000",
+   "expected": {
+    "underlying": "BABA",
+    "option_type": "C",
+    "strike": 95.0,
+    "expiry_date": "2026-12-18",
+    "expiry_ny_1600_utc": "2026-12-18T21:00:00+00:00",
+    "t_years": 0.07111872146118721,
+    "dte_days": 25.958333333333332,
+    "dte_days_int": 25
+   }
+  },
+  {
+   "symbol": "nvda261218P00175000",
+   "expected": null
+  },
+  {
+   "symbol": "NVDA261218X00175000",
+   "expected": null
+  },
+  {
+   "symbol": "NVDA261218P175000",
+   "expected": null
+  },
+  {
+   "symbol": "NVDA261318P00175000",
+   "expected": null
+  },
+  {
+   "symbol": "NVDA262318P00175000",
+   "expected": null
+  },
+  {
+   "symbol": "TOOLONG7261218P00175000",
+   "expected": null
+  },
+  {
+   "symbol": "NVDA 261218P00175000",
+   "expected": {
+    "underlying": "NVDA",
+    "option_type": "P",
+    "strike": 175.0,
+    "expiry_date": "2026-12-18",
+    "expiry_ny_1600_utc": "2026-12-18T21:00:00+00:00",
+    "t_years": 0.07111872146118721,
+    "dte_days": 25.958333333333332,
+    "dte_days_int": 25
+   }
+  },
+  {
+   "symbol": "",
+   "expected": null
+  },
+  {
+   "symbol": "None",
+   "expected": null
+  },
+  {
+   "symbol": "12345",
+   "expected": null
+  }
+ ]
+}
