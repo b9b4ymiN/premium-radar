@@ -138,10 +138,12 @@ pub fn analyze_cc(cc: CoveredCall, fees: f64) -> CcAnalysis {
     let max_profit = cc.leg.m * (cc.leg.k - cc.b + cc.leg.c) - fees;
     let max_loss = Some(cc.leg.m * (cc.b - cc.leg.c) - fees); // S_T = 0
     let be = cc.b - cc.leg.c + f;
+    // F1 (validator): BE มีจริงเฉพาะช่วง S_T < K (ก่อน capped) — ITM จน BE
+    // เลย strike = ไม่มีจุดคุ้มทุน คืน None ตามข้อบังคับ §3.1
     CcAnalysis {
         max_profit,
         max_loss,
-        breakeven: Some(be),
+        breakeven: (be < cc.leg.k).then_some(be),
         capital_today: cc.leg.m * cc.s0,
     }
 }
@@ -264,6 +266,23 @@ mod tests {
         assert!(cc_pnl_at(cc, be, FEES).abs() < 1e-9);
         // เหนือ strike: กำไรล็อกที่ max profit
         assert!((cc_pnl_at(cc, 200.0, FEES) - a.max_profit).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cc_itm_beyond_strike_has_no_breakeven() {
+        // F1: K=100 ต่ำกว่า BE (150−1+0.013≈149) → payoff เหนือ K flat ติดลบ
+        let cc = CoveredCall {
+            leg: ShortLeg {
+                is_call: true,
+                k: 100.0,
+                c: 1.0,
+                m: 100.0,
+            },
+            b: 150.0,
+            s0: 150.0,
+        };
+        let a = analyze_cc(cc, FEES);
+        assert!(a.breakeven.is_none(), "ห้ามรายงาน BE ที่ไม่มีอยู่จริง");
     }
 
     #[test]

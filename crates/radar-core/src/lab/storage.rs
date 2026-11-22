@@ -256,6 +256,11 @@ impl LabStorage {
                 n += 1;
             }
         }
+        // F4: predictions ก็เป็นข้อมูล Lab — ลบพร้อม
+        let preds = self.root.join("v1").join("predictions.jsonl");
+        if preds.exists() && fs::remove_file(&preds).is_ok() {
+            n += 1;
+        }
         Ok(n)
     }
 }

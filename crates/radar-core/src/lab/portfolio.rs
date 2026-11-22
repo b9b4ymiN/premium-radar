@@ -7,15 +7,23 @@
 use serde::Serialize;
 
 /// สถานะพอร์ตจำลอง ณ เวลาหนึ่ง
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct PortfolioState {
     pub cash: f64,
     /// จำนวนหุ้น (หน่วยหุ้น — รวม fractional ไม่ได้: assignment มาเป็น m ต่อสัญญา)
     pub shares: f64,
     /// ต้นทุนรวมของหุ้นที่ถือ (สำหรับ mark P/L)
     pub stock_cost: f64,
-    /// option เปิด: (สัญญา, ชนิด, strike, premium ต่อหุ้น, multiplier)
-    pub open_options: usize,
+    /// option เปิดทั้งหมด — ใช้ track การ reserve cash/หุ้น (ห้ามซ้ำ)
+    pub open_options: Vec<OpenOption>,
+}
+
+/// option ที่เปิดอยู่หนึ่งสัญญา
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct OpenOption {
+    pub is_call: bool,
+    pub k: f64,
+    pub m: f64,
 }
 
 /// เหตุการณ์เดียวของ ledger — ทุก event ตรวจ conservation ได้
@@ -35,21 +43,21 @@ pub enum LedgerEvent {
         m: f64,
         net_credit: f64,
     },
-    /// ปิด option (buy-to-close): จ่าย net debit
-    CloseOption { cost: f64 },
+    /// ปิด option (buy-to-close): จ่าย net debit + ปลดผูกของสัญญานั้น
+    CloseOption { cost: f64, opt: OpenOption },
     /// CSP โดน assigned ที่ expiry: เงินสด → หุ้น
     PutAssigned { contracts: usize, k: f64, m: f64 },
     /// CC โดน called away: หุ้น → เงินสดที่ strike
     CalledAway { contracts: usize, k: f64, m: f64 },
     /// option หมดอายุไร้ค่า: ปลดผูก
-    ExpiredWorthless,
+    ExpiredWorthless { opt: OpenOption },
     /// mark หุ้น ณ ราคาปิด (สำหรับ equity)
     MarkStock { price: f64 },
 }
 
 /// ผลลัพธ์ apply event เดียว + สถานะใหม่
 pub fn apply(state: &PortfolioState, ev: &LedgerEvent) -> Result<PortfolioState, String> {
-    let mut s = *state;
+    let mut s = state.clone();
     match ev {
         LedgerEvent::SellCsp {
             contracts,
@@ -60,34 +68,65 @@ pub fn apply(state: &PortfolioState, ev: &LedgerEvent) -> Result<PortfolioState,
             if *contracts == 0 {
                 return Err("จำนวนสัญญาต้องเป็นจำนวนเต็มบวก".into());
             }
+            // ห้าม reserve ซ้ำ: เช็คกับเงินที่ยังไม่ถูกผูก (P13.1 / validator F3)
+            let reserved: f64 = s
+                .open_options
+                .iter()
+                .filter(|o| !o.is_call)
+                .map(|o| o.k * o.m)
+                .sum();
             let collateral = k * m * *contracts as f64;
-            if s.cash < collateral {
+            if s.cash < reserved + collateral {
                 return Err(format!(
-                    "เงินสด {cash:.2} ไม่พอผูก collateral {collateral:.2} (cash-secured เท่านั้น)",
+                    "เงินสด {cash:.2} ไม่พอผูก collateral {collateral:.2} (มี CSP เปิดผูกไป {reserved:.2} แล้ว)",
                     cash = s.cash
                 ));
             }
-            s.cash += net_credit; // premium เข้า; collateral ยังเป็นเงินสดที่ผูก (ไม่หักสองครั้ง — ตรวจตอน assigned)
-            s.open_options += contracts;
+            s.cash += net_credit;
+            for _ in 0..*contracts {
+                s.open_options.push(OpenOption {
+                    is_call: false,
+                    k: *k,
+                    m: *m,
+                });
+            }
         }
         LedgerEvent::SellCc {
             contracts,
-            k: _,
+            k,
             m,
             net_credit,
         } => {
+            let reserved_shares: f64 = s
+                .open_options
+                .iter()
+                .filter(|o| o.is_call)
+                .map(|o| o.m)
+                .sum();
             let needed = m * *contracts as f64;
-            if s.shares < needed {
-                return Err(format!("หุ้น {sh} ไม่พอคุ้ม CC {needed}", sh = s.shares));
+            if s.shares < reserved_shares + needed {
+                return Err(format!(
+                    "หุ้น {sh} ไม่พอคุ้ม CC {needed} (มี CC เปิดคุ้มไป {reserved_shares} หุ้นแล้ว)",
+                    sh = s.shares
+                ));
             }
             s.cash += net_credit;
-            s.open_options += contracts;
+            for _ in 0..*contracts {
+                s.open_options.push(OpenOption {
+                    is_call: true,
+                    k: *k,
+                    m: *m,
+                });
+            }
         }
-        LedgerEvent::CloseOption { cost } => {
+        LedgerEvent::CloseOption { cost, opt } => {
             if s.cash < *cost {
                 return Err("เงินสดไม่พอปิดสัญญา".into());
             }
             s.cash -= cost;
+            if let Some(pos) = s.open_options.iter().position(|o| *o == *opt) {
+                s.open_options.remove(pos);
+            }
         }
         LedgerEvent::PutAssigned { contracts, k, m } => {
             let shares = m * *contracts as f64;
@@ -98,7 +137,7 @@ pub fn apply(state: &PortfolioState, ev: &LedgerEvent) -> Result<PortfolioState,
             s.cash -= pay;
             s.shares += shares;
             s.stock_cost += pay;
-            s.open_options = s.open_options.saturating_sub(*contracts);
+            release(&mut s.open_options, *contracts, false, *k, *m);
         }
         LedgerEvent::CalledAway { contracts, k, m } => {
             let shares = m * *contracts as f64;
@@ -110,14 +149,27 @@ pub fn apply(state: &PortfolioState, ev: &LedgerEvent) -> Result<PortfolioState,
             s.shares -= shares;
             s.stock_cost -= cost_out;
             s.cash += k * shares;
-            s.open_options = s.open_options.saturating_sub(*contracts);
+            release(&mut s.open_options, *contracts, true, *k, *m);
         }
-        LedgerEvent::ExpiredWorthless => {
-            s.open_options = s.open_options.saturating_sub(1);
+        LedgerEvent::ExpiredWorthless { opt } => {
+            if let Some(pos) = s.open_options.iter().position(|o| *o == *opt) {
+                s.open_options.remove(pos);
+            }
         }
         LedgerEvent::MarkStock { .. } => {}
     }
     Ok(s)
+}
+
+fn release(list: &mut Vec<OpenOption>, contracts: usize, want_call: bool, k: f64, m: f64) {
+    for _ in 0..contracts {
+        if let Some(pos) = list
+            .iter()
+            .position(|o| o.is_call == want_call && o.k == k && o.m == m)
+        {
+            list.remove(pos);
+        }
+    }
 }
 
 /// Equity = cash + หุ้น mark-to-market (ราคาปัจจุบัน) − liability ของ option เปิด
@@ -196,9 +248,20 @@ mod tests {
         )
         .unwrap();
         // หมดอายุไร้ค่า → เงิน = ตั้งต้น + credit
-        let s2 = apply(&s1, &LedgerEvent::ExpiredWorthless).unwrap();
+        let s2 = apply(
+            &s1,
+            &LedgerEvent::ExpiredWorthless {
+                opt: OpenOption {
+                    is_call: false,
+                    k: 170.0,
+                    m: M,
+                },
+            },
+        )
+        .unwrap();
         assert!((s2.cash - 20_198.67).abs() < 1e-9);
         assert_eq!(s2.shares, 0.0);
+        assert!(s2.open_options.is_empty());
     }
 
     #[test]
@@ -262,8 +325,92 @@ mod tests {
         )
         .unwrap();
         assert_eq!(s2.shares, 0.0);
+        assert!(s2.open_options.is_empty());
         assert!((s2.cash - (1_000.0 + 300.0 + 18_000.0)).abs() < 1e-9);
         assert!((s2.stock_cost - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn double_reserve_blocked_while_options_open() {
+        // F3: เปิด CSP ตัวแรกผูก 17k ไปแล้ว — ตัวที่สองเช็คกับเงินที่เหลือจริง
+        let s0 = PortfolioState {
+            cash: 20_000.0,
+            ..Default::default()
+        };
+        let s1 = apply(
+            &s0,
+            &LedgerEvent::SellCsp {
+                contracts: 1,
+                k: 170.0,
+                m: M,
+                net_credit: 200.0,
+            },
+        )
+        .unwrap();
+        let err = apply(
+            &s1,
+            &LedgerEvent::SellCsp {
+                contracts: 1,
+                k: 170.0,
+                m: M,
+                net_credit: 200.0,
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("ไม่พอผูก"), "{err}");
+        // CC คุ้มหุ้นเดียวกันสองสัญญา = ห้าม
+        let c0 = PortfolioState {
+            cash: 100.0,
+            shares: 100.0,
+            stock_cost: 17_000.0,
+            ..Default::default()
+        };
+        let c1 = apply(
+            &c0,
+            &LedgerEvent::SellCc {
+                contracts: 1,
+                k: 180.0,
+                m: M,
+                net_credit: 300.0,
+            },
+        )
+        .unwrap();
+        let err2 = apply(
+            &c1,
+            &LedgerEvent::SellCc {
+                contracts: 1,
+                k: 190.0,
+                m: M,
+                net_credit: 100.0,
+            },
+        )
+        .unwrap_err();
+        assert!(err2.contains("ไม่พอคุ้ม"), "{err2}");
+        // ปิดสัญญา = ปลด reserve → เปิดใหม่ได้
+        let c2 = apply(
+            &c1,
+            &LedgerEvent::CloseOption {
+                cost: 100.0,
+                opt: OpenOption {
+                    is_call: true,
+                    k: 180.0,
+                    m: M,
+                },
+            },
+        )
+        .unwrap();
+        assert!(
+            apply(
+                &c2,
+                &LedgerEvent::SellCc {
+                    contracts: 1,
+                    k: 190.0,
+                    m: M,
+                    net_credit: 100.0
+                }
+            )
+            .is_ok()
+        );
     }
 
     #[test]

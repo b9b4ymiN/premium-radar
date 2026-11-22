@@ -523,7 +523,7 @@ fn lab_analyze(input: LabAnalyzeInput) -> Result<serde_json::Value, String> {
                 b,
                 s0: input.spot,
             };
-            let a = payoff::analyze_cc(cc, fees_open);
+            let a = payoff::analyze_cc(cc, fees_rt); // F2: ชุด fee เดียวกับ scenarios
             (Some(cc), Some(a))
         })
     } else {
@@ -548,6 +548,7 @@ fn lab_analyze(input: LabAnalyzeInput) -> Result<serde_json::Value, String> {
         "p_touch": touch,
         "delta": delta,
         "covered_call": cc_analysis,
+        "call_capital_today": if input.is_call { Some(100.0 * input.spot) } else { None },
         "scenarios": scenarios,
         "cc_scenarios": cc_scenarios,
     }))
@@ -582,9 +583,10 @@ fn lab_freeze_prediction(
         .parse()
         .map_err(|e| format!("รูปแบบวันหมดอายุผิด: {e}"))?;
     let now = chrono::Utc::now();
+    let occ = input.occ.clone();
     let pred = StoredPrediction {
         id: format!("pred-{}", now.timestamp_nanos_opt().unwrap_or_default()),
-        occ: input.occ,
+        occ: input.occ.clone(),
         p: input.p,
         event_th: input.event_th,
         model_note: input.model_note,
@@ -599,6 +601,19 @@ fn lab_freeze_prediction(
     let root = std::path::Path::new(&state.app_data_dir).join("lab");
     let store = radar_core::lab::storage::LabStorage::open(&root)
         .map_err(|e| format!("เปิดที่เก็บ lab ไม่ได้: {e}"))?;
+    // F7: สัญญาเดียววันเดียว = คำทำนายเดียว (double-click ไม่ซ้ำ)
+    let today = now.date_naive();
+    if let Some(dup) = store
+        .read_predictions()
+        .unwrap_or_default()
+        .iter()
+        .find(|p| p.occ == occ && p.created_at.date_naive() == today)
+    {
+        return Err(format!(
+            "บันทึกสัญญานี้วันนี้แล้ว ({}) — หนึ่งสัญญาต่อวันต่อหนึ่งคำทำนาย",
+            dup.id
+        ));
+    }
     store
         .append_prediction(&pred)
         .map_err(|e| format!("บันทึกไม่สำเร็จ: {e}"))?;

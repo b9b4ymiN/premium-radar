@@ -22,6 +22,7 @@ interface LabAnalysis {
   p_touch: NamedProb | null;
   delta: number;
   covered_call: CcAnalysis | null;
+  call_capital_today?: number | null;
   scenarios: ScenarioRow[];
   cc_scenarios: ScenarioRow[] | null;
 }
@@ -53,7 +54,7 @@ export default function OptionLab({
         iv, t: dteYears, is_call: isCall, covered: covered && isCall,
         basis: covered && isCall ? spot : null,
       },
-    }).then(r => { if (live) { setA(r); setErr(null); } })
+    }).then(r => { if (live) { r.scenarios.sort((x, y) => x.s_t - y.s_t); if (r.cc_scenarios) r.cc_scenarios.sort((x, y) => x.s_t - y.s_t); setA(r); setErr(null); } })
       .catch(e => { if (live) { setA(null); setErr(String(e)); } });
     return () => { live = false; };
   }, [row?.q.symbol, spot, iv, covered, symbol, isCall, dteYears, row]);
@@ -95,7 +96,7 @@ export default function OptionLab({
         </div>
         <div className="lab-cell">
           <label>{isCall ? "ทุนเทียบวันนี้ (หุ้น 100)" : "ทุนที่ต้องผูก (CSP)"}</label>
-          <strong>{isCall ? usd(a?.covered_call?.capital_today ?? spot * 100, 0) : usd(leg?.collateral, 0)}</strong>
+          <strong>{isCall ? usd(a?.call_capital_today ?? a?.covered_call?.capital_today ?? null, 0) : usd(leg?.collateral, 0)}</strong>
           <small>{isCall ? "มูลค่าหุ้น ณ วันนี้ (คุ้มคลุมสัญญา)" : "เงินสดเต็มจำนวน strike · gross"}</small>
         </div>
       </div>
@@ -186,9 +187,6 @@ function PayoffSvg({ rows, be, strike, spot }: { rows: ScenarioRow[]; be: number
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }}>
       <line x1={PAD} y1={sy(0)} x2={W - PAD} y2={sy(0)} stroke="#292f39" strokeWidth="1" />
       <polyline points={pts} fill="none" stroke="#4b8cf7" strokeWidth="2" />
-      {rows.filter(r => r.pnl >= 0).length > 0 && (
-        <polyline points={pts} fill="none" stroke="#24c99a" strokeWidth="2" strokeDasharray="0" opacity="0" />
-      )}
       {be != null && <line x1={sx(be)} y1={PAD} x2={sx(be)} y2={H - PAD} stroke="#f0bd70" strokeDasharray="4 3" strokeWidth="1" />}
       <line x1={sx(strike)} y1={PAD} x2={sx(strike)} y2={H - PAD} stroke="#a2adbc" strokeDasharray="2 4" strokeWidth="1" />
       <line x1={sx(spot)} y1={PAD} x2={sx(spot)} y2={H - PAD} stroke="#4b8cf7" strokeDasharray="2 4" strokeWidth="1" opacity="0.7" />
