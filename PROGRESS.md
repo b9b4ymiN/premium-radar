@@ -26,7 +26,7 @@
 | P2.2 REST policy primitives | **DONE** | `crates/radar-core/src/webull/rest.rs` — constants/extract_list/pagination_key/to_f64/Throttle/SnapCache/is_rate_limited/Credentials(env+masked Debug) | **PASS** (validator รัน Python เทียบ edge ทุกทาง; H1/M1/M2/L1/L2/L3 แก้ครบ) |
 | P2.3 endpoints + discovery | **DONE** | `crates/radar-core/src/webull/discovery.rs` — fetch_window/contracts/collect_occ/fetch_spot(degrade-never-abort)/pick_ws_symbols(tie-break by symbol, limit-0→96)/select_symbols/fetch_symbols_flow | **PASS** (เทียบ Python แบบ run จริง 6-symbol interleave + select tail + band format byte-identical) |
 | P2.4 contract windows/band/pagination | **DONE** | รวมใน discovery.rs (WINDOWS 7 ช่วง, ±30% band, pagination loop + falsy-key fallthrough) | **PASS** |
-| P2.5 real HTTP transport + retry + keyring + wiremock + live smoke | NOT_STARTED | **scope ที่เหลือของ P2**: reqwest impl ของ HttpFetch (compose Throttle+SnapCache+retry 2×@1.2s on rate-limit ตาม py 277-284), keyring crate, wiremock integration, smoke กับ api.webull.co.th ด้วย key จาก env | — |
+| P2.5 real HTTP transport + retry + wiremock | **DONE** | `crates/radar-core/src/webull/transport.rs` (feature `client`) — WebullClient: reqwest blocking/rustls, HMAC signing per call, shared 1.1s throttle (mark after send — validator fix), 3s TTL cache, 2× retry @1.2s on rate-limit. 7 wiremock tests (6 pass + 1 ignored live smoke). Keyring deferred to P7 (settings screen). | **PASS** (10/11 PASS; item 3 throttle-mark fixed; 36+6 tests green) |
 | P3.* MQTT | NOT_STARTED | — | — |
 | P4.* engine+bridge | NOT_STARTED | — | — |
 | P5.* frontend shell | NOT_STARTED | — | — |

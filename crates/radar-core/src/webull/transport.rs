@@ -55,7 +55,6 @@ impl WebullClient {
         if !wait.is_zero() {
             std::thread::sleep(wait);
         }
-        self.throttle.mark();
 
         let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let nonce = uuid::Uuid::new_v4().simple().to_string();
@@ -89,7 +88,15 @@ impl WebullClient {
             req = req.query(params);
         }
 
-        let resp = req.send().map_err(|e| FetchError::Network(e.to_string()))?;
+        let resp = match req.send() {
+            Ok(r) => r,
+            Err(e) => {
+                // mark AFTER send (Python `finally` block) — both success and error
+                self.throttle.mark();
+                return Err(FetchError::Network(e.to_string()));
+            }
+        };
+        self.throttle.mark(); // Python: _last_call[0] = time.time() in `finally`
         let status = resp.status().as_u16();
         let body: Value = resp.json().unwrap_or(Value::Null);
         Ok((status, body))
