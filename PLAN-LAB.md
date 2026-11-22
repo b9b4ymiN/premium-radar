@@ -467,3 +467,13 @@ schtasks /Create /TN "PremiumRadar Lab Recorder" /TR "C:\Users\bfipa\.cargo-targ
 - validator อิสระ (ตาม loop ของโปรเจค) — โค้ด P8.3/P8.4 ทั้งหมดรอ validator รอบเดียว
 
 **P8.4 verdict: DONE (capture เริ่มทำงานจริงแล้ว — ข้อมูลวันแรกถูกเก็บเรียบร้อย) · Phase 8 DOD ผ่าน: probe A/B/C ตัดสินแล้ว + dataset ตัวอย่างตรวจ provenance ได้**
+
+---
+
+## Appendix E — P9 ส่งมอบ + validator + ปิด session กลางคืน (2026-11-23)
+
+- P9 UI: OptionLab บนแท็บใหม่ (shell เดิม) · Rust คำนวณทั้งหมดผ่าน `lab_analyze` · freeze prediction (P9.4) append-only 1 สัญญา/วัน
+- P10/P12/P13 engine cores ส่งมอributed พร้อม tests · empirical = รอข้อมูล (โดยดีไซน์)
+- **Validator อิสระ: PASS-WITH-NOTES → แก้ครบ 7 จุด (F1 CC-BE segment, F2 fee set เดียว, F3 reserve ซ้ำ, F4 delete predictions, F6 UI sort/dead-code, F7 freeze dedupe; F5 holiday-mislabel จดเป็น known limitation ตามข้อจำกัดไม่มีปฏิทิน exchange)**
+- schtasks ตั้งแล้ว + ทดสอบ /Run exit 0 · commits: 6474234 → 41a411b → 4e3433b → f8220f4
+- เหลือรอบถัดไป: replay engine เต็มรูปแบบ (P11 orchestration), walk-forward จริงเมื่อข้อมูลพอ, คู่มือไทย (P13.4)
