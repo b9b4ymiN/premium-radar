@@ -46,11 +46,24 @@ pub const STRIKES_EACH_SIDE: usize = 20;
 
 /// App credentials. Key material lives in the OS keyring / env at runtime —
 /// never in source, logs, or error messages (use [`Credentials::masked`]).
-#[derive(Clone, Debug)]
+/// `Debug` is implemented manually so the secret can never leak via `{:?}`.
+#[derive(Clone)]
 pub struct Credentials {
     pub app_key: String,
     pub app_secret: String,
     pub access_token: Option<String>,
+}
+
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Credentials(app_key={}, secret=***{}***, access_token={})",
+            self.app_key,
+            self.app_secret.len(),
+            self.access_token.is_some()
+        )
+    }
 }
 
 impl Credentials {
@@ -106,6 +119,13 @@ pub fn extract_list(d: &Value) -> Vec<Value> {
 pub fn to_f64(v: &Value, default: f64) -> f64 {
     match v {
         Value::Null => default,
+        Value::Bool(b) => {
+            if *b {
+                1.0
+            } else {
+                0.0
+            }
+        }
         Value::Number(n) => n.as_f64().unwrap_or(default),
         Value::String(s) => {
             let t = s.trim();
@@ -122,21 +142,21 @@ pub fn to_f64(v: &Value, default: f64) -> f64 {
 /// Next-page cursor from a contracts response (`pagination_key` at either
 /// nesting level); dict-shaped keys terminate paging like Python's check.
 pub fn pagination_key(d: &Value) -> Option<String> {
-    if let Value::Object(o) = d {
-        if let Some(k) = o.get("pagination_key") {
-            if let Some(s) = k.as_str() {
-                return (!s.is_empty()).then(|| s.to_string());
-            }
-            return None; // dict-shaped key -> stop
+    let level = |o: &serde_json::Map<String, Value>| -> Option<String> {
+        match o.get("pagination_key") {
+            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+            // dict-shaped key -> hard stop (Python `isinstance(key, dict)`)
+            Some(Value::Object(_)) => Some(String::new()),
+            _ => None,
         }
-        if let Some(s) = o
-            .get("data")
-            .and_then(Value::as_object)
-            .and_then(|d| d.get("pagination_key"))
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-        {
-            return Some(s.to_string());
+    };
+    if let Value::Object(o) = d {
+        if let Some(k) = level(o) {
+            return (!k.is_empty()).then_some(k);
+        }
+        // falsy ""/missing at top level falls through to data level (Python truthiness)
+        if let Some(k) = o.get("data").and_then(Value::as_object).and_then(level) {
+            return (!k.is_empty()).then_some(k);
         }
     }
     None
@@ -254,7 +274,8 @@ impl std::fmt::Display for FetchError {
         match self {
             FetchError::Network(e) => write!(f, "network error: {e}"),
             FetchError::NonZero(status, body) => {
-                let clipped = if body.len() > 300 { &body[..300] } else { body };
+                // clip by chars — never slice inside a multi-byte char (Thai endpoints)
+                let clipped: String = body.chars().take(300).collect();
                 write!(f, "Webull {status}: {clipped}")
             }
         }

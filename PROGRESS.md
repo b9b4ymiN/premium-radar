@@ -23,7 +23,10 @@
 | P1.5 chain stats | **DONE** | `screener.rs` — golden 8 scenarios + otm_curve + atm_iv_for | **PASS** |
 | P1.6 fixtures | DONE | `tests/fixtures/*.json` 6 ชุด + `tools/dump_fixtures.py` — validator regenerate ได้ byte-identical | **PASS** |
 | P2.1 Webull signing | **DONE** | `crates/radar-core/src/webull/sign.rs` + golden 4 cases — validator cross-check ด้วย input ใหม่ 2 ชุด (Python↔Rust byte-identical, คอมไพล์ใน temp project แยก) | **PASS** |
-| P2.2–2.5 REST layer ที่เหลือ | NOT_STARTED | throttle/cache/endpoints/discovery/keys — ลำดับถัดไป | — |
+| P2.2 REST policy primitives | **DONE** | `crates/radar-core/src/webull/rest.rs` — constants/extract_list/pagination_key/to_f64/Throttle/SnapCache/is_rate_limited/Credentials(env+masked Debug) | **PASS** (validator รัน Python เทียบ edge ทุกทาง; H1/M1/M2/L1/L2/L3 แก้ครบ) |
+| P2.3 endpoints + discovery | **DONE** | `crates/radar-core/src/webull/discovery.rs` — fetch_window/contracts/collect_occ/fetch_spot(degrade-never-abort)/pick_ws_symbols(tie-break by symbol, limit-0→96)/select_symbols/fetch_symbols_flow | **PASS** (เทียบ Python แบบ run จริง 6-symbol interleave + select tail + band format byte-identical) |
+| P2.4 contract windows/band/pagination | **DONE** | รวมใน discovery.rs (WINDOWS 7 ช่วง, ±30% band, pagination loop + falsy-key fallthrough) | **PASS** |
+| P2.5 real HTTP transport + retry + keyring + wiremock + live smoke | NOT_STARTED | **scope ที่เหลือของ P2**: reqwest impl ของ HttpFetch (compose Throttle+SnapCache+retry 2×@1.2s on rate-limit ตาม py 277-284), keyring crate, wiremock integration, smoke กับ api.webull.co.th ด้วย key จาก env | — |
 | P3.* MQTT | NOT_STARTED | — | — |
 | P4.* engine+bridge | NOT_STARTED | — | — |
 | P5.* frontend shell | NOT_STARTED | — | — |
@@ -42,6 +45,9 @@ Evidence: คำสั่ง gates ล่าสุด `cargo test -p radar-core`
 - **`rust-toolchain.toml` host/targets keys ถูก rustup ละเว้น** — เครื่องนี้ active = stable-gnu; เครื่องอื่น default msvc จะ resolve ต่าง (reproducibility note จาก validator)
 - **MSVC (NEEDS_HUMAN ยังรอ)**: สำหรับ `cargo tauri build` ผลิต installer จริงใน P7 เท่านั้น — ติดตั้งด้วย `~/vs_BuildTools.exe` (มีอยู่แล้วในเครื่อง) จะเด้ง UAC ให้กด Yes; **ไม่ขวาง dev อีกแล้ว**
 - atm_iv_for tie-break บน strike ที่ห่าง spot เท่ากัน: Python เลือกจาก set (arbitrary), Rust เลือกแถวแรกตามลำดับ input — ไม่ถูก fixture จับ case นี้
+- instrument_id mixed-type (int 5 vs "5") dedupe ต่าง Python — pathological (validator L4)
+- `select_symbols` รับวันที่เดียว ในขณะที่ Python ใช้ NY-today สำหรับ windows แต่ local-today สำหรับ select filter — **P3 wiring ต้องฉีด NY date ให้ตั้งใจ** (validator L4)
+- SnapCache::key format ต่าง Python json.dumps + ยังไม่ drop empty-string params — เป็นงานของ P2.5 ตอน compose (validator L5)
 
 ## Loop spec ของ task ถัดไป
 

@@ -205,6 +205,12 @@ pub fn strike_band(spot: f64) -> (String, String) {
 /// Rank symbols nearest-to-spot first, per (expiry, side); then interleave by
 /// rank. Used for WebSocket subscriptions and REST ordering.
 pub fn pick_ws_symbols(syms: &[String], spot: f64, limit: usize) -> Vec<String> {
+    // Python `limit or MAX_CONTRACTS`: zero means "use the default".
+    let limit = if limit == 0 {
+        super::rest::MAX_CONTRACTS
+    } else {
+        limit
+    };
     let mut groups: HashMap<(NaiveDate, OptType), Vec<(f64, &String)>> = HashMap::new();
     for sy in syms {
         if let Some(m) = parse_occ(sy) {
@@ -218,7 +224,12 @@ pub fn pick_ws_symbols(syms: &[String], spot: f64, limit: usize) -> Vec<String> 
     let mut ranked: Vec<(usize, NaiveDate, &String)> = Vec::new();
     for list in groups.values() {
         let mut list = list.clone();
-        list.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        // Python sorts (distance, symbol): equidistant strikes tie-break by symbol
+        list.sort_by(|a, b| {
+            a.0.partial_cmp(&b.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.1.cmp(b.1))
+        });
         for (rank, (_, sy)) in list.iter().enumerate() {
             // expiry here is only a tiebreak; recover it from parse for sort parity
             if let Some(m) = parse_occ(sy) {
@@ -330,7 +341,9 @@ pub fn fetch_symbols_flow<F: HttpFetch>(
     stale: Stale<'_>,
     mut on_progress: Progress<'_>,
 ) -> Result<(Vec<String>, f64), FetchError> {
-    let spot = fetch_spot(f, root)?;
+    // Python fetch_spot catches everything -> None; the flow then continues
+    // band-less with the median-strike fallback. Degrade, never abort.
+    let spot = fetch_spot(f, root).ok().flatten();
     let (gte, lte) = spot
         .map(strike_band)
         .map(|(g, l)| (Some(g), Some(l)))
