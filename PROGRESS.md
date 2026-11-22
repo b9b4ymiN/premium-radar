@@ -34,7 +34,7 @@
 | P5 Frontend shell | **DONE** | App.tsx + App.css + tokens.css — 4-column shell, 13-col scanner table, 3 opportunity cards, contract analysis, copilot chat, status bar. DESIGN.md palette + all CSS classes. | **PASS** (F1 palette + F2 CSS fixed) |
 | P6 Copilot module | **DONE** | `crates/radar-core/src/copilot.rs` — LlmConfig (GLM-5.3/OpenAI provider-agnostic), ChatMessage, ToolDef×3 (top_candidates/contract_detail/chain_stats), Thai system prompt, build_request, parse_response (content/tool-call/error). 7 unit tests. | builder gates ผ่าน |
 | P7.1 First-run setup screen | **DONE** | `SetupScreen.tsx` + Tauri commands `save_credentials`/`test_connection`/`needs_setup` — Thai UI, LLM presets | builder gates ผ่าน |
-| P7.2 Windows installer | BLOCKED | ต้องการ MSVC (ติดตั้งผ่าน `~/vs_BuildTools.exe` + UAC) | — |
+| P7.2 Windows installer | **DONE** | `PREMIUM RADAR_0.1.0_x64-setup.exe` (4.1 MB) + `.msi` (6.3 MB) — NSIS + MSI bundle สร้างสำเร็จ | ✅ app รันจริง ติดตั้งได้ |
 | P7.3 macOS build | BLOCKED | ต้องการเครื่อง macOS | — |
 | P7.4 Security pass | **DONE** | grep ยืนยัน: ไม่มี hardcoded keys, .env ไม่ถูก track, ไม่มี println กับ secrets, Debug impl ของ Credentials/LlmConfig mask หมด | ผ่าน |
 | P7.6 README + docs | **DONE** | README.md (ไทย) — ติดตั้ง + API keys + โครงสร้าง + testing | — |
