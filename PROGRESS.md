@@ -12,34 +12,43 @@
 
 | Task | Status | Evidence | Validator |
 |---|---|---|---|
-| P0.1 git repo + .gitignore | DONE | commit `7140953`, `3aea634` | — (ไม่มีโค้ด แค่ docs/config) |
-| P0.2 Tauri scaffold | DONE (frontend ส่วน) | commit `0616f2d` — tsc+eslint+vite build เขียว | รอ validator รวมกับ P0 ปิดท้าย |
-| P0.3/0.4 quality gates | DONE (frontend) / **BLOCKED (Rust)** | `npm run check`+`build` เขียว; Rust ค้างรอ MSVC | รวมกับข้างบน |
-| P0 Rust compile | **NEEDS_HUMAN** | VS Build Tools ติดตั้งผ่าน winget ค้างรอ **UAC prompt บนจอ** (~15 นาทีแล้ว ไม่มี installer เริ่มรัน) — ผู้ใช้ต้องกด Yes หรือแจ้งให้เปลี่ยนวิธี | — |
-| P1.6 golden fixtures | DONE | commit `261f894` — 6 ชุด, agent ตรวจซ้ำ 0 diffs, deterministic (sha256 ตรง 2 รอบ) | จะ validate รวมกับ P1 (golden test คือตัวตรวจ L1) |
-| P1.1 OCC parser | IN_PROGRESS (โค้ดเสร็จ รอ compile) | `src-tauri/src/webull/contracts.rs` + unit tests | รอ |
-| P1.2 BS/IV/greeks | IN_PROGRESS (โค้ดเสร็จ รอ compile) | `src-tauri/src/quant.rs` + `tests/golden_quant.rs` (159+172 cases) | รอ |
-| P1.3–1.5 enrich/grade/filters/chain | IN_PROGRESS (โค้ดเสร็จ รอ compile) | `src-tauri/src/screener.rs` + `tests/golden_screener.rs` (402 rows/17 scenarios/8 scenarios) | รอ |
-| P2.* Webull REST | NOT_STARTED | — | — |
+| P0.1 git repo + .gitignore | DONE | commit `7140953`, `3aea634` | — (docs/config อย่างเดียว) |
+| P0.2 Tauri scaffold | DONE | commit `0616f2d` — tsc+eslint+vite build เขียว | รวมกับ P0.3/0.4 |
+| P0.3/0.4 quality gates | DONE (frontend) / Rust dev loop ใช้ GNU | `npm run check`+`build` เขียว; Rust: fmt+clippy+test เขียวผ่าน MinGW portable (`~/winlibs_tmp`) — validator รันยืนยันเอง (item 7) | ผ่าน (validator P1 ครอบ) |
+| P1.1 OCC parser + years_to_expiry | **DONE** | `crates/radar-core/src/webull/contracts.rs` + `quant.rs` — golden occ_parse 25 valid + 9 invalid, t_years 1e-9 | **PASS** (regex ตรง Python, hexdump ยืนยัน) |
+| P1.2 BS/IV/greeks | **DONE** | `crates/radar-core/src/quant.rs` — golden 159 BS+greeks (1e-6) + 172 IV (รวม rejection paths) | **PASS** (line-by-line vs Python 474-547) |
+| P1.3 enrich + grade | **DONE** | `crates/radar-core/src/screener.rs` — golden 402 แถว × 44 fields, grade exact, why-string byte-identical (323 สตริง) | **PASS** (hexdump ยืนยัน two-space arrow) |
+| P1.4 filters | **DONE** | `screener.rs` — golden 17 scenarios × 2 orders (input + app incl. budget) | **PASS** (stable sort ตรง Python) |
+| P1.5 chain stats | **DONE** | `screener.rs` — golden 8 scenarios + otm_curve + atm_iv_for | **PASS** |
+| P1.6 fixtures | DONE | `tests/fixtures/*.json` 6 ชุด + `tools/dump_fixtures.py` — validator regenerate ได้ byte-identical | **PASS** |
+| P2.1 Webull signing | **DONE** | `crates/radar-core/src/webull/sign.rs` + golden 4 cases — validator cross-check ด้วย input ใหม่ 2 ชุด (Python↔Rust byte-identical, คอมไพล์ใน temp project แยก) | **PASS** |
+| P2.2–2.5 REST layer ที่เหลือ | NOT_STARTED | throttle/cache/endpoints/discovery/keys — ลำดับถัดไป | — |
 | P3.* MQTT | NOT_STARTED | — | — |
 | P4.* engine+bridge | NOT_STARTED | — | — |
 | P5.* frontend shell | NOT_STARTED | — | — |
 | P6.* copilot | NOT_STARTED | — | — |
-| P7.* packaging | NOT_STARTED | — | — |
+| P7.* packaging | NOT_STARTED | ต้องการ MSVC (ดูด้านล่าง) | — |
 
-## Current blocking (สิ่งเดียวที่ขวางทาง)
+## Validation ล่าสุด (2026-11-22)
 
-**P0 Rust compile รอ VS Build Tools** — winget (PID 11108) รอ UAC:
-- ทางออก A: ผู้ใช้เห็น dialog สีน้ำเงิน "Visual Studio Installer" → กด **Yes** → รอติดตั้ง 10-15 นาที → รัน `cargo fmt && cargo clippy -- -D warnings && cargo test` ใน vcvars64 env
-- ทางออก B: ไม่มี dialog / ไม่ปรากฏ → kill winget → ดาวน์โหลด vs_BuildTools.exe ตรงจาก Microsoft แล้วรันแบบเห็น progress
+**P1 + P2.1: VALIDATION PARTIAL → ปิด DONE แล้ว** — ทุกข้อ code/math/gates **PASS** (Critical: 0, High: 0); PARTIAL มาจาก Medium เดียว: ledger paths ชี้ผิดหลัง restructure → **แก้แล้วในไฟล์นี้** + Low findings จัดการครบ: เพิ่ม unit test ตัวที่ 4 (contracts.rs 6-char root + fractional strike → gates 18/18), ลบ `.env` ว่างเปล่า untracked, `rust-toolchain.toml` host-key footnote ด้านล่าง
 
-## Loop spec ของ task ถัดไป (เมื่อ toolchain พร้อม)
+Evidence: คำสั่ง gates ล่าสุด `cargo test -p radar-core` = 18 passed / `clippy -D warnings` = clean / `fmt --check` = clean
+
+## เปิด/ปิดเทคนิค (footnotes)
+
+- **Rust dev loop ใช้ GNU + MinGW portable**: export `PATH="/c/Users/bfipa/winlibs_tmp/mingw64/bin:$PATH"` ก่อน cargo ทุกครั้ง (test exe ของ src-tauri ตัวเต็มติด DLL runtime — radar-core ไม่ติด)
+- **`rust-toolchain.toml` host/targets keys ถูก rustup ละเว้น** — เครื่องนี้ active = stable-gnu; เครื่องอื่น default msvc จะ resolve ต่าง (reproducibility note จาก validator)
+- **MSVC (NEEDS_HUMAN ยังรอ)**: สำหรับ `cargo tauri build` ผลิต installer จริงใน P7 เท่านั้น — ติดตั้งด้วย `~/vs_BuildTools.exe` (มีอยู่แล้วในเครื่อง) จะเด้ง UAC ให้กด Yes; **ไม่ขวาง dev อีกแล้ว**
+- atm_iv_for tie-break บน strike ที่ห่าง spot เท่ากัน: Python เลือกจาก set (arbitrary), Rust เลือกแถวแรกตามลำดับ input — ไม่ถูก fixture จับ case นี้
+
+## Loop spec ของ task ถัดไป
 
 ```yaml
-task: P1-close
-trigger: MSVC linker ใช้ได้ (vcvars64 → cargo build ผ่าน)
-goal: cargo fmt --check && cargo clippy -D warnings && cargo test เขียวทั้งหมด ใน src-tauri
-verification: L1 (golden fixtures = deterministic ตรงค่า Python 1e-6 / grade exact / why-string exact)
-stopping: DONE เมื่อ builder เห็นเขียว + validator agent ยืนยัน PASS ทุก DOD ข้อ || FAILED เมื่อแก้ 4 rounds ไม่ผ่าน || BLOCKED ถ้าเจอ external blocker
-memory: อัปเดตตารางข้างบน + commit SHA
+task: P2.2-2.5 (webull REST layer)
+trigger: นี้ (P1 ปิดแล้ว)
+goal: throttled client (1.1s shared, cache 3s, 429 retry) + 4 endpoints + contract discovery (windows/band/pagination/pick_ws_symbols) + keyring — ทดสอบด้วย wiremock + smoke ของจริงด้วย key จาก env
+verification: L1 — unit/integration เขียว + smoke ไม่โดน 429 + grep ไม่เจอค่า key จริงใน repo/log
+stopping: DONE เมื่อ builder เขียว + validator PASS || FAILED หลัง 4 rounds || BLOCKED อื่น
+memory: ตารางข้างบน + commit SHA
 ```

@@ -62,6 +62,15 @@ mod tests {
     }
 
     #[test]
+    fn parses_six_char_root_and_fractional_strike() {
+        let m = parse_occ("GOOGL270206C00123450").unwrap(); // 6-char root, strike 123.45
+        assert_eq!(m.underlying, "GOOGL");
+        assert_eq!(m.option_type, OptType::Call);
+        assert_eq!(m.strike, 123.45);
+        assert_eq!(m.expiry, NaiveDate::from_ymd_opt(2027, 2, 6).unwrap());
+    }
+
+    #[test]
     fn rejects_garbage_and_impossible_dates() {
         assert!(parse_occ("NOTASYMBOL").is_none());
         assert!(parse_occ("NVDA260230P00175000").is_none()); // Feb 30
