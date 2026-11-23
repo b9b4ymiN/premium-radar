@@ -541,3 +541,16 @@ button:focus-visible, input:focus-visible {
 .table-status, .table-footer {
   background: #171f29;
 }
+.contract-select {
+  background: transparent;
+  border: 0;
+  color: #e9f1ff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 750;
+  padding: 2px 4px;
+}
+.contract-select:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}

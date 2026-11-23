@@ -2,6 +2,7 @@
 //! component เรนเดอร์อย่างเดียว: candles (≤300 แท่ง) หรือเส้น close (ยาวกว่านั้น)
 
 import { useEffect, useState } from "react";
+const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
@@ -23,6 +24,10 @@ export default function PriceChart({ symbol }: { symbol: string }) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    if (!hasTauri) {
+      setErr("เปิดแอปเดสก์ท็อปเพื่อดูกราฟราคาย้อนหลัง");
+      return;
+    }
     let live = true;
     setLoading(true); setErr(null);
     invokeCmd<History>("get_stock_history", { symbol, range })

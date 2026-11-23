@@ -2,6 +2,7 @@
 //! ตัวเลข/การเรียงทั้งหมดจาก Rust
 
 import { useCallback, useEffect, useState } from "react";
+const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
@@ -19,6 +20,10 @@ export default function HomePage({
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(() => {
+    if (!hasTauri) {
+      setErr("เปิดแอปเดสก์ท็อปเพื่อดูข้อมูล Watchlist และ Option Lab");
+      return;
+    }
     setLoading(true); setErr(null);
     invokeCmd<Overview>("get_home_overview")
       .then(setO).catch(e => setErr(String(e)))

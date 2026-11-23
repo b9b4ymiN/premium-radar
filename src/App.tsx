@@ -604,7 +604,18 @@ export default function App() {
                           {r.q.option_type === "P" ? "Put" : "Call"}
                         </td>
                         <td>{r.q.expiry.slice(5).replace("-", "/")} <small style={{ color: "#6b7d98" }}>({Math.round(r.dte)}d)</small></td>
-                        <td style={{ color: "#e9f1ff", fontWeight: 750 }}>{r.q.strike}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="contract-select"
+                            aria-label={`Inspect ${r.q.option_type === "P" ? "put" : "call"} ${r.q.strike}, expires ${r.q.expiry}`}
+                            aria-pressed={r.q.symbol === selectedRow?.q.symbol}
+                            onClick={event => {
+                              event.stopPropagation();
+                              setSelected(r.q.symbol);
+                            }}
+                          >{r.q.strike}</button>
+                        </td>
                         <td>{r.delta?.toFixed(2)}</td>
                         <td className={((r.p_itm ?? 0) > 0.25) ? "neg" : ""}>{((r.p_itm ?? 0) * 100).toFixed(0)}%</td>
                         <td className="pos">+{r.credit?.toFixed(0)}</td>
