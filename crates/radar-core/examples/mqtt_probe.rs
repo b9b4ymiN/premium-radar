@@ -41,13 +41,13 @@ async fn main() {
     };
     println!("base_url = {base_url}");
 
-    let session_id = format!("probe_{}", &uuid_like());
+    let session_id = format!("probe_{}", uuid_like());
     let mut config = StreamConfig::for_base_url(&base_url, session_id.clone());
     // transport matrix knobs for probing: MQTT_PORT / MQTT_TLS=0|1
-    if let Ok(p) = std::env::var("MQTT_PORT") {
-        if let Ok(p) = p.parse::<u16>() {
-            config.port = p;
-        }
+    if let Ok(p) = std::env::var("MQTT_PORT")
+        && let Ok(p) = p.parse::<u16>()
+    {
+        config.port = p;
     }
     if let Ok(t) = std::env::var("MQTT_TLS") {
         config.use_tls = t != "0";
@@ -120,7 +120,7 @@ async fn main() {
             StreamEvent::Heartbeat => println!("[probe] 💓 echo"),
             StreamEvent::Notice(t) => println!(
                 "[probe] 📢 notice: {}",
-                &t.chars().take(140).collect::<String>()
+                t.chars().take(140).collect::<String>()
             ),
             _ => {}
         }

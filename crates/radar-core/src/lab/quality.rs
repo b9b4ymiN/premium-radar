@@ -356,7 +356,7 @@ mod tests {
             contract: contract("NVDA261204P00175000", 175.0, OptType::Put),
             kind,
             session_date: session,
-            event_time: event_time,
+            event_time,
             received_time: received.parse().unwrap(),
             available_at: bar_available_at(session),
             source: crate::engine::DataSource::Rest,

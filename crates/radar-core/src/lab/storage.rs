@@ -307,7 +307,7 @@ mod tests {
                 volume: Some(20.0),
             },
             session_date: session,
-            event_time: event_time,
+            event_time,
             received_time: event_time,
             available_at: event_time,
             source: crate::engine::DataSource::Rest,
