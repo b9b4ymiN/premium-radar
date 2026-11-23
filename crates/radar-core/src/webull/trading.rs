@@ -1,15 +1,18 @@
-//! Read-only account endpoints (verified by probe 2026-11-23 — PLAN-APP2 §1)
+//! Read-only account and order-query endpoints (live-verified 2026-11-23 —
+//! PLAN-APP2 §1 and docs/WEBULL_TH_CAPABILITY_MATRIX.md)
 //!
 //! เฉพาะการ "อ่าน" — ไม่มี order placement (PRODUCT.md non-goal; PLAN-APP2 ข้อ 3)
 //! path ไม่มี prefix `/openapi` เหมือนกลุ่ม stocks
 
 use serde_json::Value;
 
-use super::rest::{FetchError, HttpFetch, extract_list, to_f64};
+use super::rest::{FetchError, HttpFetch, extract_list, opt_f64, opt_str, to_f64};
 
 pub const PATH_ACCOUNTS: &str = "/trading/accounts/list";
 pub const PATH_POSITIONS: &str = "/trading/assets/positions/list";
 pub const PATH_BALANCE: &str = "/trading/assets/balances/get";
+/// GET `/trading/orders/open-orders/list` — read-only.
+pub const PATH_OPEN_ORDERS: &str = "/trading/orders/open-orders/list";
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct AccountInfo {
@@ -22,7 +25,7 @@ pub struct AccountInfo {
 pub fn fetch_accounts<F: HttpFetch>(f: &mut F) -> Result<Vec<AccountInfo>, FetchError> {
     let (status, data) = f.get(PATH_ACCOUNTS, &[])?;
     if status != 200 {
-        return Err(FetchError::NonZero(status, "accounts".into()));
+        return Err(FetchError::NonZero(status, data.to_string()));
     }
     Ok(extract_list(&data)
         .iter()
@@ -81,7 +84,7 @@ pub fn fetch_positions<F: HttpFetch>(
 ) -> Result<Vec<Position>, FetchError> {
     let (status, data) = f.get(PATH_POSITIONS, &[("account_id".into(), account_id.into())])?;
     if status != 200 {
-        return Err(FetchError::NonZero(status, "positions".into()));
+        return Err(FetchError::NonZero(status, data.to_string()));
     }
     Ok(extract_list(&data)
         .iter()
@@ -153,7 +156,7 @@ pub struct CurrencyBalance {
 pub fn fetch_balance<F: HttpFetch>(f: &mut F, account_id: &str) -> Result<Balance, FetchError> {
     let (status, data) = f.get(PATH_BALANCE, &[("account_id".into(), account_id.into())])?;
     if status != 200 {
-        return Err(FetchError::NonZero(status, "balance".into()));
+        return Err(FetchError::NonZero(status, data.to_string()));
     }
     // response อาจเป็น single object หรือ list — รองรับทั้งคู่
     let obj = if data.is_array() {
@@ -190,6 +193,80 @@ pub fn fetch_balance<F: HttpFetch>(f: &mut F, account_id: &str) -> Result<Balanc
             })
             .unwrap_or_default(),
     })
+}
+
+// ---------- open orders (read-only) ----------
+
+/// One leg of an order that is still working at the broker.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct OpenOrder {
+    pub client_order_id: String,
+    /// `NORMAL` for a single order, otherwise the multi-leg strategy name.
+    pub combo_type: Option<String>,
+    pub status: Option<String>,
+    pub side: Option<String>,
+    pub symbol: Option<String>,
+    pub instrument_type: Option<String>,
+    pub order_type: Option<String>,
+    pub time_in_force: Option<String>,
+    pub total_quantity: Option<f64>,
+    pub filled_quantity: Option<f64>,
+    pub limit_price: Option<f64>,
+    pub place_time: Option<String>,
+    pub option_strategy: Option<String>,
+}
+
+fn parse_order_leg(leg: &Value, combo_type: Option<&str>) -> Option<OpenOrder> {
+    Some(OpenOrder {
+        client_order_id: opt_str(leg.get("client_order_id"))?,
+        combo_type: combo_type.map(String::from),
+        status: opt_str(leg.get("status")),
+        side: opt_str(leg.get("side")),
+        symbol: opt_str(leg.get("symbol")),
+        instrument_type: opt_str(leg.get("instrument_type")),
+        order_type: opt_str(leg.get("order_type")),
+        time_in_force: opt_str(leg.get("time_in_force")),
+        total_quantity: opt_f64(leg.get("total_quantity")),
+        filled_quantity: opt_f64(leg.get("filled_quantity")),
+        limit_price: opt_f64(leg.get("limit_price")),
+        place_time: opt_str(leg.get("place_time")),
+        option_strategy: opt_str(leg.get("option_strategy")),
+    })
+}
+
+/// Flatten `{data: [{client_order_id, combo_type, orders: [...]}]}`: every leg
+/// of every (possibly multi-leg) order becomes one row.
+pub fn parse_open_orders(data: &Value) -> Vec<OpenOrder> {
+    extract_list(data)
+        .iter()
+        .flat_map(|entry| {
+            let combo = opt_str(entry.get("combo_type"));
+            entry
+                .get("orders")
+                .and_then(Value::as_array)
+                .map(|legs| {
+                    legs.iter()
+                        .filter_map(|leg| parse_order_leg(leg, combo.as_deref()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// Orders still working at the broker (first page).
+pub fn fetch_open_orders<F: HttpFetch>(
+    f: &mut F,
+    account_id: &str,
+) -> Result<Vec<OpenOrder>, FetchError> {
+    let (status, data) = f.get(
+        PATH_OPEN_ORDERS,
+        &[("account_id".into(), account_id.into())],
+    )?;
+    if status != 200 {
+        return Err(FetchError::NonZero(status, data.to_string()));
+    }
+    Ok(parse_open_orders(&data))
 }
 
 fn opt(v: Option<&Value>) -> Option<f64> {
@@ -256,5 +333,58 @@ mod tests {
             Some("CALL")
         );
         assert_eq!(opt(legs[0].get("option_contract_multiplier")), Some(100.0));
+    }
+
+    #[test]
+    fn open_orders_flatten_every_leg_with_its_combo() {
+        // Shape of the reference page — the live account answered 200 with no rows,
+        // so this fixture follows the documented schema.
+        let data = json!({"data": [
+            {"client_order_id": "ord-1", "combo_type": "NORMAL", "orders": [
+                {"client_order_id": "ord-1", "status": "WORKING", "side": "SELL",
+                 "symbol": "NVDA261218P00175000", "instrument_type": "OPTION",
+                 "order_type": "LIMIT", "time_in_force": "DAY", "total_quantity": "1",
+                 "filled_quantity": "0", "limit_price": "4.15",
+                 "place_time": "2026-11-23T10:00:00.000Z"}
+            ]},
+            {"client_order_id": "ord-2", "combo_type": "VERTICAL", "orders": [
+                {"client_order_id": "ord-2-1", "side": "SELL", "total_quantity": "1",
+                 "limit_price": "2.00"},
+                {"client_order_id": "ord-2-2", "side": "BUY", "total_quantity": "1",
+                 "limit_price": "1.00"},
+                {"side": "BUY"}
+            ]}
+        ], "pagination_key": ""});
+        let orders = parse_open_orders(&data);
+        assert_eq!(orders.len(), 3, "a leg without an id is dropped");
+        assert_eq!(orders[0].combo_type.as_deref(), Some("NORMAL"));
+        assert_eq!(orders[0].limit_price, Some(4.15));
+        assert_eq!(orders[0].instrument_type.as_deref(), Some("OPTION"));
+        assert_eq!(orders[1].combo_type.as_deref(), Some("VERTICAL"));
+        assert_eq!(orders[1].client_order_id, "ord-2-1");
+        assert_eq!(orders[1].symbol, None);
+        assert!(parse_open_orders(&json!({"data": []})).is_empty());
+        assert!(parse_open_orders(&json!([])).is_empty());
+    }
+
+    #[test]
+    fn failed_calls_keep_the_broker_body_for_classification() {
+        struct Rejected;
+        impl HttpFetch for Rejected {
+            fn get(
+                &mut self,
+                _path: &str,
+                _params: &[(String, String)],
+            ) -> Result<(u16, Value), FetchError> {
+                Ok((
+                    401,
+                    json!({"error_code": "INVALID_TOKEN",
+                           "message": "Header x-access-token is missing or invalid."}),
+                ))
+            }
+        }
+        let error = fetch_accounts(&mut Rejected).unwrap_err();
+        assert_eq!(error.kind(), crate::webull::rest::FailureKind::Token);
+        assert_eq!(error.summary(), "HTTP 401 · INVALID_TOKEN");
     }
 }

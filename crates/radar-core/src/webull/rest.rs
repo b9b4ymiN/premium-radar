@@ -149,6 +149,32 @@ pub fn to_f64(v: &Value, default: f64) -> f64 {
     }
 }
 
+// ---------- typed-field readers (the broker sends numbers as strings) ----------
+
+/// Typed number: missing, null, empty, non-numeric or non-finite → `None`.
+/// A typed field is never `0` standing in for "unknown".
+pub fn opt_f64(v: Option<&Value>) -> Option<f64> {
+    let x = to_f64(v.unwrap_or(&Value::Null), f64::NAN);
+    x.is_finite().then_some(x)
+}
+
+/// Typed integer (epoch milliseconds, fiscal year) from a number or numeric string.
+pub fn opt_i64(v: Option<&Value>) -> Option<i64> {
+    match v {
+        Some(Value::Number(n)) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
+        Some(Value::String(s)) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+/// Typed string, trimmed; empty or blank-only text counts as missing.
+pub fn opt_str(v: Option<&Value>) -> Option<String> {
+    v.and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
 /// Next-page cursor from a contracts response (`pagination_key` at either
 /// nesting level); dict-shaped keys terminate paging like Python's check.
 pub fn pagination_key(d: &Value) -> Option<String> {
@@ -297,6 +323,135 @@ impl std::fmt::Display for FetchError {
 }
 impl std::error::Error for FetchError {}
 
+// ---------- failure classification ----------
+
+/// The broker's machine-readable `error_code` from an error body, if present.
+pub fn error_code(body: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    value
+        .get("error_code")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// What kind of failure a call hit — decides whether to retry, what to tell
+/// the user and what they can do about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureKind {
+    /// No HTTP response at all (DNS, TLS, timeout).
+    Network,
+    /// Dropped locally because the caller went stale.
+    Cancelled,
+    /// Quota exhausted; a later identical call can succeed.
+    RateLimited,
+    /// Signature or app key rejected.
+    Auth,
+    /// The access token is missing, invalid or expired.
+    Token,
+    /// Valid credentials, but the app key lacks the subscription.
+    Permission,
+    /// The broker rejected the request itself (bad parameter, business rule).
+    InvalidRequest,
+    /// No such endpoint on this host.
+    NotFound,
+    /// The broker's side failed.
+    Server,
+    Other,
+}
+
+/// The broker's own code outranks the HTTP status: a 403 for a missing
+/// subscription and a 401 for a bad token need different next steps, and the
+/// status alone cannot tell them apart (observed codes: 2026-11-23).
+fn classify(status: u16, body: &str) -> FailureKind {
+    let code = error_code(body).unwrap_or_default().to_ascii_uppercase();
+    let text = body.to_ascii_lowercase();
+    if status == 429 || code.contains("RATE") || code.contains("TOO_MANY") {
+        return FailureKind::RateLimited;
+    }
+    if code.contains("TOKEN") || text.contains("x-access-token") {
+        return FailureKind::Token;
+    }
+    if code.contains("SUBSCRIB")
+        || code.contains("PERMISSION")
+        || code.contains("ENTITLE")
+        || code.contains("FORBIDDEN")
+        || status == 403
+    {
+        return FailureKind::Permission;
+    }
+    if code.contains("UNAUTHORIZED")
+        || code.contains("SIGNATURE")
+        || code.contains("APP_KEY")
+        || code.contains("APPKEY")
+        || code.contains("SECRET")
+        || text.contains("signature")
+        || text.contains("correct environment")
+        || status == 401
+    {
+        return FailureKind::Auth;
+    }
+    match status {
+        404 => FailureKind::NotFound,
+        400..=499 => FailureKind::InvalidRequest,
+        500..=599 => FailureKind::Server,
+        _ => FailureKind::Other,
+    }
+}
+
+impl FetchError {
+    pub fn kind(&self) -> FailureKind {
+        match self {
+            FetchError::Network(_) => FailureKind::Network,
+            FetchError::Cancelled => FailureKind::Cancelled,
+            FetchError::NonZero(status, body) => classify(*status, body),
+        }
+    }
+
+    /// Worth sending again unchanged.
+    pub fn is_retriable(&self) -> bool {
+        matches!(
+            self.kind(),
+            FailureKind::Network | FailureKind::RateLimited | FailureKind::Server
+        )
+    }
+
+    /// One line for logs and reports: the status plus the broker's code when
+    /// it sent one — never the raw body.
+    pub fn summary(&self) -> String {
+        match self {
+            FetchError::Network(e) => format!("network error: {e}"),
+            FetchError::Cancelled => "cancelled".into(),
+            FetchError::NonZero(status, body) => match error_code(body) {
+                Some(code) => format!("HTTP {status} · {code}"),
+                None => format!("HTTP {status}"),
+            },
+        }
+    }
+
+    /// One line in Thai for the UI, ending with [`Self::summary`].
+    pub fn user_message(&self) -> String {
+        let reason = match self.kind() {
+            FailureKind::Network => "เชื่อมต่อ Webull ไม่ได้ (เครือข่าย) — ลองใหม่อีกครั้ง",
+            FailureKind::Cancelled => "ยกเลิกคำขอเพราะข้อมูลล้าสมัย",
+            FailureKind::RateLimited => "เรียก API ถี่เกินไป — รอสักครู่แล้วลองใหม่",
+            FailureKind::Auth => "App Key/Secret ไม่ผ่านการยืนยัน — ตรวจค่าในหน้า Setup",
+            FailureKind::Token => {
+                "Access Token ไม่ถูกต้องหรือหมดอายุ — สร้างใหม่ด้วยปุ่ม \"สร้าง Access Token ใหม่\" ในหน้า Setup"
+            }
+            FailureKind::Permission => {
+                "App key นี้ยังไม่มีสิทธิ์ข้อมูลชุดนี้ (ต้องสมัคร OpenAPI market data เพิ่มที่ Webull)"
+            }
+            FailureKind::InvalidRequest => {
+                "Webull ไม่รับคำขอนี้ (พารามิเตอร์หรือเงื่อนไขไม่ตรง) — ไม่มีข้อมูลชุดนี้ให้แสดง"
+            }
+            FailureKind::NotFound => "ไม่มี endpoint นี้บน Webull host ที่ตั้งไว้",
+            FailureKind::Server => "Webull ตอบกลับผิดพลาดชั่วคราว — ลองใหม่อีกครั้ง",
+            FailureKind::Other => "Webull ตอบกลับด้วยสถานะที่ไม่คาดคิด",
+        };
+        format!("{reason} ({})", self.summary())
+    }
+}
+
 /// Blocking fetcher — mirrors `_do_call`: GET `path?params`, returns
 /// (status, json body). Implementations provide transport (mock / reqwest).
 pub trait HttpFetch {
@@ -365,6 +520,124 @@ mod tests {
         assert_eq!(to_f64(&json!("12.5"), 0.0), 12.5);
         assert_eq!(to_f64(&json!("junk"), 3.0), 3.0);
         assert_eq!(to_f64(&json!(9), 0.0), 9.0);
+    }
+
+    #[test]
+    fn typed_readers_never_invent_values() {
+        let row = json!({
+            "a": "12.50", "b": "", "c": null, "d": "junk", "e": -3,
+            "f": 1795208309936i64, "g": "1795208309936", "h": " 42 ", "i": "  ", "j": 0,
+        });
+        assert_eq!(opt_f64(row.get("a")), Some(12.5));
+        assert_eq!(opt_f64(row.get("e")), Some(-3.0));
+        assert_eq!(opt_f64(row.get("j")), Some(0.0)); // a real zero stays a zero
+        for key in ["b", "c", "d", "missing"] {
+            assert_eq!(opt_f64(row.get(key)), None, "{key}");
+        }
+        assert_eq!(opt_i64(row.get("f")), Some(1_795_208_309_936));
+        assert_eq!(opt_i64(row.get("g")), Some(1_795_208_309_936));
+        assert_eq!(opt_i64(row.get("h")), Some(42));
+        // a decimal string is not silently truncated into an integer
+        assert_eq!(opt_i64(row.get("a")), None);
+        assert_eq!(opt_i64(row.get("d")), None);
+        assert_eq!(opt_str(row.get("a")), Some("12.50".into()));
+        assert_eq!(opt_str(row.get("i")), None);
+        assert_eq!(opt_str(row.get("e")), None);
+    }
+
+    /// Error bodies exactly as the Thailand host returned them (2026-11-22/23):
+    /// the same status can mean a credential problem or a missing subscription.
+    #[test]
+    fn failure_kinds_follow_the_broker_code_before_the_status() {
+        let cases = [
+            (
+                429,
+                r#"{"message":"rate limit exceeded"}"#,
+                FailureKind::RateLimited,
+            ),
+            (
+                401,
+                r#"{"error_code":"INVALID_TOKEN","message":"Header x-access-token is missing or invalid."}"#,
+                FailureKind::Token,
+            ),
+            (
+                401,
+                r#"{"error_code":"UNAUTHORIZED","message":"Invalid credentials ... correct environment"}"#,
+                FailureKind::Auth,
+            ),
+            (
+                401,
+                r#"{"message":"Header x-signature is invalid."}"#,
+                FailureKind::Auth,
+            ),
+            (
+                403,
+                r#"{"error_code":"MARKET_DATA_NOT_SUBSCRIBED","message":"Insufficient permission, please subscribe to FOOTPRINT."}"#,
+                FailureKind::Permission,
+            ),
+            (403, "<html>Forbidden</html>", FailureKind::Permission),
+            (
+                400,
+                r#"{"code":400,"message":"Illegal argument"}"#,
+                FailureKind::InvalidRequest,
+            ),
+            (
+                417,
+                r#"{"error_code":"ILLEGAL_PARAMETER","message":"depth not more than 1"}"#,
+                FailureKind::InvalidRequest,
+            ),
+            (
+                417,
+                r#"{"error_code":"INVALID_SESSION","message":"Mqtt connection not exist for session:probe_x"}"#,
+                FailureKind::InvalidRequest,
+            ),
+            (404, "404: Not Found", FailureKind::NotFound),
+            (
+                502,
+                "<html><body>Bad Gateway</body></html>",
+                FailureKind::Server,
+            ),
+        ];
+        for (status, body, kind) in cases {
+            let e = FetchError::NonZero(status, body.to_string());
+            assert_eq!(e.kind(), kind, "{status} {body}");
+        }
+        assert_eq!(
+            FetchError::Network("timeout".into()).kind(),
+            FailureKind::Network
+        );
+        assert_eq!(FetchError::Cancelled.kind(), FailureKind::Cancelled);
+    }
+
+    #[test]
+    fn summaries_and_messages_never_echo_the_body() {
+        let denied = FetchError::NonZero(
+            403,
+            r#"{"error_code":"MARKET_DATA_NOT_SUBSCRIBED","message":"Insufficient permission, please subscribe to FOOTPRINT. Manage your subscriptions here: https://www.webull.co.th/center/mall"}"#
+                .into(),
+        );
+        assert_eq!(denied.summary(), "HTTP 403 · MARKET_DATA_NOT_SUBSCRIBED");
+        let message = denied.user_message();
+        assert!(
+            message.contains("HTTP 403 · MARKET_DATA_NOT_SUBSCRIBED"),
+            "{message}"
+        );
+        assert!(!message.contains("webull.co.th"), "{message}");
+        assert_eq!(
+            FetchError::NonZero(502, "<html>".into()).summary(),
+            "HTTP 502"
+        );
+        assert_eq!(FetchError::Cancelled.summary(), "cancelled");
+
+        // retry only what a repeat can fix
+        assert!(FetchError::Network("x".into()).is_retriable());
+        assert!(FetchError::NonZero(429, "".into()).is_retriable());
+        assert!(FetchError::NonZero(503, "".into()).is_retriable());
+        assert!(!FetchError::Cancelled.is_retriable());
+        assert!(
+            !FetchError::NonZero(401, r#"{"error_code":"INVALID_TOKEN"}"#.into()).is_retriable()
+        );
+        assert!(!denied.is_retriable());
     }
 
     #[test]

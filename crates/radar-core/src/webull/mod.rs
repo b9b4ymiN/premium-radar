@@ -5,9 +5,12 @@
 pub mod auth;
 pub mod contracts;
 pub mod discovery;
+pub mod fundamentals;
+pub mod options;
 pub mod pb;
 pub mod quotes;
 pub mod rest;
+pub mod screeners;
 pub mod sign;
 pub mod stocks;
 #[cfg(feature = "stream")]
