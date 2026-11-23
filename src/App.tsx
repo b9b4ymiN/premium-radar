@@ -7,8 +7,30 @@ import PriceChart from "./components/PriceChart/PriceChart";
 import PortfolioPage from "./components/PortfolioPage/PortfolioPage";
 import WatchlistPage from "./components/WatchlistPage/WatchlistPage";
 import HomePage from "./components/HomePage/HomePage";
+import MarketPage from "./components/MarketPage/MarketPage";
+import QuoteHeader from "./components/QuoteHeader/QuoteHeader";
+import ContractQuote from "./components/ContractQuote/ContractQuote";
+import { useStockOverview } from "./lib/useStockOverview";
+import { fmt, thaiDate } from "./lib/format";
 import type { EnrichedRow, StockUpdate, ChainStats, EngineSnapshot } from "./types/screener";
 import "./App.css";
+
+/** The pages of the icon rail — the app's single menu. */
+type MainTab = "home" | "market" | "monitor" | "lab" | "portfolio" | "watchlist";
+
+/** A watchlist row: only an available row carries numbers. */
+interface WatchQuote {
+  symbol: string;
+  status?: "available" | "no_data" | "error" | "setup_required";
+  price?: number | null;
+  change_pct?: number | null;
+}
+
+const WATCH_STATUS_TEXT: Record<string, string> = {
+  no_data: "ไม่มีราคา",
+  error: "ดึงไม่สำเร็จ",
+  setup_required: "ตั้งค่าก่อน",
+};
 
 // Tauri bridge (graceful fallback when running without the Tauri shell)
 const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -49,9 +71,47 @@ const MOCK_ROWS: Partial<EnrichedRow>[] = [
 
 const MOCK_STATS: ChainStats = { atm_iv: 0.482, em: 14.9, skew: 3.1 };
 
+// ---------- scanner table sorting (ordering only — no value is recomputed) ----------
 
-const fmt = (n: number, d = 2) =>
-  n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+type SortKey =
+  | "grade" | "side" | "expiry" | "delta" | "assign" | "credit"
+  | "ret" | "ann" | "collateral" | "be" | "oi";
+type Sort = { key: SortKey; dir: 1 | -1 };
+
+const GRADE_RANK: Record<string, number> = { A: 0, B: 1, C: 2 };
+
+/** The sort value of a row per column; `null` always sinks to the end. */
+function sortValue(row: EnrichedRow, key: SortKey): number | string | null {
+  switch (key) {
+    case "grade": return row.grade ? GRADE_RANK[row.grade] ?? 9 : null;
+    case "side": return row.q.option_type;
+    case "expiry": return row.q.expiry;
+    case "delta": return row.delta;
+    case "assign": return row.p_itm;
+    case "credit": return row.credit;
+    case "ret": return row.prem != null && row.q.strike ? row.prem / row.q.strike : null;
+    case "ann": return row.ann;
+    case "collateral": return row.collateral;
+    case "be": return row.be;
+    case "oi": return row.q.oi;
+  }
+}
+
+/** Orders rows by the chosen column; rows without a value stay last. */
+function sortRows(rows: EnrichedRow[], sort: Sort | null): EnrichedRow[] {
+  if (!sort) return rows;
+  const { key, dir } = sort;
+  return [...rows].sort((a, b) => {
+    const left = sortValue(a, key);
+    const right = sortValue(b, key);
+    if (left == null && right == null) return 0;
+    if (left == null) return 1;
+    if (right == null) return -1;
+    if (left < right) return -dir;
+    if (left > right) return dir;
+    return 0;
+  });
+}
 
 // ---------- component helpers ----------
 
@@ -70,6 +130,29 @@ function SourceDot({ src }: { src: string }) {
   );
 }
 
+/** A sortable column header: click cycles ascending → descending → screener order. */
+function SortTh({ label, sortKey, sort, onSort }: {
+  label: string;
+  sortKey: SortKey;
+  sort: Sort | null;
+  onSort: (key: SortKey) => void;
+}) {
+  const active = sort?.key === sortKey ? sort : null;
+  return (
+    <th aria-sort={active ? (active.dir === 1 ? "ascending" : "descending") : "none"}>
+      <button
+        type="button"
+        className="th-sort"
+        onClick={() => onSort(sortKey)}
+        title={active ? "เรียงอยู่ — คลิกเพื่อสลับ/ยกเลิก" : "เรียงตามคอลัมน์นี้"}
+      >
+        {label}
+        <i className={active ? "on" : ""}>{active ? (active.dir === 1 ? "▲" : "▼") : "⇅"}</i>
+      </button>
+    </th>
+  );
+}
+
 // ---------- main app ----------
 
 export default function App() {
@@ -78,13 +161,14 @@ export default function App() {
   const [risk, setRisk] = useState("BALANCED");
   const [budget, setBudget] = useState("18000");
   const [tab, setTab] = useState("all");
-  const [mainTab, setMainTab] = useState<"home" | "monitor" | "lab" | "portfolio" | "watchlist">("home");
-  // watchlist จริงสำหรับ left panel (quotes + ชื่อลิสต์ มาจาก Rust ทีเดียว)
-  const [wlQuotes, setWlQuotes] = useState<Array<{ symbol: string; price: number; change_pct: number | null }>>([]);
+  const [mainTab, setMainTab] = useState<MainTab>("home");
+  // watchlist จริงสำหรับ left panel (quotes + ชื่อลิสต์ มาจาก Rust ทีเดียว · แถวที่ไม่มีราคาบอกเหตุผลแทนตัวเลข)
+  const [wlQuotes, setWlQuotes] = useState<WatchQuote[]>([]);
   const [wlName, setWlName] = useState<string | null>(null);
   const [wlTick, setWlTick] = useState(0); // bump เมื่อ Watchlists page แก้ข้อมล
   const [selected, setSelected] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
+  const [sort, setSort] = useState<Sort | null>(null);
   const [tauriReady, setTauriReady] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const [setupMode, setSetupMode] = useState<"first-run" | "edit">("first-run");
@@ -205,11 +289,11 @@ export default function App() {
     } catch { /* browser preview mode */ }
   }, [tauriReady]);
 
-  // left-panel watchlist: quotes ของลิสต์ active (Rust คำนวณ/จัด)
+  // left-panel watchlist: quotes ของลิสต์ active (Rust คำนวณ/จัด — คำขอเดียวทั้งลิสต์)
   useEffect(() => {
     let live = true;
     const load = () => {
-      tauriInvoke<{ watchlist_name: string | null; quotes: Array<{ symbol: string; price: number; change_pct: number | null }> }>("get_home_overview")
+      tauriInvoke<{ watchlist_name: string | null; quotes: WatchQuote[] }>("get_home_overview")
         .then(o => { if (live) { setWlQuotes(o.quotes ?? []); setWlName(o.watchlist_name); } })
         .catch(() => { if (live) { setWlQuotes([]); } });
     };
@@ -218,10 +302,21 @@ export default function App() {
     return () => { live = false; window.clearInterval(t); };
   }, [wlTick]);
 
+  // company facts (earnings window, dividends, analysts) for the header and the risk notes
+  const overview = useStockOverview(symbol);
+  const earningsWindow = overview.overview?.next_earnings ?? null;
+  const nextExDivDate = overview.overview?.dividends?.upcoming[0]?.ex_div_date ?? null;
+
   // Inside the desktop app we NEVER fall back to mock data — an empty table
   // with the scan status is honest; synthetic rows are browser-preview only.
   const isLive = snap !== null;
-  const rows: EnrichedRow[] = isLive ? snap!.candidates : (hasTauri ? [] : (MOCK_ROWS as EnrichedRow[]));
+  const rows: EnrichedRow[] = useMemo(
+    () => snap?.candidates ?? (hasTauri ? [] : (MOCK_ROWS as EnrichedRow[])),
+    [snap],
+  );
+  const toggleSort = (key: SortKey) => setSort(current =>
+    current?.key !== key ? { key, dir: 1 } : current.dir === 1 ? { key, dir: -1 } : null,
+  );
   const stock: StockUpdate | null = snap?.stock ?? (hasTauri ? null : MOCK_STOCK);
   const stats: ChainStats | null = snap?.stats ?? (hasTauri ? null : MOCK_STATS);
   const selectedRow = rows.find(r => r.q.symbol === selected) ?? rows[0];
@@ -339,7 +434,7 @@ export default function App() {
         {/* ---- Icon Rail ---- */}
         <nav className="iconbar">
           <button className={`iconbtn ${mainTab === "home" ? "on" : ""}`} title="หน้าแรก" onClick={() => setMainTab("home")}>⌂</button>
-          <button className="iconbtn" title="Market — ยังไม่มีหน้านี้ (ใช้หน้าแรก+กราฟ)" disabled>◔</button>
+          <button className={`iconbtn ${mainTab === "market" ? "on" : ""}`} title="Market · ภาพรวมตลาด (หุ้นขึ้นแรง ลงแรง ซื้อขายหนาแน่น และ sector)" onClick={() => setMainTab("market")}>◔</button>
           <button className={`iconbtn ${mainTab === "monitor" ? "on" : ""}`} title="Options Monitor" onClick={() => setMainTab("monitor")}>|||</button>
           <button className={`iconbtn ${mainTab === "lab" ? "on" : ""}`} title="Option Lab" onClick={() => setMainTab("lab")}>⚗</button>
           <button className={`iconbtn ${mainTab === "watchlist" ? "on" : ""}`} title="Watchlists" onClick={() => setMainTab("watchlist")}>≡</button>
@@ -361,22 +456,29 @@ export default function App() {
           </div>
           <div className="watch-header"><span>Symbol</span><span>Last / Chg%</span></div>
           <div className="watchlist">
-            {wlQuotes.map(q => (
-              <button
-                key={q.symbol}
-                className={`watch-row ${q.symbol === symbol ? "on" : ""}`}
-                onClick={() => { setSymbol(q.symbol); setMainTab("monitor"); }}
-              >
-                <b>{q.symbol}</b>
-                <span className="num">
-                  {q.price.toFixed(2)}
-                  {" "}
-                  <small className={(q.change_pct ?? 0) >= 0 ? "pos" : "neg"}>
-                    {q.change_pct != null ? `${q.change_pct >= 0 ? "+" : ""}${q.change_pct.toFixed(1)}%` : "--"}
-                  </small>
-                </span>
-              </button>
-            ))}
+            {wlQuotes.map(q => {
+              const priced = q.status === "available" && q.price != null;
+              const note = priced ? undefined : WATCH_STATUS_TEXT[q.status ?? ""] ?? "ไม่มีราคา";
+              return (
+                <button
+                  key={q.symbol}
+                  className={`watch-row ${q.symbol === symbol ? "on" : ""}`}
+                  title={note ? `${q.symbol} — ${note} (ราคาจาก Webull ของ session ปกติ)` : undefined}
+                  onClick={() => { setSymbol(q.symbol); setMainTab("monitor"); }}
+                >
+                  <b>{q.symbol}</b>
+                  <span className={`num ${priced ? "" : "muted"}`}>
+                    {priced ? q.price!.toFixed(2) : "--"}
+                    {" "}
+                    {priced
+                      ? <small className={(q.change_pct ?? 0) >= 0 ? "pos" : "neg"}>
+                          {q.change_pct != null ? `${q.change_pct >= 0 ? "+" : ""}${q.change_pct.toFixed(1)}%` : "--"}
+                        </small>
+                      : <small>{note}</small>}
+                  </span>
+                </button>
+              );
+            })}
             {wlQuotes.length === 0 && (
               <button className="watch-row" onClick={() => setMainTab("watchlist")}>
                 <b>+ เพิ่มหุ้น</b>
@@ -453,35 +555,8 @@ export default function App() {
         {/* ---- Main ---- */}
         <main className="main">
 
-          {/* Quote Header */}
-          <section className="quoteheader">
-            <div>
-              <div className="symbol">{symbol}</div>
-              <div style={{ fontSize: 10, color: "#8797aa", marginTop: 4 }}>US OPTIONS · Webull TH feed</div>
-            </div>
-            <div>
-              <div className={`bigprice num ${stock ? chgCls : ""}`}>
-                {stock ? fmt(stock.price) : "--"}
-                {stock && <small className={chgCls}>{chg >= 0 ? "+" : ""}{chgPct.toFixed(2)}%</small>}
-              </div>
-              <div className="quotefoot num">
-                {stock
-                  ? <>{chg >= 0 ? "+" : ""}{fmt(chg)} ({chg >= 0 ? "+" : ""}{chgPct.toFixed(2)}%) · USD</>
-                  : "รอราคาจาก feed ..."}
-              </div>
-            </div>
-            <div className="head-quote-stats">
-              {(stock
-                ? [["Open", stock.open], ["High", stock.high], ["Low", stock.low], ["Prev", stock.pre_close]]
-                : [["Open", null], ["High", null], ["Low", null], ["Prev", null]]
-              ).map(([k, v]) => (
-                <div key={k as string} className="qstat">
-                  <div className="qk">{k}</div>
-                  <div className="qv num">{v == null ? "--" : fmt(v as number)}</div>
-                </div>
-              ))}
-            </div>
-          </section>
+          {/* Quote Header — scanner price/change + broker session, extended hours and key facts */}
+          <QuoteHeader symbol={symbol} stock={stock} overview={overview} />
 
           {mainTab === "home" ? (
             <section className="labmodule">
@@ -489,6 +564,10 @@ export default function App() {
                 onOpenRadar={sym => { setSymbol(sym.toUpperCase()); setMainTab("monitor"); }}
                 goTab={t => setMainTab(t)}
               />
+            </section>
+          ) : mainTab === "market" ? (
+            <section className="labmodule">
+              <MarketPage onOpenRadar={sym => { setSymbol(sym.toUpperCase()); setMainTab("monitor"); }} />
             </section>
           ) : mainTab === "watchlist" ? (
             <section className="labmodule">
@@ -557,14 +636,28 @@ export default function App() {
               <table className="screener-table">
                 <thead>
                   <tr>
-                    <th>Grade</th><th>Side</th><th>Expiry</th><th>Strike</th><th>Delta</th>
-                    <th>Assign</th><th>Credit $</th><th>Return</th><th>Ann%</th>
-                    <th>Collateral $</th><th>B/E</th><th>OI</th><th>Source</th>
+                    <SortTh label="Grade" sortKey="grade" sort={sort} onSort={toggleSort} />
+                    <SortTh label="Side" sortKey="side" sort={sort} onSort={toggleSort} />
+                    <SortTh label="Expiry" sortKey="expiry" sort={sort} onSort={toggleSort} />
+                    <th>Strike</th>
+                    <SortTh label="Delta" sortKey="delta" sort={sort} onSort={toggleSort} />
+                    <SortTh label="Assign" sortKey="assign" sort={sort} onSort={toggleSort} />
+                    <SortTh label="Credit $" sortKey="credit" sort={sort} onSort={toggleSort} />
+                    <SortTh label="Return" sortKey="ret" sort={sort} onSort={toggleSort} />
+                    <SortTh label="Ann%" sortKey="ann" sort={sort} onSort={toggleSort} />
+                    <SortTh label="Collateral $" sortKey="collateral" sort={sort} onSort={toggleSort} />
+                    <SortTh label="B/E" sortKey="be" sort={sort} onSort={toggleSort} />
+                    <SortTh label="OI" sortKey="oi" sort={sort} onSort={toggleSort} />
+                    <th>Source</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(() => {
-                    const visible = rows.filter(r => tab === "all" || (tab === "put" ? r.q.option_type === "P" : r.q.option_type === "C"));
+                    // client-side ordering of the screener's own values; nothing is recomputed
+                    const visible = sortRows(
+                      rows.filter(r => tab === "all" || (tab === "put" ? r.q.option_type === "P" : r.q.option_type === "C")),
+                      sort,
+                    );
                     if (visible.length === 0 && hasTauri) {
                       return (
                         <tr className="empty-row">
@@ -668,6 +761,31 @@ export default function App() {
                     ราคา option ≈ ${selectedRow.prem?.toFixed(2)}/หุ้น × 100 หุ้น/contract
                     = ${selectedRow.credit?.toFixed(0)}/contract
                   </div>
+
+                  {/* calendar risks the seller plans around (dates only, no projection) */}
+                  {earningsWindow && selectedRow.q.expiry >= earningsWindow.start_date && (
+                    <div className="risk-flag" role="status">
+                      ⚠ สัญญานี้ครบกำหนดหลังวันประกาศผลงาน
+                      (Webull คาดช่วง {thaiDate(earningsWindow.start_date)}
+                      {earningsWindow.end_date !== earningsWindow.start_date && ` ถึง ${thaiDate(earningsWindow.end_date)}`}
+                      ) — ต้องถือข้ามวันประกาศผล ราคาหุ้นมักเคลื่อนแรงกว่าปกติ
+                    </div>
+                  )}
+                  {nextExDivDate && nextExDivDate <= selectedRow.q.expiry && (
+                    <div className="risk-flag" role="status">
+                      ⚠ ก่อนครบกำหนด หุ้นเข้า Ex-dividend วันที่ {thaiDate(nextExDivDate)}
+                      {selectedRow.q.option_type === "P"
+                        ? " — ราคาหุ้นจะปรับลงประมาณมูลค่าปันผลในวันเข้า ex"
+                        : " — Covered Call ยิ่งใกล้วัน ex ยิ่งมีโอกาสถูกเรียกคืนหุ้นก่อนกำหนด"}
+                    </div>
+                  )}
+
+                  {/* what Webull itself quotes for this contract (display only) */}
+                  <ContractQuote
+                    symbol={selectedRow.q.symbol}
+                    modelIv={selectedRow.iv}
+                    modelDelta={selectedRow.delta}
+                  />
                   {(() => {
                     const r = selectedRow;
                     const k = r.q.strike;

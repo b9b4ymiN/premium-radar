@@ -207,8 +207,8 @@ button:focus-visible, input:focus-visible {
 .t-tab.on { color: #f5f8fc; border-bottom-color: #5f9eff; }
 .tool-pill { border: 1px solid var(--border-strong); background: #222a35; color: #b7c6d8; font-size: 10px; padding: 5px 8px; border-radius: 5px; }
 
-.screener-table { border-collapse: collapse; width: 100%; font-size: 10.8px; white-space: nowrap; font-family: var(--mono); }
-.screener-table th { background: #222a35; position: sticky; top: 0; z-index: 1; height: 29px; color: #b3c0ce; font-size: 9.5px; font-weight: 650; border-bottom: 1px solid var(--border-strong); text-align: right; padding: 0 10px; }
+.screener-table { border-collapse: collapse; width: 100%; font-size: 11.4px; white-space: nowrap; font-family: var(--mono); }
+.screener-table th { background: #222a35; position: sticky; top: 0; z-index: 1; height: 29px; color: #b3c0ce; font-size: 10px; font-weight: 650; border-bottom: 1px solid var(--border-strong); text-align: right; padding: 0 10px; }
 .screener-table td { height: 33px; border-bottom: 1px solid #252e39; color: #d7e0eb; padding: 0 10px; text-align: right; }
 .screener-table th:first-child, .screener-table td:first-child { text-align: center; }
 .screener-table th:nth-child(2), .screener-table td:nth-child(2) { text-align: left; }
@@ -234,7 +234,7 @@ button:focus-visible, input:focus-visible {
 .ds strong { font-family: var(--mono); font-size: 17px; font-weight: 650; }
 .copilot { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 230px; border-top: 1px solid var(--border-strong); background: #131922; }
 .chatlog { padding: 10px 11px; display: flex; flex-direction: column; gap: 10px; overflow: auto; flex: 1; }
-.bubble { font-size: 10.7px; line-height: 1.62; padding: 9px 10px; max-width: 96%; }
+.bubble { font-size: 11.2px; line-height: 1.62; padding: 9px 10px; max-width: 96%; }
 .bubble.user { align-self: flex-end; background: #21466a; color: #f3f8ff; border: 1px solid #3d668c; border-radius: 9px 9px 3px 9px; }
 .bubble.assistant { align-self: flex-start; background: #202936; color: #d4e0ee; border: 1px solid #374759; border-radius: 9px 9px 9px 3px; }
 .chatinput { height: 44px; min-height: 44px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 7px; padding: 7px 9px; }
@@ -553,4 +553,165 @@ button:focus-visible, input:focus-visible {
 .contract-select:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 1px;
+}
+
+/* ============ V2.2 — Broker context (quote header, company, Webull quote) ============
+   Same shell, same columns. These rules only dress the data the verified
+   Webull endpoints add: session/extended hours in the header, the company
+   sheet under it, the broker's own quote in Contract Analysis. */
+
+.quoteheader { padding: 6px 16px; gap: 18px; }
+.qh-id { min-width: 0; }
+.qh-symbol { display: flex; align-items: center; gap: 7px; }
+.qh-symbol .symbol { line-height: 1.1; }
+.qh-sub {
+  font-size: 10px; color: #8797aa; margin-top: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 210px;
+}
+.qh-info {
+  width: 17px; height: 17px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--border-strong); background: var(--surface2); color: var(--secondary);
+  font-size: 10px; font-weight: 700; line-height: 1; display: inline-grid; place-items: center;
+}
+.qh-info:hover, .qh-info.on { border-color: var(--blue); color: #bcd7ff; background: var(--blue-soft); }
+.qh-price { min-width: 0; }
+.qh-price .bigprice { font-size: 27px; line-height: 1.15; }
+.qh-price .bigprice small { font-size: 13px; font-weight: 700; margin-left: 7px; }
+.qh-price .quotefoot { margin-top: 2px; line-height: 1.25; }
+.qh-session {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10.5px; line-height: 1.25; margin-top: 2px; color: var(--secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.qh-session.ext { color: var(--amber); }
+.session-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.session-dot.rth { background: var(--green); }
+.session-dot.ext { background: var(--amber); }
+.session-dot.err { background: var(--red); }
+.head-quote-stats { flex-direction: column; gap: 6px; }
+.qh-row { display: flex; gap: 22px; }
+.qstat .qk { margin-bottom: 2px; font-size: 9.5px; white-space: nowrap; }
+.qstat .qv { font-size: 11.5px; line-height: 1.25; white-space: nowrap; }
+
+.companypanel {
+  display: flex; flex-direction: column; gap: 9px;
+  max-height: 250px; overflow: auto;
+  padding: 9px 16px 11px;
+  border-bottom: 1px solid var(--border); background: #0f141b;
+}
+.cp-head { display: flex; align-items: center; gap: 10px; }
+.cp-head b { font-size: 12.5px; }
+.cp-source { margin-left: auto; font-size: 9.5px; color: var(--dim); white-space: nowrap; }
+.cp-status { font-size: 11px; color: var(--secondary); padding: 4px 0; }
+.cp-status.neg { color: var(--red); }
+.cp-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px 14px; }
+.cp-facts label { display: block; font-size: 9.5px; color: var(--dim); margin-bottom: 1px; }
+.cp-facts span { font-size: 11.5px; color: var(--text); }
+.cp-section .section-title { margin: 4px 0 4px; }
+.cp-line { font-size: 11px; color: var(--secondary); line-height: 1.55; }
+.cp-line b { color: var(--text); font-weight: 650; }
+.cp-dim { color: var(--dim); font-size: 10px; }
+.cp-profile { font-size: 11px; line-height: 1.6; color: var(--secondary); max-height: 66px; overflow: auto; }
+.cp-unavailable { font-size: 10px; color: var(--amber); opacity: 0.85; }
+.rating { margin-top: 5px; }
+.rating-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: #1d2530; }
+.rating-bar i { display: block; }
+.rating-bar i.sb, .dot.sb { background: #24c99a; }
+.rating-bar i.b, .dot.b { background: #7fd9bd; }
+.rating-bar i.h, .dot.h { background: #8a97a8; }
+.rating-bar i.s, .dot.s { background: #f4788c; }
+.rating-legend { display: flex; flex-wrap: wrap; gap: 3px 10px; font-size: 9.5px; color: var(--secondary); margin-top: 5px; }
+.dot { display: inline-block; width: 6px; height: 6px; border-radius: 1px; margin-right: 4px; vertical-align: 1px; }
+
+/* scanner table: sortable headers */
+.th-sort {
+  background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: inherit;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+.th-sort:hover { color: #eef4fc; }
+.th-sort i { font-style: normal; font-size: 8px; line-height: 1; color: var(--dim); opacity: 0.55; }
+.th-sort i.on { color: var(--blue); opacity: 1; }
+
+/* Contract Analysis: the broker's quote and the calendar risks */
+.risk-flag {
+  font-size: 10px; line-height: 1.55; color: var(--amber);
+  background: rgba(240, 189, 112, 0.07); border-left: 2px solid var(--amber);
+  border-radius: 0 4px 4px 0; padding: 6px 9px; margin-bottom: 8px;
+}
+.wq {
+  margin: 2px 0 12px; padding: 9px 10px 10px;
+  border: 1px solid var(--border); border-radius: 5px; background: #0f141b;
+}
+.wq .section-title { margin: 0 0 7px; }
+.wq .section-title span { font-size: 9px; }
+.wq-status { font-size: 10.5px; color: var(--secondary); padding: 4px 0; }
+.wq-status.neg { color: var(--red); }
+.wq-book {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; gap: 8px;
+  padding: 6px 8px; background: #111923; border: 1px solid var(--border-soft); border-radius: 4px;
+}
+.wq-book label { display: block; font-size: 9px; color: var(--dim); margin-bottom: 2px; }
+.wq-book strong { font-size: 14px; font-weight: 700; color: var(--text); }
+.wq-book small { font-size: 9.5px; color: var(--secondary); margin-left: 4px; }
+.wq-book > div:last-child { text-align: right; }
+.wq-mid { text-align: center; padding: 0 10px; border-left: 1px solid var(--border-soft); border-right: 1px solid var(--border-soft); }
+.wq-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 6px; margin-top: 9px; }
+.wq-grid label { display: block; font-size: 9px; color: var(--dim); margin-bottom: 1px; }
+.wq-grid span { font-size: 11px; font-weight: 650; color: var(--text); }
+.wq-grid small { font-weight: 500; }
+.wq-compare { font-size: 10px; color: var(--secondary); margin-top: 8px; }
+.wq-foot { font-size: 9.5px; color: var(--dim); margin-top: 3px; }
+.wq-ticks-toggle {
+  margin-top: 7px; padding: 3px 9px; font-size: 10px; cursor: pointer;
+  background: transparent; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--secondary);
+}
+.wq-ticks-toggle:hover { color: var(--text); border-color: var(--blue); }
+.wq-ticks .section-title { margin-top: 8px; }
+.wq-tape { width: 100%; border-collapse: collapse; font-size: 10px; }
+.wq-tape th {
+  font-size: 9px; font-weight: 600; color: var(--dim); text-align: right; padding: 2px 4px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.wq-tape th:first-child, .wq-tape td:first-child { text-align: left; }
+.wq-tape td { padding: 2px 4px; text-align: right; border-bottom: 1px solid #1a212b; color: var(--text); }
+
+/* tables shared by Home and Market */
+.hp-tablewrap { border: 1px solid var(--divider); background: var(--surface); overflow: auto; }
+.row-link { background: none; border: 0; padding: 0; color: var(--text); font: inherit; font-weight: 700; cursor: pointer; }
+.row-link:hover, .row-link:focus-visible { color: #a9ccff; text-decoration: underline; }
+
+/* Market discovery (the ◔ slot of the icon rail) */
+.marketpage { display: flex; flex-direction: column; gap: 10px; }
+.mk-actions { display: flex; gap: 6px; }
+.mk-tabs {
+  display: flex; gap: 2px; overflow-x: auto;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--surface2);
+}
+.mk-tabs .t-tab { padding: 9px 13px; white-space: nowrap; border-bottom-width: 3px; }
+.mk-table td.mk-name { font-family: var(--sans); }
+.mk-sectors tr > :nth-child(1), .mk-sectors tr > :nth-child(6) { text-align: left; }
+.mk-sectors tr > :nth-child(2), .mk-sectors tr > :nth-child(3) { text-align: right; }
+
+/* Home: the day's movers */
+.hp-movers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.hp-mover { display: flex; flex-direction: column; border: 1px solid var(--divider); background: var(--surface2, #10141a); }
+.hp-mover-head {
+  padding: 7px 10px 5px; font-size: 9.5px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 1px solid var(--divider);
+}
+.hp-mover-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: 0; border-bottom: 1px solid #1a2029;
+  color: var(--text); font-size: 11px; padding: 5px 10px; text-align: left; cursor: pointer;
+}
+.hp-mover-row:last-child { border-bottom: 0; }
+.hp-mover-row:hover { background: var(--hover); }
+.hp-mover-rank { color: var(--muted); width: 12px; text-align: right; }
+.hp-mover-row b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hp-mover-note { font-size: 10.5px; color: var(--muted); padding: 8px 10px; }
+
+@media (max-width: 1420px) {
+  .qh-row { gap: 14px; }
+  .qh-sub { max-width: 150px; }
+  .head-quote-stats { gap: 6px; }
 }

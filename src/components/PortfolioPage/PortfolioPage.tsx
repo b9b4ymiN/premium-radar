@@ -2,6 +2,8 @@
 //! ไม่มี order controls ใดๆ · แสดง broker-reported fields เป็นหลัก
 
 import { useCallback, useEffect, useState } from "react";
+import type { OpenOrder } from "../../types/webull";
+import { thaiDateWithDays } from "../../lib/format";
 
 async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
@@ -12,7 +14,18 @@ interface Leg { symbol: string; quantity: number | null; option_type: string | n
 interface Position { symbol: string; instrument_type: string; currency: string; quantity: number | null; cost_price: number | null; last_price: number | null; unrealized_profit_loss: number | null; option_strategy: string | null; legs: Leg[] }
 interface CurrencyBalance { currency: string; cash_balance: number | null; market_value: number | null; buying_power: number | null; unrealized_profit_loss: number | null }
 interface Balance { total_asset_currency: string; total_cash_balance: number | null; total_market_value: number | null; total_unrealized_profit_loss: number | null; currencies: CurrencyBalance[] }
-interface Portfolio { account_label?: string; account_masked?: string; as_of?: string; note?: string; positions: Position[]; balance: Balance | null }
+/** `*_error` says which section the broker did not answer; the rest still shows. */
+interface Portfolio {
+  account_label?: string;
+  account_masked?: string;
+  as_of?: string;
+  note?: string;
+  positions: Position[];
+  balance: Balance | null;
+  balance_error?: string | null;
+  open_orders?: OpenOrder[];
+  open_orders_error?: string | null;
+}
 
 function amount(value: number | null, currency: string, maximumFractionDigits = 2) {
   if (value == null || !Number.isFinite(value)) return "--";
@@ -88,7 +101,8 @@ export default function PortfolioPage() {
           ))}
         </div>
       )}
-      {!b && !err && p?.as_of && <div className="pf-note">ยอดเงินยังดึงไม่ได้ — แสดงเฉพาะสถานะถือครอง</div>}
+      {!b && p?.balance_error && <div className="pf-note" role="status">ยอดเงินดึงไม่สำเร็จ — {p.balance_error} (แสดงเฉพาะสถานะถือครอง)</div>}
+      {!b && !err && p?.as_of && !p.balance_error && <div className="pf-note">ยอดเงินยังดึงไม่ได้ — แสดงเฉพาะสถานะถือครอง</div>}
 
       <div className="pf-tablewrap">
         <table className="screener-table">
@@ -128,6 +142,48 @@ export default function PortfolioPage() {
           </tbody>
         </table>
       </div>
+
+      <div className="section-title">
+        OPEN ORDERS · คำสั่งที่ยังทำงานอยู่
+        <span>อ่านอย่างเดียว</span>
+      </div>
+      {p?.open_orders_error ? (
+        <div className="pf-note" role="status">ดึงคำสั่งที่ยังทำงานไม่สำเร็จ — {p.open_orders_error}</div>
+      ) : (
+        <div className="pf-tablewrap">
+          <table className="screener-table">
+            <thead>
+              <tr>
+                <th>สัญลักษณ์</th><th>ประเภท</th><th>ขาย/ซื้อ</th><th>คำสั่ง</th>
+                <th className="num">จำนวน (เท่าไหร่แล้ว)</th><th className="num">ราคาจำกัด</th><th>สถานะ</th><th>ส่งเมื่อ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(p?.open_orders ?? []).length ? (
+                p!.open_orders!.map(order => (
+                  <tr key={`${order.combo_type ?? ""}-${order.client_order_id}`}>
+                    <td>
+                      {order.symbol ?? "--"}
+                      {order.combo_type && order.combo_type !== "NORMAL" && <small className="pf-strat"> {order.combo_type}</small>}
+                    </td>
+                    <td>{order.instrument_type === "OPTION" ? "Option" : order.instrument_type === "EQUITY" ? "หุ้น" : order.instrument_type ?? "--"}</td>
+                    <td className={order.side === "SELL" ? "pos" : order.side === "BUY" ? "neg" : ""}>{order.side === "SELL" ? "ขาย" : order.side === "BUY" ? "ซื้อ" : order.side ?? "--"}</td>
+                    <td>{[order.order_type, order.time_in_force].filter(Boolean).join(" · ") || "--"}</td>
+                    <td className="num">{order.total_quantity ?? "--"}{order.filled_quantity != null && order.filled_quantity > 0 && <small> ({order.filled_quantity})</small>}</td>
+                    <td className="num">{order.limit_price ?? "--"}</td>
+                    <td>{order.status ?? "--"}</td>
+                    <td title={order.place_time ?? undefined}>{order.place_time ? thaiDateWithDays(order.place_time.slice(0, 10)) : "--"}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={8} className="pf-empty">{p ? "ไม่มีคำสั่งที่ยังทำงานอยู่" : err ? "—" : "กำลังโหลดคำสั่ง…"}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
       <small className="pc-note">ตัวเลขทั้งหมดรายงานโดยโบรกเกอร์ · แอปนี้ไม่มีการส่งคำสั่งซื้อขาย · กำไรลอย ≠ กำไรที่รับรอง</small>
     </div>
   );
