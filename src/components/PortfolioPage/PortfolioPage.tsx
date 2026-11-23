@@ -12,21 +12,37 @@ interface Leg { symbol: string; quantity: number | null; option_type: string | n
 interface Position { symbol: string; instrument_type: string; currency: string; quantity: number | null; cost_price: number | null; last_price: number | null; unrealized_profit_loss: number | null; option_strategy: string | null; legs: Leg[] }
 interface CurrencyBalance { currency: string; cash_balance: number | null; market_value: number | null; buying_power: number | null; unrealized_profit_loss: number | null }
 interface Balance { total_asset_currency: string; total_cash_balance: number | null; total_market_value: number | null; total_unrealized_profit_loss: number | null; currencies: CurrencyBalance[] }
-interface Portfolio { account_label: string; account_masked: string; as_of: string; positions: Position[]; balance: Balance | null }
+interface Portfolio { account_label?: string; account_masked?: string; as_of?: string; note?: string; positions: Position[]; balance: Balance | null }
 
-const usd = (v: number | null | undefined) =>
-  v == null ? "--" : `${v < 0 ? "−" : ""}$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+function amount(value: number | null, currency: string, maximumFractionDigits = 2) {
+  if (value == null || !Number.isFinite(value)) return "--";
+  const code = currency.trim().toUpperCase();
+  if (/^[A-Z]{3}$/.test(code)) {
+    return value.toLocaleString(undefined, { style: "currency", currency: code, currencyDisplay: "code", maximumFractionDigits });
+  }
+  return `${value.toLocaleString(undefined, { maximumFractionDigits: 4 })} · ไม่ทราบสกุลเงิน`;
+}
+
+function pnlClass(value: number | null) {
+  if (value == null || value === 0) return "";
+  return value > 0 ? "pos" : "neg";
+}
+
+const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export default function PortfolioPage() {
   const [p, setP] = useState<Portfolio | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [asOf, setAsOf] = useState<string | null>(null);
 
   const load = useCallback(() => {
+    if (!hasTauri) {
+      setErr("เปิดแอปเดสก์ท็อปเพื่อดูข้อมูลพอร์ต Webull");
+      return;
+    }
     setLoading(true); setErr(null);
     invokeCmd<Portfolio>("get_portfolio")
-      .then(r => { setP(r); setAsOf(new Date().toLocaleTimeString("th-TH")); })
+      .then(setP)
       .catch(e => setErr(String(e)))
       .finally(() => setLoading(false));
   }, []);
@@ -34,44 +50,45 @@ export default function PortfolioPage() {
   useEffect(() => { load(); }, [load]);
 
   const b = p?.balance;
+  const asOf = p?.as_of ? new Date(p.as_of).toLocaleString("th-TH") : "--";
   return (
     <div className="portfolio">
       <div className="pf-head">
         <div>
           <div className="pf-title">พอร์ตจริง · {p?.account_label ?? "--"} <small>({p?.account_masked ?? "--"})</small></div>
-          <small className="pf-sub">อ่านอย่างเดียวจาก Webull · ข้อมูล ณ {asOf ?? "--"}{p?.as_of ? "" : ""}</small>
+          <small className="pf-sub">อ่านอย่างเดียวจาก Webull · ดึงข้อมูลเมื่อ {asOf}</small>
         </div>
         <button className="pf-refresh" onClick={load} disabled={loading}>{loading ? "กำลังโหลด…" : "↻ รีเฟรช"}</button>
       </div>
 
-      {err && <div className="pf-err">{err}</div>}
+      {err && <div className="pf-err" role="status">{p?.as_of ? "รีเฟรชไม่สำเร็จ · แสดงข้อมูลจากครั้งก่อน · " : ""}{err}</div>}
+      {p?.note && <div className="pf-note">{p.note}</div>}
 
       {b && (
         <div className="pf-summary">
           <div className="lab-cell">
-            <label>เงินสดรวม</label><strong>{usd(b.total_cash_balance)}</strong>
-            <small>{b.total_asset_currency || "USD"}</small>
+            <label>เงินสดรวม</label><strong>{amount(b.total_cash_balance, b.total_asset_currency)}</strong>
           </div>
           <div className="lab-cell">
-            <label>มูลค่าถือครอง</label><strong>{usd(b.total_market_value)}</strong>
+            <label>มูลค่าถือครอง</label><strong>{amount(b.total_market_value, b.total_asset_currency)}</strong>
             <small>ตามราคาล่าสุดของโบรกเกอร์</small>
           </div>
           <div className="lab-cell">
             <label>กำไร/ขาดทุนลอยรวม</label>
-            <strong className={(b.total_unrealized_profit_loss ?? 0) >= 0 ? "pos" : "neg"}>
-              {usd(b.total_unrealized_profit_loss)}
+            <strong className={pnlClass(b.total_unrealized_profit_loss)}>
+              {amount(b.total_unrealized_profit_loss, b.total_asset_currency)}
             </strong>
             <small>ยังไม่ปิดสถานะ — ไม่ใช่กำไรที่รับรองแล้ว</small>
           </div>
           {b.currencies.map(c => (
             <div key={c.currency} className="lab-cell">
-              <label>{c.currency} · Buying Power</label><strong>{usd(c.buying_power)}</strong>
-              <small>ไม่ใช่เงินสดพร้อมทำ CSP ทั้งหมด</small>
+              <label>{c.currency || "ไม่ทราบสกุลเงิน"} · Buying Power</label><strong>{amount(c.buying_power, c.currency)}</strong>
+              <small>เงินสด {amount(c.cash_balance, c.currency)} · โบรกเกอร์รายงานแยกจาก Buying Power</small>
             </div>
           ))}
         </div>
       )}
-      {!b && !err && p && <div className="pf-note">ยอดเงินยังดึงไม่ได้ — แสดงเฉพาะสถานะถือครอง</div>}
+      {!b && !err && p?.as_of && <div className="pf-note">ยอดเงินยังดึงไม่ได้ — แสดงเฉพาะสถานะถือครอง</div>}
 
       <div className="pf-tablewrap">
         <table className="screener-table">
@@ -98,15 +115,15 @@ export default function PortfolioPage() {
                   </td>
                   <td>{pos.instrument_type === "OPTION" ? "Option" : "หุ้น"}</td>
                   <td className="num">{pos.quantity ?? "--"}</td>
-                  <td className="num">{pos.cost_price?.toFixed(2) ?? "--"}</td>
-                  <td className="num">{pos.last_price?.toFixed(2) ?? "--"}</td>
-                  <td className={`num ${(pos.unrealized_profit_loss ?? 0) >= 0 ? "pos" : "neg"}`}>
-                    {usd(pos.unrealized_profit_loss)}
+                  <td className="num">{amount(pos.cost_price, pos.currency, 4)}</td>
+                  <td className="num">{amount(pos.last_price, pos.currency, 4)}</td>
+                  <td className={`num ${pnlClass(pos.unrealized_profit_loss)}`}>
+                    {amount(pos.unrealized_profit_loss, pos.currency)}
                   </td>
                 </tr>
               ))
             ) : (
-              <tr><td colSpan={6} className="pf-empty">ไม่มีสถานะถือครอง (บัญชีไม่มีของเปิดอยู่ตอนนี้ — ไม่ใช่ข้อผิดพลาด)</td></tr>
+              <tr><td colSpan={6} className="pf-empty">{loading ? "กำลังโหลดสถานะถือครอง…" : p?.as_of ? "ไม่มีสถานะถือครอง" : "ไม่มีข้อมูลสถานะถือครอง"}</td></tr>
             )}
           </tbody>
         </table>
