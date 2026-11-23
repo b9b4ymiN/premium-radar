@@ -1,0 +1,110 @@
+[
+ {
+  "name": "snapshot",
+  "host": "api.webull.co.th",
+  "app_key": "TESTKEY123",
+  "path": "/openapi/market-data/stock/snapshot",
+  "query": {
+   "symbols": "NVDA",
+   "category": "US_STOCK"
+  },
+  "ts": "2026-11-22T10:00:00Z",
+  "nonce": "deadbeefdeadbeefdeadbeefdeadbeef",
+  "body": "",
+  "expected_sig": "jpL6GXSLfYaw73CZgDYRdKudrT3+vl5bRi4gCckU2UM="
+ },
+ {
+  "name": "option_snapshot_batch",
+  "host": "api.webull.co.th",
+  "app_key": "TESTKEY123",
+  "path": "/openapi/market-data/option/snapshot",
+  "query": {
+   "symbols": "NVDA261218P00175000,NVDA261218P00170000",
+   "category": "US_OPTION"
+  },
+  "ts": "2026-11-22T10:00:01Z",
+  "nonce": "abcdef01abcdef01abcdef01abcdef01",
+  "body": "",
+  "expected_sig": "S1Qlc7iD+Ip8mKFpLdlN01hcEritnfq9Y2i5BKH5Odw="
+ },
+ {
+  "name": "bars_encoding",
+  "host": "api.webull.co.th",
+  "app_key": "TESTKEY123",
+  "path": "/openapi/market-data/option/bars",
+  "query": {
+   "symbols": "A 270206C00250000",
+   "category": "US_OPTION",
+   "timespan": "D",
+   "count": "3"
+  },
+  "ts": "2026-11-22T09:59:59Z",
+  "nonce": "00112233001122330011223300112233",
+  "body": "",
+  "expected_sig": "MNHyTOmezJq9SIjdEPmo7/CP/hKd9gUHcypP8mykTHI="
+ },
+ {
+  "name": "no_query",
+  "host": "api.webull.co.th",
+  "app_key": "TESTKEY123",
+  "path": "/trading/accounts/list",
+  "query": {},
+  "ts": "2026-11-22T10:02:00Z",
+  "nonce": "11112222333344445555666677778888",
+  "body": "",
+  "expected_sig": "ZUXeYI5Sz2d60SXfPadGW4e7ZeMJjhiBZHQkNY6lFK0="
+ },
+ {
+  "name": "post_body",
+  "host": "api.webull.co.th",
+  "app_key": "TESTKEY123",
+  "path": "/market-data/stocks/bars/list",
+  "query": {},
+  "ts": "2026-11-22T10:05:00Z",
+  "nonce": "ffeeddccffeeddccffeeddccffeeddcc",
+  "body": "{\"symbols\":[\"NVDA\",\"SPY\"],\"category\":\"US_STOCK\",\"timespan\":\"D\",\"count\":30,\"real_time_required\":false}",
+  "expected_sig": "2NH+kiouuNOq3bBQotkvZW/WTnQ7lsrbFDksEj+KCIg="
+ },
+ {
+  "name": "post_body_empty_object",
+  "host": "api.webull.co.th",
+  "app_key": "TESTKEY123",
+  "path": "/auth/tokens/check",
+  "query": {},
+  "ts": "2026-11-22T10:06:00Z",
+  "nonce": "0123456789abcdef0123456789abcdef",
+  "body": "{\"token\":\"abc\"}",
+  "expected_sig": "tXuFwie055yk3PP5b2sWnw0pS9pj9B4pGs3Gk5vxkhk="
+ },
+ {
+  "name": "uat_host",
+  "host": "th-api.uat.webullbroker.com",
+  "app_key": "TESTKEY123",
+  "path": "/market-data/stocks/snapshots/list",
+  "query": {
+   "symbols": "AAPL,MSFT",
+   "category": "US_STOCK",
+   "extend_hour_required": "false",
+   "overnight_required": "false"
+  },
+  "ts": "2026-11-22T10:07:00Z",
+  "nonce": "9876543210abcdef9876543210abcdef",
+  "body": "",
+  "expected_sig": "MjN1lluAgI4CP51zDnaNg3A38F4yMnRym7yv1ou06Fk="
+ },
+ {
+  "name": "unicode_query",
+  "host": "api.webull.co.th",
+  "app_key": "TESTKEY123",
+  "path": "/market-data/screeners/market-sectors/get",
+  "query": {
+   "sector_id": "6391",
+   "category": "US_STOCK",
+   "q": "a=b&c d/é"
+  },
+  "ts": "2026-11-22T10:08:00Z",
+  "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "body": "",
+  "expected_sig": "8fQcT8F0oZ5SESNepBJzsSR2dvqbn36/qoU4mt5D08o="
+ }
+]

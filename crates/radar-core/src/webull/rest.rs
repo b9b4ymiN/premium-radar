@@ -277,6 +277,9 @@ impl SnapCache {
 pub enum FetchError {
     Network(String),
     NonZero(u16, String),
+    /// Dropped before it was sent because the caller went stale (symbol
+    /// changed, scan stopped) — an obsolete request, not an API failure.
+    Cancelled,
 }
 
 impl std::fmt::Display for FetchError {
@@ -288,6 +291,7 @@ impl std::fmt::Display for FetchError {
                 let clipped: String = body.chars().take(300).collect();
                 write!(f, "Webull {status}: {clipped}")
             }
+            FetchError::Cancelled => write!(f, "request cancelled (superseded)"),
         }
     }
 }

@@ -1,5 +1,6 @@
 //! Wiremock integration tests for the real Webull HTTP transport
-//! (throttle + cache + retry). Run with `--features client`.
+//! (signing on the wire, shared pacing + cache, cancel, retry). Run with
+//! `--features client`.
 //!
 //! The blocking reqwest client panics inside a tokio runtime, so each test
 //! spawns a plain OS thread for the client call while wiremock's tokio
@@ -7,11 +8,15 @@
 
 #![cfg(feature = "client")]
 
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
 use serde_json::json;
 use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
-use radar_core::webull::rest::{Credentials, HttpFetch};
+use radar_core::webull::rest::{Credentials, FetchError, HttpFetch};
+use radar_core::webull::sign::SignatureScheme;
 use radar_core::webull::transport::WebullClient;
 
 fn test_creds() -> Credentials {
@@ -23,17 +28,28 @@ fn test_creds() -> Credentials {
 }
 
 /// Run the blocking client on a plain OS thread (no tokio runtime conflict).
-fn call_on_thread<F, T>(uri: String, f: F) -> T
+/// `scheme` is `None` for the default (the one the app ships with).
+fn call_on_thread<F, T>(uri: String, scheme: Option<SignatureScheme>, f: F) -> T
 where
     F: FnOnce(&mut WebullClient) -> T + Send + 'static,
     T: Send + 'static,
 {
     std::thread::spawn(move || {
         let mut c = WebullClient::new(test_creds()).with_base_url(uri);
+        if let Some(scheme) = scheme {
+            c = c.with_signature_scheme(scheme);
+        }
         f(&mut c)
     })
     .join()
     .expect("client thread")
+}
+
+fn header<'a>(req: &'a Request, name: &str) -> &'a str {
+    req.headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
 }
 
 #[tokio::test]
@@ -45,39 +61,9 @@ async fn basic_get_returns_json() {
         .mount(&server)
         .await;
     let uri = server.uri();
-    let (status, body) = call_on_thread(uri, |c| c.get("/test/path", &[]).unwrap());
+    let (status, body) = call_on_thread(uri, None, |c| c.get("/test/path", &[]).unwrap());
     assert_eq!(status, 200);
     assert_eq!(body["data"].as_array().unwrap().len(), 3);
-}
-
-#[tokio::test]
-async fn independent_clients_share_get_and_post_pacing() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/first"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path("/second"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let uri = server.uri();
-    let elapsed = call_on_thread(uri.clone(), move |first| {
-        let mut second = WebullClient::new(test_creds()).with_base_url(uri);
-        let start = std::time::Instant::now();
-        assert_eq!(first.get("/first", &[]).unwrap().0, 200);
-        assert_eq!(second.post_json("/second", "{}").unwrap().0, 200);
-        start.elapsed()
-    });
-    let interval = std::time::Duration::from_secs_f64(radar_core::webull::sign::MIN_INTERVAL_SEC);
-    assert!(
-        elapsed >= interval,
-        "two clients sent requests in {elapsed:?}"
-    );
 }
 
 #[tokio::test]
@@ -97,7 +83,7 @@ async fn rate_limit_429_retries_then_succeeds() {
         .mount(&server)
         .await;
     let uri = server.uri();
-    let (status, body) = call_on_thread(uri, |c| c.get("/retry", &[]).unwrap());
+    let (status, body) = call_on_thread(uri, None, |c| c.get("/retry", &[]).unwrap());
     assert_eq!(status, 200);
     assert_eq!(body["ok"], json!(true));
 }
@@ -112,18 +98,36 @@ async fn cache_hit_does_not_refetch() {
         .mount_as_scoped(&server)
         .await;
     let uri = server.uri();
-    let result = std::thread::spawn(move || {
-        let mut c = WebullClient::new(test_creds()).with_base_url(uri);
+    let result = call_on_thread(uri, None, |c| {
         let r1 = c.get("/cached", &[("q".into(), "1".into())]).unwrap();
         let r2 = c.get("/cached", &[("q".into(), "1".into())]).unwrap();
         (r1, r2)
-    })
-    .join()
-    .unwrap();
+    });
     let ((s1, b1), (s2, b2)) = result;
     assert_eq!(s1, 200);
     assert_eq!(s2, 200);
     assert_eq!(b1, b2);
+    drop(mock);
+}
+
+/// The cache belongs to the origin, not to one client: Home, the scanner and
+/// Portfolio each build their own client, and an identical call inside the TTL
+/// must not be sent twice.
+#[tokio::test]
+async fn clients_on_one_origin_share_the_cache() {
+    let server = MockServer::start().await;
+    let mock = Mock::given(method("GET"))
+        .and(path("/shared"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"v": 1})))
+        .expect(1)
+        .mount_as_scoped(&server)
+        .await;
+    let uri = server.uri();
+    call_on_thread(uri.clone(), None, move |a| {
+        let mut b = WebullClient::new(test_creds()).with_base_url(uri);
+        a.get("/shared", &[]).unwrap();
+        b.get("/shared", &[]).unwrap();
+    });
     drop(mock);
 }
 
@@ -137,13 +141,10 @@ async fn different_params_miss_cache() {
         .mount_as_scoped(&server)
         .await;
     let uri = server.uri();
-    std::thread::spawn(move || {
-        let mut c = WebullClient::new(test_creds()).with_base_url(uri);
+    call_on_thread(uri, None, |c| {
         let _ = c.get("/multi", &[("a".into(), "1".into())]).unwrap();
         let _ = c.get("/multi", &[("a".into(), "2".into())]).unwrap();
-    })
-    .join()
-    .unwrap();
+    });
     drop(mock);
 }
 
@@ -157,131 +158,181 @@ async fn non_200_not_cached() {
         .mount_as_scoped(&server)
         .await;
     let uri = server.uri();
-    let (s1, s2) = std::thread::spawn(move || {
-        let mut c = WebullClient::new(test_creds()).with_base_url(uri);
+    let (s1, s2) = call_on_thread(uri, None, |c| {
         let (a, _) = c.get("/err", &[]).unwrap();
         let (b, _) = c.get("/err", &[]).unwrap();
         (a, b)
-    })
-    .join()
-    .unwrap();
+    });
     assert_eq!(s1, 500);
     assert_eq!(s2, 500);
     drop(mock);
 }
 
 #[tokio::test]
-async fn signing_headers_present_in_request() {
+async fn independent_clients_share_get_and_post_pacing() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/signed"))
-        .and(wiremock::matchers::header_exists("x-app-key"))
-        .and(wiremock::matchers::header_exists("x-signature"))
-        .and(wiremock::matchers::header_exists("x-timestamp"))
-        .and(wiremock::matchers::header_exists("x-signature-nonce"))
-        .and(wiremock::matchers::header_exists("x-signature-algorithm"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"signed": true})))
+        .and(path("/first"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/second"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(1)
         .mount(&server)
         .await;
     let uri = server.uri();
-    let (status, body) = std::thread::spawn(move || {
-        let mut c = WebullClient::new(test_creds()).with_base_url(uri);
-        c.get("/signed", &[("s".into(), "v".into())]).unwrap()
+    let elapsed = call_on_thread(uri.clone(), None, move |first| {
+        let mut second = WebullClient::new(test_creds()).with_base_url(uri);
+        let start = std::time::Instant::now();
+        assert_eq!(first.get("/first", &[]).unwrap().0, 200);
+        assert_eq!(second.post_json("/second", "{}").unwrap().0, 200);
+        start.elapsed()
+    });
+    let interval = std::time::Duration::from_secs_f64(radar_core::webull::sign::MIN_INTERVAL_SEC);
+    assert!(
+        elapsed >= interval,
+        "two clients sent requests in {elapsed:?}"
+    );
+}
+
+/// Every signing header, for both schemes on GET and POST: the app secret never
+/// travels, the signature recomputes from the request's own timestamp/nonce,
+/// and the algorithm/version pair is the scheme's.
+#[tokio::test]
+async fn wire_headers_match_the_client_scheme() {
+    for (scheme, algorithm, version) in [
+        (SignatureScheme::V3, "HMAC-SHA256", "v3"),
+        (SignatureScheme::V2, "HMAC-SHA1", "v2"),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/market/snapshot"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/auth/tokens/check"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "NORMAL"})))
+            .mount(&server)
+            .await;
+        let uri = server.uri();
+        let host = radar_core::webull::transport::host_from_base_url(&server.uri());
+        let params = vec![
+            ("symbols".to_string(), "NVDA,SPY".to_string()),
+            ("category".to_string(), "US_STOCK".to_string()),
+        ];
+        let body = r#"{"token":"abc"}"#;
+        let get_params = params.clone();
+        let send_body = body.to_string();
+        let statuses = call_on_thread(uri, Some(scheme), move |c| {
+            let get = c.get("/market/snapshot", &get_params).unwrap().0;
+            let post = c.post_json("/auth/tokens/check", &send_body).unwrap().0;
+            (get, post)
+        });
+        assert_eq!(statuses, (200, 200), "{scheme:?}");
+
+        let reqs = server.received_requests().await.expect("captured requests");
+        assert_eq!(reqs.len(), 2, "{scheme:?}");
+        for req in &reqs {
+            assert!(
+                req.headers.get("x-app-secret").is_none(),
+                "raw app secret must never travel ({scheme:?} {})",
+                req.method
+            );
+            assert_eq!(header(req, "x-app-key"), "TESTKEY");
+            assert_eq!(header(req, "x-signature-algorithm"), algorithm);
+            assert_eq!(header(req, "x-signature-version"), "1.0");
+            assert_eq!(header(req, "x-version"), version);
+            assert!(!header(req, "x-timestamp").is_empty());
+            assert!(!header(req, "x-signature-nonce").is_empty());
+        }
+        let [get, post] = [&reqs[0], &reqs[1]];
+        assert_eq!(get.method.as_str(), "GET");
+        assert_eq!(post.method.as_str(), "POST");
+        assert_eq!(header(post, "content-type"), "application/json");
+        let signed = |req: &Request, signed_path: &str, query: &[(String, String)], body: &str| {
+            scheme.sign(
+                signed_path,
+                &host,
+                query,
+                header(req, "x-timestamp"),
+                header(req, "x-signature-nonce"),
+                "TESTKEY",
+                "TESTSECRET",
+                body,
+            )
+        };
+        assert_eq!(
+            header(get, "x-signature"),
+            signed(get, "/market/snapshot", &params, "")
+        );
+        assert_eq!(
+            header(post, "x-signature"),
+            signed(post, "/auth/tokens/check", &[], body)
+        );
+    }
+}
+
+/// The default client signs with the official V3 scheme.
+#[tokio::test]
+async fn default_scheme_is_v3() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/probe"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .mount(&server)
+        .await;
+    let uri = server.uri();
+    call_on_thread(uri, None, |c| {
+        c.get("/probe", &[]).unwrap();
+    });
+    let reqs = server.received_requests().await.expect("captured requests");
+    let req = reqs.last().expect("one request captured");
+    assert_eq!(header(req, "x-signature-algorithm"), "HMAC-SHA256");
+    assert_eq!(header(req, "x-version"), "v3");
+}
+
+/// A raised cancel flag drops the request before anything reaches the wire.
+#[tokio::test]
+async fn cancelled_request_never_reaches_the_wire() {
+    let server = MockServer::start().await;
+    let uri = server.uri();
+    let result = std::thread::spawn(move || {
+        let flag = Arc::new(AtomicBool::new(true));
+        let mut c = WebullClient::new(test_creds())
+            .with_base_url(uri)
+            .with_cancel_flag(flag);
+        c.get("/never", &[]).map(|_| ())
     })
     .join()
     .unwrap();
-    assert_eq!(status, 200);
-    assert_eq!(body["signed"], json!(true));
+    assert!(matches!(result, Err(FetchError::Cancelled)));
+    assert!(server.received_requests().await.unwrap().is_empty());
 }
 
-// ---------- raw app-secret must never travel, signature must stay valid ----------
-
-fn header<'a>(req: &'a wiremock::Request, name: &str) -> &'a str {
-    req.headers
-        .get(name)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default()
-}
-
-/// GET: no `x-app-secret` header on the wire, and the `x-signature` still
-/// recomputes with the secret as the HMAC key — the secret authenticates
-/// without being disclosed.
+/// A non-JSON error body (gateway HTML) is kept as clipped text instead of
+/// being swallowed into `null`.
 #[tokio::test]
-async fn get_omits_raw_secret_but_keeps_signature() {
+async fn non_json_body_is_kept_as_text() {
     let server = MockServer::start().await;
-    let params = vec![
-        ("symbols".to_string(), "NVDA/US".to_string()),
-        ("category".to_string(), "US_STOCK".to_string()),
-    ];
     Mock::given(method("GET"))
-        .and(path("/market/snapshot"))
-        .and(wiremock::matchers::header_exists("x-signature"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .and(path("/gateway"))
+        .respond_with(
+            ResponseTemplate::new(502).set_body_string("<html><body>Bad Gateway</body></html>"),
+        )
+        .up_to_n_times(3)
         .mount(&server)
         .await;
     let uri = server.uri();
-    let send_params = params.clone();
-    let (status, _body) = call_on_thread(uri, move |c| {
-        c.get("/market/snapshot", &send_params).unwrap()
-    });
-    assert_eq!(status, 200);
-
-    let reqs = server.received_requests().await.expect("captured requests");
-    let req = reqs.last().expect("one request captured");
-    assert!(
-        req.headers.get("x-app-secret").is_none(),
-        "raw app secret must not travel in GET"
-    );
-    let expected = radar_core::webull::sign::sign(
-        "/market/snapshot",
-        &radar_core::webull::transport::host_from_base_url(&server.uri()),
-        &params,
-        header(req, "x-timestamp"),
-        header(req, "x-signature-nonce"),
-        "TESTKEY",
-        "TESTSECRET",
-        "",
-    );
-    assert_eq!(header(req, "x-signature"), expected);
-}
-
-/// POST (token endpoint shape): no `x-app-secret` header on the wire, and
-/// the signature still covers the MD5 body hash with the secret as key.
-#[tokio::test]
-async fn post_omits_raw_secret_but_keeps_signature() {
-    let server = MockServer::start().await;
-    let body = r#"{"account":"acct","passwd":"pwd"}"#;
-    Mock::given(method("POST"))
-        .and(path("/auth/token"))
-        .and(wiremock::matchers::header_exists("x-signature"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"accessToken": "t"})))
-        .mount(&server)
-        .await;
-    let uri = server.uri();
-    let body_owned = body.to_string();
-    let (status, resp) = call_on_thread(uri, move |c| {
-        c.post_json("/auth/token", &body_owned).unwrap()
-    });
-    assert_eq!(status, 200);
-    assert_eq!(resp["accessToken"], json!("t"));
-
-    let reqs = server.received_requests().await.expect("captured requests");
-    let req = reqs.last().expect("one request captured");
-    assert!(
-        req.headers.get("x-app-secret").is_none(),
-        "raw app secret must not travel in POST"
-    );
-    let expected = radar_core::webull::sign::sign(
-        "/auth/token",
-        &radar_core::webull::transport::host_from_base_url(&server.uri()),
-        &[],
-        header(req, "x-timestamp"),
-        header(req, "x-signature-nonce"),
-        "TESTKEY",
-        "TESTSECRET",
+    let (status, body) = call_on_thread(uri, None, |c| c.get("/gateway", &[]).unwrap());
+    assert_eq!(status, 502);
+    assert_eq!(
         body,
+        json!("<html><body>Bad Gateway</body></html>".to_string())
     );
-    assert_eq!(header(req, "x-signature"), expected);
 }
 
 // ---------- live smoke (ignored by default; run with -- --ignored) ----------

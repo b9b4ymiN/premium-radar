@@ -23,7 +23,7 @@ pub type Progress<'a> = Option<&'a mut dyn FnMut(String)>;
 pub type Stale<'a> = Option<&'a dyn Fn() -> bool>;
 
 fn stale_err() -> FetchError {
-    FetchError::Network("stale".into())
+    FetchError::Cancelled
 }
 
 fn value_id(v: &Value) -> String {
