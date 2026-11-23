@@ -341,6 +341,7 @@ export default function App() {
           <button className={`iconbtn ${mainTab === "home" ? "on" : ""}`} title="หน้าแรก" onClick={() => setMainTab("home")}>⌂</button>
           <button className="iconbtn" title="Market — ยังไม่มีหน้านี้ (ใช้หน้าแรก+กราฟ)" disabled>◔</button>
           <button className={`iconbtn ${mainTab === "monitor" ? "on" : ""}`} title="Options Monitor" onClick={() => setMainTab("monitor")}>|||</button>
+          <button className={`iconbtn ${mainTab === "lab" ? "on" : ""}`} title="Option Lab" onClick={() => setMainTab("lab")}>⚗</button>
           <button className={`iconbtn ${mainTab === "watchlist" ? "on" : ""}`} title="Watchlists" onClick={() => setMainTab("watchlist")}>≡</button>
           <button className={`iconbtn ${mainTab === "portfolio" ? "on" : ""}`} title="Portfolio · พอร์ตจริง (อ่านอย่างเดียว)" onClick={() => setMainTab("portfolio")}>◫</button>
           <button
@@ -451,10 +452,6 @@ export default function App() {
 
         {/* ---- Main ---- */}
         <main className="main">
-          <div className="main-tabs">
-            <button className={`mtab ${mainTab === "monitor" ? "on" : ""}`} onClick={() => setMainTab("monitor")}>Options Monitor</button>
-            <button className={`mtab ${mainTab === "lab" ? "on" : ""}`} onClick={() => setMainTab("lab")}>Strategy Lab</button>
-          </div>
 
           {/* Quote Header */}
           <section className="quoteheader">
