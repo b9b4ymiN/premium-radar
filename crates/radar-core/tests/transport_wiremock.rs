@@ -51,6 +51,36 @@ async fn basic_get_returns_json() {
 }
 
 #[tokio::test]
+async fn independent_clients_share_get_and_post_pacing() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/first"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/second"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let uri = server.uri();
+    let elapsed = call_on_thread(uri.clone(), move |first| {
+        let mut second = WebullClient::new(test_creds()).with_base_url(uri);
+        let start = std::time::Instant::now();
+        assert_eq!(first.get("/first", &[]).unwrap().0, 200);
+        assert_eq!(second.post_json("/second", "{}").unwrap().0, 200);
+        start.elapsed()
+    });
+    let interval = std::time::Duration::from_secs_f64(radar_core::webull::sign::MIN_INTERVAL_SEC);
+    assert!(
+        elapsed >= interval,
+        "two clients sent requests in {elapsed:?}"
+    );
+}
+
+#[tokio::test]
 async fn rate_limit_429_retries_then_succeeds() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

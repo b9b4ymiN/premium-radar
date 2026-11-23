@@ -2,6 +2,8 @@
 //! cache exactly like `_do_call` / `webull_get` in the Python reference.
 //! Enabled behind the `client` feature (reqwest + uuid).
 
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -12,13 +14,27 @@ use super::sign::{HOST, X_VERSION, sign};
 const RETRIES: u32 = 2;
 const RETRY_DELAY_SEC: f64 = 1.2;
 const BASE_URL: &str = "https://api.webull.co.th";
+type RequestGate = Arc<Mutex<Throttle>>;
+static REQUEST_GATES: LazyLock<Mutex<HashMap<String, RequestGate>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn request_gate(base_url: &str) -> RequestGate {
+    let origin = reqwest::Url::parse(base_url)
+        .map(|url| url.origin().ascii_serialization())
+        .unwrap_or_else(|_| base_url.trim_end_matches('/').to_owned());
+    let mut gates = REQUEST_GATES.lock().unwrap_or_else(|e| e.into_inner());
+    gates
+        .entry(origin)
+        .or_insert_with(|| Arc::new(Mutex::new(Throttle::from_constants())))
+        .clone()
+}
 
 /// Full Webull REST client: shared throttle, TTL cache, HMAC-SHA1 signing,
 /// and rate-limited retry (2 retries × 1.2 s — mirrors `_do_call`).
 pub struct WebullClient {
     creds: Credentials,
     http: reqwest::blocking::Client,
-    throttle: Throttle,
+    throttle: RequestGate,
     cache: SnapCache,
     base_url: String,
 }
@@ -32,7 +48,7 @@ impl WebullClient {
         Self {
             creds,
             http,
-            throttle: Throttle::from_constants(),
+            throttle: request_gate(BASE_URL),
             cache: SnapCache::from_constants(),
             base_url: BASE_URL.to_string(),
         }
@@ -41,6 +57,7 @@ impl WebullClient {
     /// Override the base URL (wiremock tests).
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
         self.base_url = url.into();
+        self.throttle = request_gate(&self.base_url);
         self
     }
 
@@ -51,7 +68,8 @@ impl WebullClient {
         params: &[(String, String)],
     ) -> Result<(u16, Value), FetchError> {
         // throttle: wait until at least MIN_INTERVAL_SEC since the last call
-        let wait = self.throttle.wait_duration(self.throttle.last());
+        let mut throttle = self.throttle.lock().unwrap_or_else(|e| e.into_inner());
+        let wait = throttle.wait_duration(throttle.last());
         if !wait.is_zero() {
             std::thread::sleep(wait);
         }
@@ -90,15 +108,10 @@ impl WebullClient {
             req = req.query(params);
         }
 
-        let resp = match req.send() {
-            Ok(r) => r,
-            Err(e) => {
-                // mark AFTER send (Python `finally` block) — both success and error
-                self.throttle.mark();
-                return Err(FetchError::Network(e.to_string()));
-            }
-        };
-        self.throttle.mark(); // Python: _last_call[0] = time.time() in `finally`
+        let resp = req.send();
+        throttle.mark();
+        drop(throttle);
+        let resp = resp.map_err(|e| FetchError::Network(e.to_string()))?;
         let status = resp.status().as_u16();
         let body: Value = resp.json().unwrap_or(Value::Null);
         Ok((status, body))
@@ -151,7 +164,8 @@ impl WebullClient {
     /// canonical string per the broker spec). Used by the auth token
     /// endpoints — never cached, no retry.
     pub fn post_json(&mut self, path: &str, body: &str) -> Result<(u16, Value), FetchError> {
-        let wait = self.throttle.wait_duration(self.throttle.last());
+        let mut throttle = self.throttle.lock().unwrap_or_else(|e| e.into_inner());
+        let wait = throttle.wait_duration(throttle.last());
         if !wait.is_zero() {
             std::thread::sleep(wait);
         }
@@ -184,14 +198,10 @@ impl WebullClient {
         if let Some(tok) = &self.creds.access_token {
             req = req.header("x-access-token", tok);
         }
-        let resp = match req.body(body.to_string()).send() {
-            Ok(r) => r,
-            Err(e) => {
-                self.throttle.mark();
-                return Err(FetchError::Network(e.to_string()));
-            }
-        };
-        self.throttle.mark();
+        let resp = req.body(body.to_string()).send();
+        throttle.mark();
+        drop(throttle);
+        let resp = resp.map_err(|e| FetchError::Network(e.to_string()))?;
         let status = resp.status().as_u16();
         let body: Value = resp.json().unwrap_or(Value::Null);
         Ok((status, body))
