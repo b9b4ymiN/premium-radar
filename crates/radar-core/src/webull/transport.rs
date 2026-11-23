@@ -74,8 +74,9 @@ impl WebullClient {
             .http
             .get(&url)
             .header("Accept", "application/json")
+            // no raw x-app-secret header: the official API forbids it — the
+            // secret participates only as the HMAC-SHA1 signing key below
             .header("x-app-key", &self.creds.app_key)
-            .header("x-app-secret", &self.creds.app_secret)
             .header("x-timestamp", &ts)
             .header("x-signature-version", "1.0")
             .header("x-signature-algorithm", "HMAC-SHA1")
@@ -172,8 +173,8 @@ impl WebullClient {
             .post(&url)
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
+            // no raw x-app-secret header (see send_once) — signature only
             .header("x-app-key", &self.creds.app_key)
-            .header("x-app-secret", &self.creds.app_secret)
             .header("x-timestamp", &ts)
             .header("x-signature-version", "1.0")
             .header("x-signature-algorithm", "HMAC-SHA1")

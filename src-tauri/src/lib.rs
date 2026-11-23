@@ -88,12 +88,15 @@ fn start_scan(
         .spawn(app, state.engine.clone(), creds, base_url, symbol.clone());
 
     // remember the last symbol for the next session (persist goes through
-    // the keyring path so the scrubbed file never regains plaintext secrets)
+    // the keyring path so the scrubbed file never regains plaintext secrets;
+    // fail-closed — on keyring error this preference is simply not saved)
     {
         let mut s = state.settings.lock().unwrap();
         s.last_symbol = symbol;
         let dir = state.app_data_dir.clone();
-        let _ = s.save_with_keyring(&dir);
+        if let Err(e) = s.save_with_keyring(&dir) {
+            eprintln!("[settings] keyring save ไม่สำเร็จ ข้ามการบันทึก preference ครั้งนี้: {e}");
+        }
     }
     Ok(())
 }
@@ -133,8 +136,11 @@ fn save_settings(
 }
 
 /// Save API credentials from the setup screen — secrets go to the OS keyring
-/// (Windows Credential Manager / macOS Keychain) with settings.json as the
-/// fallback when no keyring backend exists.
+/// (Windows Credential Manager / macOS Keychain). The candidate is staged
+/// under the settings mutex and swapped into the shared state only after the
+/// save fully succeeds: a keyring failure aborts with an error, leaving both
+/// the running credentials and the previous settings file untouched (nothing
+/// is ever written to disk as plaintext).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 fn save_credentials(
@@ -151,13 +157,16 @@ fn save_credentials(
     let dir = state.app_data_dir.clone();
     let mut s = state.settings.lock().unwrap();
 
-    s.webull_app_key = webull_key.trim().to_string();
-    s.webull_app_secret = webull_secret.trim().to_string();
-    s.webull_access_token = webull_access_token.unwrap_or_default().trim().to_string();
+    // stage on a copy — the shared state must keep the previously saved
+    // (and still working) credentials until this save is fully committed
+    let mut candidate = s.clone();
+    candidate.webull_app_key = webull_key.trim().to_string();
+    candidate.webull_app_secret = webull_secret.trim().to_string();
+    candidate.webull_access_token = webull_access_token.unwrap_or_default().trim().to_string();
     if let Some(url) = webull_base_url
         && !url.trim().is_empty()
     {
-        s.webull_base_url = url.trim().to_string();
+        candidate.webull_base_url = url.trim().to_string();
     }
 
     if let (Some(label), Some(base_url), Some(model), Some(key)) =
@@ -166,12 +175,13 @@ fn save_credentials(
         && !model.is_empty()
         && !key.is_empty()
     {
-        s.llm = Some(radar_core::copilot::LlmConfig::new(
+        candidate.llm = Some(radar_core::copilot::LlmConfig::new(
             label, base_url, model, key,
         ));
     }
 
-    s.save_with_keyring(&dir)?;
+    candidate.save_with_keyring(&dir)?;
+    *s = candidate;
     Ok(s.clone())
 }
 
@@ -946,9 +956,10 @@ pub fn run() {
     let _ = std::fs::create_dir_all(&app_data_dir);
     let mut app_settings = settings::AppSettings::load(&app_data_dir);
     // One-time migration: plaintext secrets in the file move to the OS
-    // keyring and the file is re-saved scrubbed. Without a keyring backend
-    // the file remains the source of truth (old behavior). Either way the
-    // in-memory state is refilled to the EFFECTIVE settings below.
+    // keyring and the file is re-saved scrubbed. The save fails closed, so
+    // when no keyring backend is available the file is left exactly as it
+    // was and remains the source of truth. Either way the in-memory state
+    // is refilled to the EFFECTIVE settings below.
     if app_settings.has_plaintext_secrets()
         && let Err(e) = app_settings.save_with_keyring(&app_data_dir)
     {

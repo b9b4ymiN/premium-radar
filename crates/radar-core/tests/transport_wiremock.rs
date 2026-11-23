@@ -164,6 +164,96 @@ async fn signing_headers_present_in_request() {
     assert_eq!(body["signed"], json!(true));
 }
 
+// ---------- raw app-secret must never travel, signature must stay valid ----------
+
+fn header<'a>(req: &'a wiremock::Request, name: &str) -> &'a str {
+    req.headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+}
+
+/// GET: no `x-app-secret` header on the wire, and the `x-signature` still
+/// recomputes with the secret as the HMAC key — the secret authenticates
+/// without being disclosed.
+#[tokio::test]
+async fn get_omits_raw_secret_but_keeps_signature() {
+    let server = MockServer::start().await;
+    let params = vec![
+        ("symbols".to_string(), "NVDA/US".to_string()),
+        ("category".to_string(), "US_STOCK".to_string()),
+    ];
+    Mock::given(method("GET"))
+        .and(path("/market/snapshot"))
+        .and(wiremock::matchers::header_exists("x-signature"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&server)
+        .await;
+    let uri = server.uri();
+    let send_params = params.clone();
+    let (status, _body) = call_on_thread(uri, move |c| {
+        c.get("/market/snapshot", &send_params).unwrap()
+    });
+    assert_eq!(status, 200);
+
+    let reqs = server.received_requests().await.expect("captured requests");
+    let req = reqs.last().expect("one request captured");
+    assert!(
+        req.headers.get("x-app-secret").is_none(),
+        "raw app secret must not travel in GET"
+    );
+    let expected = radar_core::webull::sign::sign(
+        "/market/snapshot",
+        &radar_core::webull::transport::host_from_base_url(&server.uri()),
+        &params,
+        header(req, "x-timestamp"),
+        header(req, "x-signature-nonce"),
+        "TESTKEY",
+        "TESTSECRET",
+        "",
+    );
+    assert_eq!(header(req, "x-signature"), expected);
+}
+
+/// POST (token endpoint shape): no `x-app-secret` header on the wire, and
+/// the signature still covers the MD5 body hash with the secret as key.
+#[tokio::test]
+async fn post_omits_raw_secret_but_keeps_signature() {
+    let server = MockServer::start().await;
+    let body = r#"{"account":"acct","passwd":"pwd"}"#;
+    Mock::given(method("POST"))
+        .and(path("/auth/token"))
+        .and(wiremock::matchers::header_exists("x-signature"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"accessToken": "t"})))
+        .mount(&server)
+        .await;
+    let uri = server.uri();
+    let body_owned = body.to_string();
+    let (status, resp) = call_on_thread(uri, move |c| {
+        c.post_json("/auth/token", &body_owned).unwrap()
+    });
+    assert_eq!(status, 200);
+    assert_eq!(resp["accessToken"], json!("t"));
+
+    let reqs = server.received_requests().await.expect("captured requests");
+    let req = reqs.last().expect("one request captured");
+    assert!(
+        req.headers.get("x-app-secret").is_none(),
+        "raw app secret must not travel in POST"
+    );
+    let expected = radar_core::webull::sign::sign(
+        "/auth/token",
+        &radar_core::webull::transport::host_from_base_url(&server.uri()),
+        &[],
+        header(req, "x-timestamp"),
+        header(req, "x-signature-nonce"),
+        "TESTKEY",
+        "TESTSECRET",
+        body,
+    );
+    assert_eq!(header(req, "x-signature"), expected);
+}
+
 // ---------- live smoke (ignored by default; run with -- --ignored) ----------
 
 #[tokio::test]
