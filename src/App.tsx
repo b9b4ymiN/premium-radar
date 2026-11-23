@@ -316,10 +316,6 @@ export default function App() {
             <div className="brand-sub">OPTIONS OPERATION SYSTEM</div>
           </div>
         </div>
-        <nav className="headnav">
-          <button className={`navtab ${mainTab === "monitor" ? "active" : ""}`} onClick={() => setMainTab("monitor")}>Options</button>
-          <button className="navtab" onClick={() => setMainTab("lab")}>Analytics · Lab</button>
-        </nav>
         <label className="global-search">
           <span>⌕</span>
           <input
@@ -456,11 +452,8 @@ export default function App() {
         {/* ---- Main ---- */}
         <main className="main">
           <div className="main-tabs">
-            <button className={`mtab ${mainTab === "home" ? "on" : ""}`} onClick={() => setMainTab("home")}>หน้าแรก</button>
             <button className={`mtab ${mainTab === "monitor" ? "on" : ""}`} onClick={() => setMainTab("monitor")}>Options Monitor</button>
-            <button className={`mtab ${mainTab === "lab" ? "on" : ""}`} onClick={() => setMainTab("lab")}>Option Lab · ทดลองกลยุทธ์</button>
-            <button className={`mtab ${mainTab === "portfolio" ? "on" : ""}`} onClick={() => setMainTab("portfolio")}>Portfolio</button>
-            <button className={`mtab ${mainTab === "watchlist" ? "on" : ""}`} onClick={() => setMainTab("watchlist")}>Watchlists</button>
+            <button className={`mtab ${mainTab === "lab" ? "on" : ""}`} onClick={() => setMainTab("lab")}>Strategy Lab</button>
           </div>
 
           {/* Quote Header */}
