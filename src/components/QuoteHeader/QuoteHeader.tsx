@@ -100,13 +100,15 @@ export default function QuoteHeader({
 
   const status = quote?.trade_status ?? null;
   const extended = quote?.extended && isExtendedSession(status) ? quote.extended : null;
-  const sessionLine = quoteError
-    ? "สถานะตลาด: ไม่ทราบ"
-    : quote
-      ? extended
-        ? `${sessionLabel(status)} · ${num(extended.last_price)} ${signedPct(extended.change_ratio)} · ${timeEt(extended.last_trade_time_ms)} ET`
-        : `${sessionLabel(status)} · ล่าสุด ${timeEt(quote.last_trade_time_ms)}`
-      : "กำลังดึงสถานะตลาด …";
+  const sessionLine = !hasTauri
+    ? "สถานะตลาด · แสดงเฉพาะในแอป"
+    : quoteError
+      ? "สถานะตลาด: ไม่ทราบ"
+      : quote
+        ? extended
+          ? `${sessionLabel(status)} · ${num(extended.last_price)} ${signedPct(extended.change_ratio)} · ${timeEt(extended.last_trade_time_ms)} ET`
+          : `${sessionLabel(status)} · ล่าสุด ${timeEt(quote.last_trade_time_ms)}`
+        : "กำลังดึงสถานะตลาด …";
 
   const earnings = facts?.next_earnings ?? null;
   const earningsDays = earnings ? daysUntil(earnings.start_date) : null;
@@ -153,7 +155,9 @@ export default function QuoteHeader({
             className={`qh-session num ${extended ? "ext" : ""}`}
             title={quoteError ?? (quoteAt ? `ดึงจาก Webull ${timeEt(Date.parse(quoteAt))}` : undefined)}
           >
-            <i className={`session-dot ${quoteError ? "err" : extended ? "ext" : "rth"}`} />
+            {hasTauri && (
+              <i className={`session-dot ${quoteError ? "err" : extended ? "ext" : "rth"}`} />
+            )}
             {sessionLine}
           </div>
         </div>

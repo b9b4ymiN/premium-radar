@@ -167,13 +167,15 @@ export default function MarketPage({ onOpenRadar }: { onOpenRadar: (symbol: stri
       {error && (
         <div className="pf-err" role="alert">
           ⚠ {error}
-          <button className="wl-open" onClick={reload}>
-            ลองใหม่
-          </button>
+          {hasTauri && (
+            <button className="wl-open" onClick={reload}>
+              ลองใหม่
+            </button>
+          )}
         </div>
       )}
 
-      {showSectors ? (
+      {error ? null : showSectors ? (
         <div className="hp-tablewrap">
           <table className="screener-table mk-table mk-sectors">
             <thead>
@@ -191,7 +193,7 @@ export default function MarketPage({ onOpenRadar }: { onOpenRadar: (symbol: stri
               {sectors.length === 0 ? (
                 <tr className="empty-row">
                   <td colSpan={7} className="pf-empty">
-                    {loading ? "กำลังดึงข้อมูลจาก Webull …" : error ? "ไม่มีข้อมูลให้แสดง" : "Webull ไม่มีข้อมูล sector"}
+                    {loading ? "กำลังดึงข้อมูลจาก Webull …" : "Webull ไม่มีข้อมูล sector"}
                   </td>
                 </tr>
               ) : (
@@ -229,7 +231,6 @@ export default function MarketPage({ onOpenRadar }: { onOpenRadar: (symbol: stri
         <MoversTable
           rows={movers}
           loading={loading && movers.length === 0}
-          failed={!!error}
           showDividend={tab === "high_dividend"}
           columns={columns}
           onOpen={onOpenRadar}
@@ -247,14 +248,12 @@ export default function MarketPage({ onOpenRadar }: { onOpenRadar: (symbol: stri
 function MoversTable({
   rows,
   loading,
-  failed,
   showDividend,
   columns,
   onOpen,
 }: {
   rows: MoverRow[];
   loading: boolean;
-  failed: boolean;
   showDividend: boolean;
   columns: number;
   onOpen: (symbol: string) => void;
@@ -280,7 +279,7 @@ function MoversTable({
           {rows.length === 0 ? (
             <tr className="empty-row">
               <td colSpan={columns} className="pf-empty">
-                {loading ? "กำลังดึงข้อมูลจาก Webull …" : failed ? "ไม่มีข้อมูลให้แสดง" : "Webull ไม่มีข้อมูลสำหรับลิสต์นี้"}
+                {loading ? "กำลังดึงข้อมูลจาก Webull …" : "Webull ไม่มีข้อมูลสำหรับลิสต์นี้"}
               </td>
             </tr>
           ) : (

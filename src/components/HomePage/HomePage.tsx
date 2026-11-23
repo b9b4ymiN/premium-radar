@@ -57,7 +57,9 @@ function Movers({ onOpenRadar }: { onOpenRadar: (symbol: string) => void }) {
           <div key={list} className="hp-mover">
             <div className="hp-mover-head">{title}</div>
             {state == null ? (
-              <div className="hp-mover-note">กำลังดึงจาก Webull …</div>
+              <div className="hp-mover-note">
+                {hasTauri ? "กำลังดึงจาก Webull …" : "เปิดผ่านแอปเดสก์ท็อป"}
+              </div>
             ) : typeof state === "string" ? (
               <div className="hp-mover-note neg">⚠ {state}</div>
             ) : state.length === 0 ? (

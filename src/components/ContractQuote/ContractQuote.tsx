@@ -104,7 +104,11 @@ export default function ContractQuote({
       </div>
       {status === "loading" && <div className="wq-status">กำลังดึงราคาจาก Webull …</div>}
       {status === "error" && <div className="wq-status neg">⚠ {error}</div>}
-      {status === "ready" && !quote && <div className="wq-status">Webull ไม่มีราคาของสัญญานี้</div>}
+      {status === "ready" && !quote && (
+        <div className="wq-status">
+          {hasTauri ? "Webull ไม่มีราคาของสัญญานี้" : "ราคาจาก Webull แสดงเฉพาะในแอปเดสก์ท็อป"}
+        </div>
+      )}
       {quote && (
         <>
           <div className="wq-book num">
