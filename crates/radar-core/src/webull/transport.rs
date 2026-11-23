@@ -3,13 +3,16 @@
 //! Enabled behind the `client` feature (reqwest + uuid).
 
 use std::collections::HashMap;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Seek, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
 use super::rest::{Credentials, FetchError, HttpFetch, SnapCache, Throttle, is_rate_limited};
-use super::sign::{HOST, X_VERSION, sign};
+use super::sign::{HOST, MIN_INTERVAL_SEC, X_VERSION, sign};
 
 const RETRIES: u32 = 2;
 const RETRY_DELAY_SEC: f64 = 1.2;
@@ -29,6 +32,53 @@ fn request_gate(base_url: &str) -> RequestGate {
         .clone()
 }
 
+fn production_gate_path(base_url: &str) -> Option<PathBuf> {
+    let url = reqwest::Url::parse(base_url).ok()?;
+    if url.origin() != reqwest::Url::parse(BASE_URL).ok()?.origin() {
+        return None;
+    }
+    let root = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    Some(root.join("premium-radar").join("webull-rest-pacing.lock"))
+}
+
+/// Coordinate request starts across processes. The file contains only a timestamp.
+fn reserve_production_slot(path: &Path) -> io::Result<File> {
+    fs::create_dir_all(path.parent().expect("gate file has a parent"))?;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
+    file.lock()?;
+    let mut previous = [0; 8];
+    let interval = Duration::from_secs_f64(MIN_INTERVAL_SEC);
+    match file.read_exact(&mut previous) {
+        Ok(()) => {
+            let last = Duration::from_millis(u64::from_le_bytes(previous));
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default();
+            let elapsed = now.saturating_sub(last);
+            std::thread::sleep(interval.saturating_sub(elapsed));
+        }
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
+            // A fresh file or an interrupted write uses the conservative interval.
+            std::thread::sleep(interval);
+        }
+        Err(error) => return Err(error),
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let timestamp = u64::try_from(now.as_millis()).unwrap_or(u64::MAX);
+    file.rewind()?;
+    file.write_all(&timestamp.to_le_bytes())?;
+    Ok(file)
+}
+
 /// Full Webull REST client: shared throttle, TTL cache, HMAC-SHA1 signing,
 /// and rate-limited retry (2 retries × 1.2 s — mirrors `_do_call`).
 pub struct WebullClient {
@@ -37,6 +87,7 @@ pub struct WebullClient {
     throttle: RequestGate,
     cache: SnapCache,
     base_url: String,
+    production_gate: Option<PathBuf>,
 }
 
 impl WebullClient {
@@ -51,6 +102,7 @@ impl WebullClient {
             throttle: request_gate(BASE_URL),
             cache: SnapCache::from_constants(),
             base_url: BASE_URL.to_string(),
+            production_gate: production_gate_path(BASE_URL),
         }
     }
 
@@ -58,7 +110,16 @@ impl WebullClient {
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
         self.base_url = url.into();
         self.throttle = request_gate(&self.base_url);
+        self.production_gate = production_gate_path(&self.base_url);
         self
+    }
+
+    fn reserve_shared_slot(&self) -> Result<Option<File>, FetchError> {
+        self.production_gate
+            .as_deref()
+            .map(reserve_production_slot)
+            .transpose()
+            .map_err(|e| FetchError::Network(format!("Webull request pacing unavailable: {e}")))
     }
 
     /// One signed+throttled GET, no cache/retry (mirrors the inner half of `_do_call`).
@@ -73,6 +134,7 @@ impl WebullClient {
         if !wait.is_zero() {
             std::thread::sleep(wait);
         }
+        let process_slot = self.reserve_shared_slot()?;
 
         let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let nonce = uuid::Uuid::new_v4().simple().to_string();
@@ -109,6 +171,7 @@ impl WebullClient {
         }
 
         let resp = req.send();
+        drop(process_slot);
         throttle.mark();
         drop(throttle);
         let resp = resp.map_err(|e| FetchError::Network(e.to_string()))?;
@@ -169,6 +232,7 @@ impl WebullClient {
         if !wait.is_zero() {
             std::thread::sleep(wait);
         }
+        let process_slot = self.reserve_shared_slot()?;
         let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let nonce = uuid::Uuid::new_v4().simple().to_string();
         let signature = sign(
@@ -199,6 +263,7 @@ impl WebullClient {
             req = req.header("x-access-token", tok);
         }
         let resp = req.body(body.to_string()).send();
+        drop(process_slot);
         throttle.mark();
         drop(throttle);
         let resp = resp.map_err(|e| FetchError::Network(e.to_string()))?;
@@ -226,4 +291,39 @@ pub fn host_from_base_url(base_url: &str) -> String {
         .next()
         .unwrap_or(s)
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn production_gate_worker() {
+        let Some(path) = std::env::var_os("RADAR_TEST_GATE_FILE") else {
+            return;
+        };
+        let _slot = reserve_production_slot(Path::new(&path)).unwrap();
+    }
+
+    #[test]
+    fn production_gate_serializes_separate_processes() {
+        let path = std::env::temp_dir().join(format!("radar-gate-{}.lock", uuid::Uuid::new_v4()));
+        let parent_slot = reserve_production_slot(&path).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "webull::transport::tests::production_gate_worker",
+            ])
+            .env("RADAR_TEST_GATE_FILE", &path)
+            .spawn()
+            .unwrap();
+        // Outwait the timestamp cooldown so only the OS lock can keep the child blocked.
+        std::thread::sleep(Duration::from_secs_f64(MIN_INTERVAL_SEC + 0.25));
+        let blocked = child.try_wait().unwrap().is_none();
+        drop(parent_slot);
+        let status = child.wait().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(blocked);
+        assert!(status.success());
+    }
 }
