@@ -11,7 +11,9 @@ async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promis
 interface Quote { symbol: string; price: number; change_pct: number | null; source: string; volume: number }
 interface Overview { watchlist_name: string | null; quotes: Quote[]; lab: { capture_days: number; last_capture: string | null }; fetched_at: string }
 
-export default function HomePage() {
+export default function HomePage({
+  onOpenRadar, goTab,
+}: { onOpenRadar: (s: string) => void; goTab: (t: "lab" | "portfolio" | "watchlist") => void }) {
   const [o, setO] = useState<Overview | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -55,23 +57,30 @@ export default function HomePage() {
           <thead><tr><th>สัญลักษณ์</th><th className="num">ราคา</th><th className="num">เปลี่ยน %</th><th className="num">วอลุ่ม</th><th></th></tr></thead>
           <tbody>
             {q.length ? q.map(x => (
-              <tr key={x.symbol}>
+              <tr key={x.symbol} className="hp-row" onClick={() => onOpenRadar(x.symbol)}>
                 <td><b>{x.symbol}</b></td>
                 <td className="num">{x.price.toFixed(2)}</td>
                 <td className={`num ${(x.change_pct ?? 0) >= 0 ? "pos" : "neg"}`}>
                   {x.change_pct != null ? `${x.change_pct >= 0 ? "+" : ""}${x.change_pct.toFixed(2)}%` : "--"}
                 </td>
                 <td className="num">{x.volume ? (x.volume / 1e6).toFixed(1) + "M" : "--"}</td>
+                <td><button className="wl-open">เปิด Radar →</button></td>
               </tr>
             )) : (
               <tr><td colSpan={5} className="pf-empty">
-                {loading ? "กำลังโหลด…" : "ยังไม่มีหุ้นในรายการติดตาม — จัดการได้ที่เมนู รายการติดตาม"}
+                {loading ? "กำลังโหลด…" : "ยังไม่มีหุ้นใน watchlist — ไปหน้า Watchlists เพิ่มก่อน"}
               </td></tr>
             )}
           </tbody>
         </table>
       </div>
 
+      <div className="hp-shortcuts">
+        <button onClick={() => goTab("watchlist")}>📋 จัด Watchlist</button>
+        <button onClick={() => goTab("lab")}>🧪 Option Lab</button>
+        <button onClick={() => goTab("portfolio")}>💼 พอร์ตจริง</button>
+        <button onClick={load} disabled={loading}>↻ รีเฟรช</button>
+      </div>
       <small className="pc-note">ข้อมูล ณ {o?.fetched_at?.replace("T", " ").slice(0, 19) ?? "--"} UTC · แถวหุ้นคลิกเปิด Radar ได้</small>
     </div>
   );
