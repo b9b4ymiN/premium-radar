@@ -10,9 +10,7 @@ async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promis
 interface List { id: string; name: string; symbols: string[] }
 interface Store { lists: List[]; active: string | null }
 
-export default function WatchlistPage({
-  onOpenRadar, onChanged,
-}: { onOpenRadar: (symbol: string) => void; onChanged?: () => void }) {
+export default function WatchlistPage({ onChanged }: { onChanged?: () => void }) {
   const [store, setStore] = useState<Store | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [addText, setAddText] = useState("");
@@ -74,7 +72,7 @@ export default function WatchlistPage({
       </div>
 
       <table className="screener-table">
-        <thead><tr><th>#</th><th>สัญลักษณ์</th><th></th><th></th></tr></thead>
+        <thead><tr><th>#</th><th>สัญลักษณ์</th><th>จัดลำดับ / ลบ</th></tr></thead>
         <tbody>
           {active && active.symbols.length > 0 ? (
             active.symbols.map((sym, i) => (
@@ -86,13 +84,10 @@ export default function WatchlistPage({
                   <button title="ลง" onClick={() => act("down", sym)}>↓</button>
                   <button title="ลบ" className="wl-danger" onClick={() => act("remove", sym)}>✕</button>
                 </td>
-                <td>
-                  <button className="wl-open" onClick={() => onOpenRadar(sym)}>เปิด Radar →</button>
-                </td>
               </tr>
             ))
           ) : (
-            <tr><td colSpan={4} className="pf-empty">ลิสต์ว่าง — เพิ่มหุ้นด้านบน (หน้าแรก/quotes หลายหุ้นมาใน phase ถัดไป)</td></tr>
+            <tr><td colSpan={4} className="pf-empty">ลิสต์ว่าง — เพิ่มหุ้นผ่านช่องด้านบน</td></tr>
           )}
         </tbody>
       </table>

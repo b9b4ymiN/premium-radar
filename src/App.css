@@ -487,3 +487,41 @@ button:focus-visible, input:focus-visible {
 .watch-row .muted { color: var(--muted); }
 .watch-bottom { display: flex; align-items: center; gap: 6px; padding: 7px 12px; font-size: 9.5px; color: var(--muted); cursor: pointer; border-top: 1px solid var(--divider); }
 .watch-bottom:hover { color: var(--text); }
+
+/* ============ SHELL v2 (ui-redesign R1) ============ */
+.app { display: grid; grid-template-columns: 184px minmax(0, 1fr); height: 100vh; }
+.appcol { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+/* PrimaryNav — ทางเข้าเดียวต่อหน้า */
+.primarynav { background: #101319; border-right: 1px solid var(--divider); display: flex; flex-direction: column; padding: 10px 8px; gap: 4px; }
+.pn-brand { display: flex; gap: 8px; align-items: center; padding: 4px 8px 14px; }
+.pn-item { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: none; color: var(--muted); font-size: 13.5px; padding: 9px 10px; border-radius: 6px; cursor: pointer; text-align: left; }
+.pn-item:hover { background: #1a2029; color: var(--text); }
+.pn-item.on { background: #1d3049; color: #cde3ff; box-shadow: inset 2px 0 0 #4b8cf7; }
+.pn-item.attention::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #f0bd70; margin-left: auto; }
+.pn-ico { width: 18px; text-align: center; font-size: 13px; opacity: 0.9; }
+.pn-gap { flex: 1; }
+/* AppHeader */
+.appheader { height: 56px; min-height: 56px; display: flex; align-items: center; gap: 14px; padding: 0 20px; border-bottom: 1px solid var(--divider); background: #0e1117; }
+.ah-title { font-size: 17px; font-weight: 650; min-width: 120px; }
+.instpicker { position: relative; display: flex; align-items: center; gap: 6px; border: 1px solid var(--divider); border-radius: 6px; padding: 5px 10px; background: #131820; color: var(--muted); }
+.instpicker input { background: none; border: 0; color: var(--text); font-size: 12.5px; width: 220px; outline: none; }
+.instpicker input:disabled { opacity: 0.45; }
+.ip-suggest { position: absolute; top: calc(100% + 4px); left: 0; background: #1a222d; border: 1px solid var(--border, #2b3441); border-radius: 6px; display: flex; flex-direction: column; min-width: 120px; z-index: 60; }
+.ip-suggest button { border: 0; background: none; color: var(--text); padding: 7px 12px; text-align: left; cursor: pointer; font-size: 12.5px; }
+.ip-suggest button:hover { background: #1d3049; }
+.connbadge { font-size: 10.5px; padding: 3px 8px; border-radius: 3px; border: 1px solid var(--divider); }
+.ah-assist { margin-left: auto; border: 1px solid var(--divider); background: none; color: var(--text); border-radius: 6px; padding: 6px 14px; font-size: 12.5px; cursor: pointer; }
+.ah-assist:hover { border-color: var(--accent, #4b8cf7); }
+/* workspace ภายใน appcol */
+.appcol .workspace { display: flex; flex: 1; min-height: 0; }
+/* FilterBar */
+.filterbar { display: flex; align-items: flex-end; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--divider); flex-wrap: wrap; }
+.fb-group { display: flex; flex-direction: column; gap: 4px; }
+.fb-label { font-size: 10px; color: var(--muted); }
+.fb-select, .fb-input { background: #131820; color: var(--text); border: 1px solid var(--divider); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+.fb-input { width: 110px; }
+.fb-hint { font-size: 9.5px; color: var(--muted); margin-left: auto; align-self: center; }
+/* Assistant drawer */
+.assist-scrim { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 90; display: flex; justify-content: flex-end; }
+.assist-drawer { width: 400px; max-width: 92vw; background: #10141a; border-left: 1px solid var(--divider); display: flex; flex-direction: column; }
+.assist-drawer .copilot { flex: 1; display: flex; flex-direction: column; min-height: 0; border: 0; }

@@ -7,7 +7,7 @@ import PriceChart from "./components/PriceChart/PriceChart";
 import PortfolioPage from "./components/PortfolioPage/PortfolioPage";
 import WatchlistPage from "./components/WatchlistPage/WatchlistPage";
 import HomePage from "./components/HomePage/HomePage";
-import type { EnrichedRow, StockUpdate, ChainStats, EngineSnapshot } from "./types/screener";
+import type { EnrichedRow, StockUpdate, EngineSnapshot } from "./types/screener";
 import "./App.css";
 
 // Tauri bridge (graceful fallback when running without the Tauri shell)
@@ -47,7 +47,6 @@ const MOCK_ROWS: Partial<EnrichedRow>[] = [
   { q: { symbol: "NVDA261218C00187500", strike: 187.5, option_type: "C", expiry: "2026-12-18", bid: 3.75, ask: 3.85, oi: 1390, volume: 600, price: 3.80, underlying: "NVDA", src: "API", change: 0, change_ratio: 0 }, grade: "C", delta: 0.27, credit: 375, collateral: 18245, ann: 22.0, pop: 0.71, cushion: 2.8, p_itm: 0.24, score: 15.6, dte: 26, iv: 0.48, be: 178.70, prem: 3.75, spread_pct: 2.6 },
 ];
 
-const MOCK_STATS: ChainStats = { atm_iv: 0.482, em: 14.9, skew: 3.1 };
 
 
 const fmt = (n: number, d = 2) =>
@@ -81,8 +80,8 @@ export default function App() {
   const [mainTab, setMainTab] = useState<"home" | "monitor" | "lab" | "portfolio" | "watchlist">("home");
   // watchlist จริงสำหรับ left panel (quotes + ชื่อลิสต์ มาจาก Rust ทีเดียว)
   const [wlQuotes, setWlQuotes] = useState<Array<{ symbol: string; price: number; change_pct: number | null }>>([]);
-  const [wlName, setWlName] = useState<string | null>(null);
   const [wlTick, setWlTick] = useState(0); // bump เมื่อ Watchlists page แก้ข้อมล
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [tauriReady, setTauriReady] = useState(false);
@@ -93,7 +92,6 @@ export default function App() {
   const [snap, setSnap] = useState<EngineSnapshot | null>(null);
   const [scanMsg, setScanMsg] = useState("กำลังเชื่อมต่อ backend ...");
   const [scanPhase, setScanPhase] = useState("idle");
-  const [wsLive, setWsLive] = useState(false);
 
   // AI copilot — its configuration is INDEPENDENT of the data feed
   const [llmInfo, setLlmInfo] = useState<{ label: string; model: string } | null>(null);
@@ -115,8 +113,8 @@ export default function App() {
           // real-time push liveness: the backend emits phase "realtime" once
           // the MQTT subscribe lands; any other real-time message (reconnecting,
           // dropped, no entitlement) means the push feed is down again.
-          if (p.phase === "realtime") setWsLive(true);
-          else if (p.message.includes("real-time")) setWsLive(false);
+          // (feed liveness สะท้อนผ่าน badge ใน header แล้ว)
+
         }));
         uns.push(await tauriListen<EngineSnapshot>("scan://snapshot", (s) => setSnap(s)));
 
@@ -148,7 +146,7 @@ export default function App() {
   useEffect(() => {
     if (!tauriReady || showSetup) return;
     setExpirySel("ทุกวัน");
-    setWsLive(false);
+    
     tauriInvoke("start_scan", { symbol }).catch((e: unknown) => {
       const msg = e instanceof Error ? e.message : String(e);
       setScanMsg(msg);
@@ -210,7 +208,7 @@ export default function App() {
     let live = true;
     const load = () => {
       tauriInvoke<{ watchlist_name: string | null; quotes: Array<{ symbol: string; price: number; change_pct: number | null }> }>("get_home_overview")
-        .then(o => { if (live) { setWlQuotes(o.quotes ?? []); setWlName(o.watchlist_name); } })
+        .then(o => { if (live) { setWlQuotes(o.quotes ?? []); } })
         .catch(() => { if (live) { setWlQuotes([]); } });
     };
     load();
@@ -223,7 +221,6 @@ export default function App() {
   const isLive = snap !== null;
   const rows: EnrichedRow[] = isLive ? snap!.candidates : (hasTauri ? [] : (MOCK_ROWS as EnrichedRow[]));
   const stock: StockUpdate | null = snap?.stock ?? (hasTauri ? null : MOCK_STOCK);
-  const stats: ChainStats | null = snap?.stats ?? (hasTauri ? null : MOCK_STATS);
   const selectedRow = rows.find(r => r.q.symbol === selected) ?? rows[0];
   const chg = stock?.change ?? 0;
   const chgPct = (stock?.change_ratio ?? 0) * 100;
@@ -240,53 +237,6 @@ export default function App() {
     const iso = e === "ทุกวัน" ? null : e;
     applyFilters(strategy, risk, iso, parseFloat(budget) || 0);
   };
-
-  // derived metric values
-  const pcOi = useMemo(() => {
-    const p = rows.filter(r => r.q.option_type === "P").reduce((s, r) => s + (r.q.oi || 0), 0);
-    const c = rows.filter(r => r.q.option_type === "C").reduce((s, r) => s + (r.q.oi || 0), 0);
-    return c > 0 ? p / c : null;
-  }, [rows]);
-  const closest = useMemo(
-    () => (rows.length ? rows.reduce((a, b) => ((a.dte ?? 1e9) <= (b.dte ?? 1e9) ? a : b)) : null),
-    [rows],
-  );
-
-  // top-3 opportunity cards from the screener output
-  const opps = useMemo(() => {
-    const cand = rows.filter(r => r.delta != null && r.credit != null);
-    if (cand.length === 0) return null;
-    const byAbsDelta = [...cand].sort((a, b) => Math.abs(a.delta!) - Math.abs(b.delta!));
-    const defensive = byAbsDelta[0];
-    const balanced = byAbsDelta.find(r => Math.abs(r.delta!) >= 0.15 && Math.abs(r.delta!) <= 0.30)
-      ?? byAbsDelta[Math.min(1, byAbsDelta.length - 1)];
-    const topAnn = [...cand].sort((a, b) => (b.ann ?? 0) - (a.ann ?? 0))[0];
-    const fc = (r: EnrichedRow) => `${symbol} ${r.q.strike}${r.q.option_type} · ${r.q.expiry.slice(5).replace("-", "/")}`;
-    const fm = (r: EnrichedRow) => `+$${r.credit?.toFixed(0)} premium · ${(r.ann ?? 0).toFixed(1)}% annualized · δ ${Math.abs(r.delta ?? 0).toFixed(2)}`;
-    return [
-      { label: "LOWEST DELTA", tag: "Defensive", contract: fc(defensive), meta: fm(defensive) },
-      { label: "BALANCED SETUP", tag: "Balanced", contract: fc(balanced), meta: fm(balanced) },
-      { label: "HIGHEST ANNUALIZED", tag: "High yield", contract: fc(topAnn), meta: fm(topAnn) },
-    ];
-  }, [rows, symbol]);
-  const oppCards = opps ?? (hasTauri
-    ? [
-        { label: "LOWEST DELTA", tag: "—", contract: "รอข้อมูลจริง", meta: " " },
-        { label: "BALANCED SETUP", tag: "—", contract: "รอข้อมูลจริง", meta: " " },
-        { label: "HIGHEST ANNUALIZED", tag: "—", contract: "รอข้อมูลจริง", meta: " " },
-      ]
-    : [
-        { label: "LOWEST DELTA", tag: "Defensive", contract: `${symbol} 165P · 12 ก.พ.`, meta: `+$220 premium · ${fmt(15.0, 1)}% annualized · δ 0.10` },
-        { label: "BALANCED SETUP", tag: "Balanced", contract: `${symbol} 175P · 12 ก.พ.`, meta: `+$415 premium · ${fmt(26.0, 1)}% annualized · δ 0.18` },
-        { label: "HIGHEST ANNUALIZED", tag: "High yield", contract: `${symbol} 178P · 04 ธ.ค.`, meta: `+$285 premium · ${fmt(35.0, 1)}% annualized · δ 0.28` },
-      ]);
-
-  const feed = !tauriReady
-    ? { t: "DEMO", cls: "warn" }
-    : scanPhase === "error" ? { t: "ERROR", cls: "neg" }
-    : scanPhase === "live" ? { t: "REST · LIVE", cls: "pos" }
-    : ["discovery", "seed", "bars"].includes(scanPhase) ? { t: "SYNCING", cls: "warn" }
-    : { t: "IDLE", cls: "" };
 
   const isError = scanPhase === "error";
   const badge = !hasTauri
@@ -305,22 +255,52 @@ export default function App() {
     );
   }
 
+  const NAV_ITEMS: Array<[typeof mainTab, string, string]> = [
+    ["home", "ภาพรวม", "◎"],
+    ["monitor", "คัดสัญญา", "▤"],
+    ["lab", "Option Lab", "⚗"],
+    ["watchlist", "รายการติดตาม", "☰"],
+    ["portfolio", "พอร์ตจริง", "▣"],
+  ];
+  const pageTitle = NAV_ITEMS.find(n => n[0] === mainTab)?.[1] ?? "ตั้งค่า";
+
   return (
     <div className="app">
-      {/* ============ TOP BAR ============ */}
-      <header className="appbar">
-        <div className="brand">
+      {/* ============ PRIMARY NAV (ทางเข้าเดียวต่อหน้า) ============ */}
+      <nav className="primarynav">
+        <div className="pn-brand">
           <div className="brand-icon">PR</div>
           <div>
             <div className="brand-text">PREMIUM RADAR</div>
             <div className="brand-sub">OPTIONS OPERATION SYSTEM</div>
           </div>
         </div>
-        <nav className="headnav">
-          <button className={`navtab ${mainTab === "monitor" ? "active" : ""}`} onClick={() => setMainTab("monitor")}>Options</button>
-          <button className="navtab" onClick={() => setMainTab("lab")}>Analytics · Lab</button>
-        </nav>
-        <label className="global-search">
+        {NAV_ITEMS.map(([key, label, ico]) => (
+          <button
+            key={key}
+            className={`pn-item ${mainTab === key ? "on" : ""}`}
+            aria-current={mainTab === key ? "page" : undefined}
+            onClick={() => setMainTab(key)}
+          >
+            <span className="pn-ico">{ico}</span>
+            <span>{label}</span>
+          </button>
+        ))}
+        <div className="pn-gap" />
+        <button
+          className={`pn-item ${showSetup ? "attention" : ""}`}
+          onClick={() => { setSetupMode("edit"); setShowSetup(true); }}
+        >
+          <span className="pn-ico">⚙</span>
+          <span>ตั้งค่า</span>
+        </button>
+      </nav>
+
+      {/* ============ COLUMN ขวา: HEADER + PAGE ============ */}
+      <div className="appcol">
+      <header className="appheader">
+        <div className="ah-title">{pageTitle}</div>
+        <label className="instpicker" title="หุ้นที่ใช้วิเคราะห์ (ใช้ใน คัดสัญญา / Option Lab)">
           <span>⌕</span>
           <input
             value={searchText}
@@ -331,138 +311,26 @@ export default function App() {
                 if (q) setSymbol(q);
               }
             }}
-            placeholder={`Search (${symbol})`}
-            aria-label="Search symbol"
+            placeholder={`หุ้นที่วิเคราะห์ · ${symbol}`}
+            aria-label="หุ้นที่ใช้วิเคราะห์"
+            disabled={mainTab === "portfolio"}
           />
+          {wlQuotes.length > 0 && (
+            <div className="ip-suggest">
+              {wlQuotes.filter(q => searchText && q.symbol.startsWith(searchText.trim().toUpperCase()) && q.symbol !== searchText.trim().toUpperCase()).slice(0, 5).map(q => (
+                <button key={q.symbol} onClick={() => { setSymbol(q.symbol); setSearchText(""); }}>{q.symbol}</button>
+              ))}
+            </div>
+          )}
         </label>
-        <span className={`tag-demo ${badge.cls}`}>{badge.text}</span>
+        <span className={`connbadge ${badge.cls}`}>{badge.text}</span>
+        <button className="ah-assist" onClick={() => setAssistantOpen(o => !o)} aria-expanded={assistantOpen}>ผู้ช่วย</button>
       </header>
 
-      {/* ============ WORKSPACE ============ */}
+      {/* ============ PAGE CANVAS ============ */}
       <div className="workspace">
-        {/* ---- Icon Rail ---- */}
-        <nav className="iconbar">
-          <button className={`iconbtn ${mainTab === "home" ? "on" : ""}`} title="หน้าแรก" onClick={() => setMainTab("home")}>⌂</button>
-          <button className="iconbtn" title="Market — ยังไม่มีหน้านี้ (ใช้หน้าแรก+กราฟ)" disabled>◔</button>
-          <button className={`iconbtn ${mainTab === "monitor" ? "on" : ""}`} title="Options Monitor" onClick={() => setMainTab("monitor")}>|||</button>
-          <button className={`iconbtn ${mainTab === "watchlist" ? "on" : ""}`} title="Watchlists" onClick={() => setMainTab("watchlist")}>≡</button>
-          <button className={`iconbtn ${mainTab === "portfolio" ? "on" : ""}`} title="Portfolio · พอร์ตจริง (อ่านอย่างเดียว)" onClick={() => setMainTab("portfolio")}>◫</button>
-          <button
-            className="iconbar bottom iconbtn"
-            title="Settings / API keys"
-            onClick={() => { setSetupMode("edit"); setShowSetup(true); }}
-          >⚙</button>
-        </nav>
-
-        {/* ---- Left Panel ---- */}
-        <aside className="leftpanel">
-          <div className="panel-heading">
-            Watchlist
-            <div className="end">
-              <button className="tiny-icon" title="จัดการลิสต์เต็มรูปแบบ" onClick={() => setMainTab("watchlist")}>⤢</button>
-            </div>
-          </div>
-          <div className="watch-header"><span>Symbol</span><span>Last / Chg%</span></div>
-          <div className="watchlist">
-            {wlQuotes.map(q => (
-              <button
-                key={q.symbol}
-                className={`watch-row ${q.symbol === symbol ? "on" : ""}`}
-                onClick={() => { setSymbol(q.symbol); setMainTab("monitor"); }}
-              >
-                <b>{q.symbol}</b>
-                <span className="num">
-                  {q.price.toFixed(2)}
-                  {" "}
-                  <small className={(q.change_pct ?? 0) >= 0 ? "pos" : "neg"}>
-                    {q.change_pct != null ? `${q.change_pct >= 0 ? "+" : ""}${q.change_pct.toFixed(1)}%` : "--"}
-                  </small>
-                </span>
-              </button>
-            ))}
-            {wlQuotes.length === 0 && (
-              <button className="watch-row" onClick={() => setMainTab("watchlist")}>
-                <b>+ เพิ่มหุ้น</b>
-                <span className="num muted">จัดลิสต์ →</span>
-              </button>
-            )}
-          </div>
-          <div className="watch-bottom" onClick={() => setMainTab("watchlist")}>
-            {wlName ?? "Watchlist"} <span style={{ marginLeft: "auto" }}>{wlQuotes.length} ตัว</span>
-          </div>
-
-          <div className="filterhead">STRATEGY SCANNER</div>
-          <div className="filtergroup">
-            <div className="filterlabel">Strategy</div>
-            <div className="toggle-row">
-              {["CSP+CC", "CSP", "CC"].map(s => (
-                <button key={s} className={`toggle ${strategy === s ? "on" : ""}`} onClick={() => { setStrategy(s); applyFilters(s, risk, null, parseFloat(budget) || 0); }}>
-                  {s === "CSP+CC" ? "All" : s === "CSP" ? "Put" : "Call"}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="filtergroup">
-            <div className="filterlabel">Assignment risk</div>
-            <div className="choice-list">
-              {[
-                ["ALL", "All contracts", "Any delta"],
-                ["SAFE", "Low", "δ .10–.20"],
-                ["BALANCED", "Moderate", "δ .15–.30"],
-                ["AGGR", "High", "δ .25–.40"],
-              ].map(([v, label, meta]) => (
-                <button key={v} className={`choice ${risk === v ? "on" : ""}`} onClick={() => { setRisk(v); applyFilters(strategy, v, null, parseFloat(budget) || 0); }}>
-                  <span>{label}</span>
-                  <small>{meta}</small>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="filtergroup">
-            <div className="filterlabel">Expiration</div>
-            <div className="expiries">
-              {expiryOptions.map(e => (
-                <button key={e} className={`exp ${expirySel === e ? "on" : ""}`} onClick={() => pickExpiry(e)}>
-                  {e === "ทุกวัน" ? e : e.slice(5).replace("-", "/")}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="filtergroup">
-            <div className="filterlabel">Available cash (USD)</div>
-            <label className="cashfield">
-              <span>$</span>
-              <input
-                value={budget}
-                onChange={e => setBudget(e.target.value)}
-                onBlur={() => applyFilters(strategy, risk, expirySel === "ทุกวัน" ? null : expirySel, parseFloat(budget) || 0)}
-                onKeyDown={e => { if (e.key === "Enter") applyFilters(strategy, risk, expirySel === "ทุกวัน" ? null : expirySel, parseFloat(budget) || 0); }}
-                type="number"
-                min="0"
-                step="500"
-              />
-            </label>
-          </div>
-
-          <div className="leftfoot">
-            <div><b>DATA MODE</b> <span style={{ float: "right", color: isLive ? "#3ddc97" : isError ? "#f4788c" : "#e0b15f" }}>{isLive ? "Live · Webull TH" : isError ? "Feed error" : hasTauri ? "รอข้อมูล" : "Synthetic"}</span></div>
-            <div>{isLive ? `Feed: ${wsLive ? "📡 real-time push" : "REST snapshot"} · ${new Date().toLocaleDateString()}` : "REST snapshot · 3 นาที/รอบ"}</div>
-          </div>
-        </aside>
-
         {/* ---- Main ---- */}
         <main className="main">
-          <div className="main-tabs">
-            <button className={`mtab ${mainTab === "home" ? "on" : ""}`} onClick={() => setMainTab("home")}>หน้าแรก</button>
-            <button className={`mtab ${mainTab === "monitor" ? "on" : ""}`} onClick={() => setMainTab("monitor")}>Options Monitor</button>
-            <button className={`mtab ${mainTab === "lab" ? "on" : ""}`} onClick={() => setMainTab("lab")}>Option Lab · ทดลองกลยุทธ์</button>
-            <button className={`mtab ${mainTab === "portfolio" ? "on" : ""}`} onClick={() => setMainTab("portfolio")}>Portfolio</button>
-            <button className={`mtab ${mainTab === "watchlist" ? "on" : ""}`} onClick={() => setMainTab("watchlist")}>Watchlists</button>
-          </div>
-
           {/* Quote Header */}
           <section className="quoteheader">
             <div>
@@ -495,14 +363,11 @@ export default function App() {
 
           {mainTab === "home" ? (
             <section className="labmodule">
-              <HomePage
-                onOpenRadar={sym => { setSymbol(sym.toUpperCase()); setMainTab("monitor"); }}
-                goTab={t => setMainTab(t)}
-              />
+              <HomePage />
             </section>
           ) : mainTab === "watchlist" ? (
             <section className="labmodule">
-              <WatchlistPage onOpenRadar={sym => { setSymbol(sym.toUpperCase()); setMainTab("monitor"); }} onChanged={() => setWlTick(t => t + 1)} />
+              <WatchlistPage onChanged={() => setWlTick(t => t + 1)} />
             </section>
           ) : mainTab === "portfolio" ? (
             <section className="labmodule">
@@ -518,35 +383,46 @@ export default function App() {
           <section className="pricechart-slot">
             <PriceChart symbol={symbol} />
           </section>
-          {/* 6 Metric Cards */}
-          <section className="summary">
-            {[
-              { label: "IV (ATM)", value: stats?.atm_iv != null ? `${(stats.atm_iv * 100).toFixed(1)}%` : "--", suffix: isLive ? "ATM IV" : "รอข้อมูล" },
-              { label: "Expected move ±1σ", value: stats?.em != null ? `±$${fmt(stats.em)}` : "--", suffix: "to expiry", cls: "warn" },
-              { label: "Put/Call skew", value: stats?.skew != null ? `${stats.skew >= 0 ? "+" : ""}${stats.skew.toFixed(1)} pts` : "--", suffix: isLive ? "OTM strikes" : "รอข้อมูล", cls: stats?.skew != null && stats.skew < 0 ? "neg" : "" },
-              { label: "Put/Call OI", value: pcOi != null ? pcOi.toFixed(2) : "--", suffix: isLive ? "open interest" : "รอข้อมูล" },
-              { label: "Closest expiry", value: closest ? closest.q.expiry.slice(5).replace("-", "/") : "--", suffix: closest ? `${Math.round(closest.dte)}d` : "", cls: "pos" },
-              { label: "Contracts loaded", value: String(rows.length), suffix: isLive ? "live feed" : hasTauri ? "รอข้อมูล" : "model-generated" },
-            ].map(m => (
-              <div key={m.label} className="metric">
-                <div className="metric-label">{m.label}</div>
-                <div className={`metric-value ${m.cls ?? ""}`}>
-                  {m.value} <span className="metric-suffix">{m.suffix}</span>
-                </div>
+          {/* FilterBar — ชุดควบคุมกรองชุดเดียวของ Monitor */}
+          <section className="filterbar">
+            <div className="fb-group">
+              <span className="fb-label">กลยุทธ์</span>
+              <div className="toggle-row">
+                {["CSP+CC", "CSP", "CC"].map(x => (
+                  <button key={x} className={`toggle ${strategy === x ? "on" : ""}`} onClick={() => { setStrategy(x); applyFilters(x, risk, null, parseFloat(budget) || 0); }}>
+                    {x === "CSP+CC" ? "ทั้งหมด" : x === "CSP" ? "Put · CSP" : "Call · CC"}
+                  </button>
+                ))}
               </div>
-            ))}
+            </div>
+            <div className="fb-group">
+              <span className="fb-label">ช่วง Delta</span>
+              <select className="fb-select" value={risk} onChange={e => { setRisk(e.target.value); applyFilters(strategy, e.target.value, null, parseFloat(budget) || 0); }}>
+                <option value="ALL">ทุกสัญญา (delta ใดๆ)</option>
+                <option value="SAFE">ต่ำ · δ .10–.20</option>
+                <option value="BALANCED">กลาง · δ .15–.30</option>
+                <option value="AGGR">สูง · δ .25–.40</option>
+              </select>
+            </div>
+            <div className="fb-group">
+              <span className="fb-label">วันหมดอายุ</span>
+              <select className="fb-select" value={expirySel} onChange={e => pickExpiry(e.target.value)}>
+                {expiryOptions.map(e => <option key={e} value={e}>{e}</option>)}
+              </select>
+            </div>
+            <div className="fb-group">
+              <span className="fb-label">เงินสด (USD)</span>
+              <input
+                className="fb-input"
+                value={budget}
+                onChange={e => setBudget(e.target.value)}
+                onBlur={() => applyFilters(strategy, risk, expirySel === "ทุกวัน" ? null : expirySel, parseFloat(budget) || 0)}
+                onKeyDown={e => { if (e.key === "Enter") applyFilters(strategy, risk, expirySel === "ทุกวัน" ? null : expirySel, parseFloat(budget) || 0); }}
+                type="number" min="0" step="500"
+              />
+            </div>
+            <span className="fb-hint">เพดานเงินสดใช้กับ CSP · CC ต้องมีหุ้นครบ 100 หุ้น</span>
           </section>
-
-          {/* 3 Opportunity Cards */}
-          <div className="opportunities">
-            {oppCards.map((o, i) => (
-              <button key={o.label} className={`opportunity ${i === 1 ? "on" : ""} ${opps ? "" : "muted-card"}`} onClick={() => { const hit = rows.find(r => r.q.symbol === (o as { contract?: string }).contract); if (hit) setSelected(hit.q.symbol); }}>
-                <div className="otop"><span>{o.label}</span><span style={{ color: "#9caec3" }}>{o.tag}</span></div>
-                <div className="ocontract">{o.contract}</div>
-                <div className="ometas"><b className="pos">{o.meta.split("·")[0]}</b> · {o.meta.split("·").slice(1).join("·")}</div>
-              </button>
-            ))}
-          </div>
 
           {/* Scanner Table */}
           <section className="tablemodule">
@@ -639,9 +515,9 @@ export default function App() {
           )}
         </main>
 
-        {/* ---- Right Panel ---- */}
+        {/* ---- Right Panel: Inspector เฉพาะ Monitor ---- */}
+        {mainTab === "monitor" && (
         <aside className="rightpanel">
-          {/* Contract Analysis */}
           <section className="detailpanel">
             <div className="panel-heading" style={{ minHeight: "36px" }}>Contract Analysis</div>
             <div className="detail-body">
@@ -747,8 +623,19 @@ export default function App() {
             </div>
           </section>
 
+        </aside>
+        )}
+
+      </div>
+
+      </div>{/* /appcol */}
+
+      {/* ============ ASSISTANT DRAWER — chat จุดเดียว ใช้ได้ทุกหน้า ============ */}
+      {assistantOpen && (
+        <div className="assist-scrim" onClick={() => setAssistantOpen(false)}>
+          <aside className="assist-drawer" onClick={e => e.stopPropagation()} role="dialog" aria-label="ผู้ช่วย AI">
           {/* Radar Assistant — real LLM chat, status independent of the feed */}
-          <section className="copilot">
+            <section className="copilot">
             <div className="panel-heading" style={{ minHeight: "34px" }}>
               <span style={{ color: "#94beff" }}>✦</span> Radar Assistant
               <span
@@ -820,20 +707,9 @@ export default function App() {
               </>
             )}
           </section>
-        </aside>
-      </div>
-
-      {/* ============ STATUS BAR ============ */}
-      <footer className="statusbar">
-        <span><b>{tauriReady ? (isLive ? "LIVE · WEBULL TH FEED" : scanMsg) : "OFFLINE · BROWSER PREVIEW"}</b></span>
-        <span>{symbol} {stock ? fmt(stock.price) : "--"} <b className={stock ? chgCls : ""}>{stock ? `${chg >= 0 ? "+" : ""}${chgPct.toFixed(2)}%` : ""}</b></span>
-        <span>{isLive ? (wsLive ? "📡 real-time push" : "REST snapshot · รอบถัดไป 3 นาที") : "REST snapshot feed"}</span>
-        <span className="statusright">
-          <span>Contracts: {rows.length}</span>
-          <span>Feed: <b className={feed.cls}>{feed.t}</b></span>
-          <span>PREMIUM RADAR · v0.1</span>
-        </span>
-      </footer>
+          </aside>
+        </div>
+      )}
     </div>
   );
 }
