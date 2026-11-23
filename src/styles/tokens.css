@@ -1,6 +1,9 @@
 /* PREMIUM RADAR — V2 Modern Visual Refinement
    Source of truth: design/DESIGN.md §2 (computed after cascade override)
-   DO NOT add gloss, gradients, or heavy shadows — flat 1px dividers only. */
+   Flat 1px dividers remain the default for CONTENT surfaces.
+   V2.1 amendment (design/REFINEMENT-V2-1.md): restrained 2-stop gradients are
+   allowed for terminal CHROME only (appbar, panel/table headers) — no gloss,
+   no heavy shadows, content stays matte. */
 
 :root {
   /* Foundation */
@@ -16,6 +19,13 @@
   --border: #292f39;
   --border-soft: #222832;
   --border-strong: #384251;
+
+  /* Legacy aliases — referenced by page modules (Option Lab, Portfolio,
+     Watchlists, Home) but never declared before V2.1; without them those
+     rules resolved to currentColor. Keep mapped to the token family. */
+  --divider: var(--border);
+  --muted: var(--secondary);
+  --accent: var(--blue);
 
   /* Typography */
   --text: #f0f3f8;
@@ -37,4 +47,20 @@
 
   /* Numeric */
   --tabular-nums: tabular-nums;
+
+  /* V2.1 terminal chrome (REFINEMENT-V2-1.md) — chrome gradients + table
+     row system. Values mirror the reviewed review-branch CSS. */
+  --chrome-appbar-a: #1b242f;
+  --chrome-appbar-b: #111821;
+  --chrome-panel-a: #26313e;
+  --chrome-panel-b: #1a222d;
+  --chrome-quote-a: #18212b;
+  --chrome-quote-b: #111820;
+  --row-odd: #111820;
+  --row-even: #151d26;
+  --row-hover: #243546;
+  --row-selected: #203a55;
+  --row-selected-hover: #294661;
+  --row-rule: rgba(151, 176, 205, 0.055);
+  --th-label: #c5d0dd;
 }

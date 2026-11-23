@@ -487,3 +487,57 @@ button:focus-visible, input:focus-visible {
 .watch-row .muted { color: var(--muted); }
 .watch-bottom { display: flex; align-items: center; gap: 6px; padding: 7px 12px; font-size: 9.5px; color: var(--muted); cursor: pointer; border-top: 1px solid var(--divider); }
 .watch-bottom:hover { color: var(--text); }
+
+
+/* ============ V2.1 — Terminal Chrome (REFINEMENT-V2-1.md) ============
+   Style-only amendment adapted from the review branch
+   (design/terminal-refinement-api-audit-20261123). Shell measurements,
+   grid widths and financial semantics untouched. Restrained 2-stop gradients
+   are reserved for chrome; content remains matte. The obsolete .main-tabs
+   rule from the review branch is dropped — the sidebar is the single menu.
+   Row colors reference the tokens declared in src/styles/tokens.css. */
+.appbar {
+  background: linear-gradient(180deg, var(--chrome-appbar-a) 0%, var(--chrome-appbar-b) 100%);
+  border-bottom-color: #303c4a;
+}
+.panel-heading,
+.table-head {
+  background: linear-gradient(180deg, var(--chrome-panel-a) 0%, var(--chrome-panel-b) 100%);
+  border-bottom-color: #34414f;
+}
+.quoteheader {
+  background: linear-gradient(180deg, var(--chrome-quote-a) 0%, var(--chrome-quote-b) 100%);
+}
+.screener-table th {
+  background: linear-gradient(180deg, #26333f 0%, #1d2631 100%);
+  color: var(--th-label);
+  border-bottom-color: #394857;
+}
+.screener-table td {
+  border-bottom-color: #252f3a;
+}
+.screener-table th:not(:last-child),
+.screener-table td:not(:last-child) {
+  border-right: 1px solid var(--row-rule);
+}
+.screener-table tbody tr:nth-child(odd):not(.selected) td {
+  background: var(--row-odd);
+}
+.screener-table tbody tr:nth-child(even):not(.selected) td {
+  background: var(--row-even);
+}
+.screener-table tbody tr:hover td {
+  background: var(--row-hover) !important;
+}
+.screener-table tbody tr.selected td {
+  background: var(--row-selected) !important;
+}
+.screener-table tbody tr.selected:hover td {
+  background: var(--row-selected-hover) !important;
+}
+.screener-table tbody tr.selected td:first-child {
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+.table-status, .table-footer {
+  background: #171f29;
+}
