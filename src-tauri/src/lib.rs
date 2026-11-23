@@ -235,7 +235,7 @@ async fn test_connection(
     webull_access_token: Option<String>,
     webull_base_url: Option<String>,
 ) -> Result<ConnectionTestResult, String> {
-    let settings = state.settings.lock().unwrap().clone();
+    let settings = settings_of(&state);
     // several paced calls plus an MQTT probe — off the UI thread
     let result = off_ui_thread(move || {
         Ok(test_connection_with(
@@ -437,7 +437,7 @@ async fn create_access_token(
     webull_secret: Option<String>,
     webull_base_url: Option<String>,
 ) -> Result<CreateTokenResult, String> {
-    let settings = state.settings.lock().unwrap().clone();
+    let settings = settings_of(&state);
     let result = off_ui_thread(move || {
         Ok(create_access_token_with(
             settings,
@@ -630,20 +630,20 @@ fn lab_analyze(input: LabAnalyzeInput) -> Result<serde_json::Value, String> {
     }))
 }
 
-/// A REST client built from the saved settings — the shared in-memory state,
-/// not a re-read of the settings file and keyring on every call.
-fn data_client(state: &AppState) -> Result<WebullClient, String> {
+/// The saved settings. The lock guards plain data, so a poisoned lock (another
+/// thread panicked while holding it) still hands out a usable copy instead of
+/// taking every later command down with it.
+fn settings_of(state: &AppState) -> AppSettings {
     state
         .settings
         .lock()
-        .unwrap()
-        .webull_client()
-        .ok_or_else(|| "ยังไม่ได้ตั้ง credentials — เปิดหน้า Setup ก่อน".to_string())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
 }
 
 /// Run blocking REST work off the UI thread. A plain `fn` command runs on the
 /// main thread in Tauri, so every paced call (≥ 1.1 s each) would freeze the
-/// window — and the blocking client cannot live on an async runtime thread.
+/// window.
 async fn off_ui_thread<T, F>(work: F) -> Result<T, String>
 where
     F: FnOnce() -> Result<T, String> + Send + 'static,
@@ -652,6 +652,34 @@ where
     tauri::async_runtime::spawn_blocking(work)
         .await
         .map_err(|e| format!("background task failed: {e}"))?
+}
+
+/// Blocking REST work with a client built from `settings`, off the UI thread.
+/// The client wraps a blocking HTTP stack that may not be built, used or
+/// dropped on an async thread — a debug build panics outright ("Cannot drop a
+/// runtime in a context where blocking is not allowed") — so all three happen
+/// inside this closure. A command never builds the client itself.
+async fn with_client_from<T, F>(settings: AppSettings, work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut WebullClient) -> Result<T, String> + Send + 'static,
+{
+    off_ui_thread(move || {
+        let mut client = settings
+            .webull_client()
+            .ok_or_else(|| "ยังไม่ได้ตั้ง credentials — เปิดหน้า Setup ก่อน".to_string())?;
+        work(&mut client)
+    })
+    .await
+}
+
+/// `with_client_from` with the saved settings.
+async fn with_client<T, F>(state: &AppState, work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut WebullClient) -> Result<T, String> + Send + 'static,
+{
+    with_client_from(settings_of(state), work).await
 }
 
 /// Per-key TTL cache for answers that cost several paced calls or change by
@@ -705,8 +733,7 @@ async fn get_stock_history(
 ) -> Result<serde_json::Value, String> {
     use radar_core::market_history::{moving_average, range_summary};
     use radar_core::webull::stocks::{fetch_stock_bars, timespan_valid};
-    let mut client = data_client(&state)?;
-    off_ui_thread(move || {
+    with_client(&state, move |client| {
         let (timespan, count) = match range.as_str() {
             "1M" => ("D", 30u32),
             "3M" => ("D", 90),
@@ -716,7 +743,7 @@ async fn get_stock_history(
             _ => ("D", 180),
         };
         assert!(timespan_valid(timespan));
-        let bars = fetch_stock_bars(&mut client, &[symbol], timespan, count)
+        let bars = fetch_stock_bars(client, &[symbol], timespan, count)
             .map_err(|e| format!("ดึงข้อมูลราคาไม่สำเร็จ: {}", e.user_message()))?;
         let ma5 = moving_average(&bars, 5);
         let ma20 = moving_average(&bars, 20);
@@ -737,9 +764,8 @@ async fn get_instrument_profile(
     symbol: String,
 ) -> Result<serde_json::Value, String> {
     use radar_core::webull::stocks::fetch_instrument_profiles;
-    let mut client = data_client(&state)?;
-    off_ui_thread(move || {
-        let profiles = fetch_instrument_profiles(&mut client, &[symbol])
+    with_client(&state, move |client| {
+        let profiles = fetch_instrument_profiles(client, &[symbol])
             .map_err(|e| format!("ดึงโปรไฟล์ไม่สำเร็จ: {}", e.user_message()))?;
         serde_json::to_value(profiles.into_iter().next()).map_err(|e| e.to_string())
     })
@@ -826,7 +852,7 @@ fn home_overview_on(
 /// Home overview (P17.1) — quotes ของ active watchlist + สถานะ Lab capture
 #[tauri::command]
 async fn get_home_overview(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let client = state.settings.lock().unwrap().webull_client();
+    let settings = settings_of(&state);
     let store = load_watchlists(&state.app_data_dir);
     let watchlist_name = store.active_list().map(|list| list.name.clone());
     let symbols: Vec<String> = store
@@ -845,7 +871,11 @@ async fn get_home_overview(state: tauri::State<'_, AppState>) -> Result<serde_js
         }
         Err(_) => (0, None),
     };
-    let (quotes, error) = off_ui_thread(move || Ok(home_overview_on(client, &symbols))).await?;
+    let (quotes, error) = off_ui_thread(move || {
+        // the client is optional on purpose: without credentials every row says so
+        Ok(home_overview_on(settings.webull_client(), &symbols))
+    })
+    .await?;
     Ok(serde_json::json!({
         "watchlist_name": watchlist_name,
         "quotes": quotes,
@@ -949,10 +979,9 @@ async fn get_portfolio(state: tauri::State<'_, AppState>) -> Result<serde_json::
     use radar_core::webull::trading::{
         fetch_accounts, fetch_balance, fetch_open_orders, fetch_positions,
     };
-    let mut client = data_client(&state)?;
-    off_ui_thread(move || {
-        let accounts = fetch_accounts(&mut client)
-            .map_err(|e| format!("ดึงบัญชีไม่สำเร็จ: {}", e.user_message()))?;
+    with_client(&state, move |client| {
+        let accounts =
+            fetch_accounts(client).map_err(|e| format!("ดึงบัญชีไม่สำเร็จ: {}", e.user_message()))?;
         // v1: บัญชีแรก (docs บอก account_type CASH เดี่ยว) — mask ไม่เผยเต็ม
         let Some(acc) = accounts.first() else {
             return Ok(serde_json::json!({
@@ -960,15 +989,14 @@ async fn get_portfolio(state: tauri::State<'_, AppState>) -> Result<serde_json::
                 "note": "ไม่พบบัญชีในสิทธิ์นี้"
             }));
         };
-        let positions = fetch_positions(&mut client, &acc.account_id)
+        let positions = fetch_positions(client, &acc.account_id)
             .map_err(|e| format!("ดึงสถานะถือครองไม่สำเร็จ: {}", e.user_message()))?;
         // balance/orders ล้มไม่ทำทั้งหน้าพัง — แสดง positions พร้อมบอกว่าส่วนไหนดึงไม่ได้
-        let (balance, balance_error) = match fetch_balance(&mut client, &acc.account_id) {
+        let (balance, balance_error) = match fetch_balance(client, &acc.account_id) {
             Ok(balance) => (Some(balance), None),
             Err(e) => (None, Some(e.user_message())),
         };
-        let (open_orders, open_orders_error) = match fetch_open_orders(&mut client, &acc.account_id)
-        {
+        let (open_orders, open_orders_error) = match fetch_open_orders(client, &acc.account_id) {
             Ok(orders) => (orders, None),
             Err(e) => (Vec::new(), Some(e.user_message())),
         };
@@ -996,10 +1024,9 @@ async fn get_stock_quote(
 ) -> Result<serde_json::Value, String> {
     use radar_core::webull::stocks::fetch_stock_snapshots;
     let symbol = symbol.trim().to_uppercase();
-    let mut client = data_client(&state)?;
-    off_ui_thread(move || {
+    with_client(&state, move |client| {
         let fetched_at = chrono::Utc::now().to_rfc3339();
-        let snapshots = fetch_stock_snapshots(&mut client, std::slice::from_ref(&symbol), true)
+        let snapshots = fetch_stock_snapshots(client, std::slice::from_ref(&symbol), true)
             .map_err(|e| e.user_message())?;
         let quote = snapshots
             .into_iter()
@@ -1028,10 +1055,9 @@ async fn get_stock_overview(
     {
         return Ok(cached);
     }
-    let mut client = data_client(&state)?;
     let cache_key = symbol.clone();
-    let value = off_ui_thread(move || {
-        let overview = fetch_stock_overview(&mut client, &symbol);
+    let value = with_client(&state, move |client| {
+        let overview = fetch_stock_overview(client, &symbol);
         Ok(serde_json::json!({
             "symbol": symbol, "overview": overview, "fetched_at": chrono::Utc::now().to_rfc3339(),
         }))
@@ -1062,9 +1088,8 @@ async fn get_movers(
     {
         return Ok(cached);
     }
-    let mut client = data_client(&state)?;
-    let value = off_ui_thread(move || {
-        let rows = fetch_movers(&mut client, list).map_err(|e| e.user_message())?;
+    let value = with_client(&state, move |client| {
+        let rows = fetch_movers(client, list).map_err(|e| e.user_message())?;
         Ok(serde_json::json!({
             "list": list, "rows": rows,
             "fetched_at": chrono::Utc::now().to_rfc3339(), "source": "REST",
@@ -1088,9 +1113,8 @@ async fn get_sectors(
     {
         return Ok(cached);
     }
-    let mut client = data_client(&state)?;
-    let value = off_ui_thread(move || {
-        let rows = fetch_sectors(&mut client).map_err(|e| e.user_message())?;
+    let value = with_client(&state, move |client| {
+        let rows = fetch_sectors(client).map_err(|e| e.user_message())?;
         Ok(serde_json::json!({
             "rows": rows, "fetched_at": chrono::Utc::now().to_rfc3339(), "source": "REST",
         }))
@@ -1114,9 +1138,8 @@ async fn get_sector_detail(
     {
         return Ok(cached);
     }
-    let mut client = data_client(&state)?;
-    let value = off_ui_thread(move || {
-        let rows = fetch_sector_detail(&mut client, &sector_id).map_err(|e| e.user_message())?;
+    let value = with_client(&state, move |client| {
+        let rows = fetch_sector_detail(client, &sector_id).map_err(|e| e.user_message())?;
         Ok(serde_json::json!({
             "sector_id": sector_id, "rows": rows,
             "fetched_at": chrono::Utc::now().to_rfc3339(), "source": "REST",
@@ -1136,10 +1159,9 @@ async fn get_option_quote(
 ) -> Result<serde_json::Value, String> {
     use radar_core::webull::options::fetch_option_quotes;
     let symbol = symbol.trim().replace(' ', "");
-    let mut client = data_client(&state)?;
-    off_ui_thread(move || {
+    with_client(&state, move |client| {
         let fetched_at = chrono::Utc::now().to_rfc3339();
-        let quotes = fetch_option_quotes(&mut client, std::slice::from_ref(&symbol))
+        let quotes = fetch_option_quotes(client, std::slice::from_ref(&symbol))
             .map_err(|e| e.user_message())?;
         Ok(serde_json::json!({
             "symbol": symbol, "quote": quotes.into_iter().next(),
@@ -1159,11 +1181,9 @@ async fn get_option_ticks(
     use radar_core::webull::options::fetch_option_ticks;
     let symbol = symbol.trim().replace(' ', "");
     let count = count.unwrap_or(15).min(50);
-    let mut client = data_client(&state)?;
-    off_ui_thread(move || {
+    with_client(&state, move |client| {
         let fetched_at = chrono::Utc::now().to_rfc3339();
-        let ticks =
-            fetch_option_ticks(&mut client, &symbol, count).map_err(|e| e.user_message())?;
+        let ticks = fetch_option_ticks(client, &symbol, count).map_err(|e| e.user_message())?;
         Ok(serde_json::json!({
             "symbol": symbol, "ticks": ticks, "fetched_at": fetched_at, "source": "REST",
         }))
@@ -1261,7 +1281,7 @@ async fn ask_copilot(
     let cfg = state
         .settings
         .lock()
-        .unwrap()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .llm_config()
         .ok_or("ยังไม่ได้ตั้งค่า AI — เปิดหน้า Setup (ไอคอน ⚙) เพื่อใส่ LLM")?;
     // the model call takes seconds to a minute — off the UI thread
@@ -1283,7 +1303,7 @@ async fn test_llm(
     llm_model: Option<String>,
     llm_api_key: Option<String>,
 ) -> Result<ConnectionTestResult, String> {
-    let settings = state.settings.lock().unwrap().clone();
+    let settings = settings_of(&state);
     let result = off_ui_thread(move || {
         Ok(test_llm_with(
             settings,
@@ -1427,6 +1447,65 @@ mod tests {
         })
         .await;
         assert_eq!(result, Ok(42));
+    }
+
+    /// The first real launch of this layer crashed on its first command: the
+    /// blocking client was built on the async thread, and a debug build panics
+    /// there ("Cannot drop a runtime in a context where blocking is not
+    /// allowed"). This awaits the helper from an async thread — the exact
+    /// situation — so building the client anywhere but inside the closure
+    /// fails here.
+    #[tokio::test]
+    async fn client_is_built_on_the_blocking_pool() {
+        let settings = AppSettings {
+            webull_app_key: "key".into(),
+            webull_app_secret: "secret".into(),
+            ..AppSettings::default()
+        };
+        let scheme = with_client_from(settings, |client| Ok(client.signature_scheme())).await;
+        assert_eq!(scheme, Ok(SignatureScheme::V3));
+
+        let missing = with_client_from(AppSettings::default(), |_| Ok(())).await;
+        assert!(missing.unwrap_err().contains("credentials"));
+    }
+
+    /// A panic in one command must not take every later command down: the
+    /// settings lock is still readable after it is poisoned.
+    #[test]
+    fn settings_survive_a_poisoned_lock() {
+        const WHY: &str = "a command died while holding the lock";
+        std::panic::set_hook(Box::new(|info| {
+            let payload = info.payload();
+            let text = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("");
+            if !text.contains(WHY) {
+                eprintln!("unexpected panic: {text}");
+            }
+        }));
+        let state = AppState {
+            engine: std::sync::Arc::new(Mutex::new(Engine::new(Utc::now()))),
+            settings: Mutex::new(AppSettings::default()),
+            scan: ScanControl::default(),
+            app_data_dir: String::new(),
+        };
+        let lock = &state.settings;
+        std::thread::scope(|scope| {
+            let poisoned = scope.spawn(move || {
+                let _guard = lock.lock().unwrap();
+                panic!("{WHY}");
+            });
+            assert!(poisoned.join().is_err(), "the thread should have panicked");
+        });
+        let _ = std::panic::take_hook();
+
+        assert!(
+            state.settings.lock().is_err(),
+            "the lock should be poisoned"
+        );
+        assert_eq!(settings_of(&state).last_symbol, "NVDA");
     }
 }
 

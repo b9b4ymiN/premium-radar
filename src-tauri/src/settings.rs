@@ -328,12 +328,24 @@ impl AppSettings {
 mod tests {
     use super::*;
 
+    /// The Windows credential store is not consistent under concurrent access
+    /// from several tests (a just-written entry read back as missing in 4 of
+    /// 20 parallel runs), so the tests that touch it take turns.
+    static KEYRING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn keyring_turn() -> std::sync::MutexGuard<'static, ()> {
+        KEYRING
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Real OS keyring roundtrip (Windows Credential Manager). Guards the
     /// migration path: if this fails locally, saving credentials fails
     /// closed (legacy plaintext files are left as the source of truth).
     #[test]
     #[cfg(windows)]
     fn keyring_roundtrip_local() {
+        let _turn = keyring_turn();
         let e = keyring::Entry::new("premium-radar-test", "probe").expect("Entry::new");
         let _ = e.delete_credential();
         e.set_password("secret-probe").expect("set_password");
@@ -437,6 +449,7 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn keyring_restores_previous_entries_when_snapshot_fails() {
+        let _turn = keyring_turn();
         let service = "premium-radar-settings-rollback-test";
         drop_service_entries(service);
         let entry = keyring::Entry::new(service, "webull_app_key").unwrap();
@@ -460,6 +473,7 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn keyring_failure_preserves_legacy_and_never_writes_plaintext() {
+        let _turn = keyring_turn();
         let dir = temp_dir("radar-keyring-fail-test");
         let mut legacy = fake_secrets(AppSettings::default());
         legacy.last_symbol = "TSLA".into();
@@ -499,6 +513,7 @@ mod tests {
     #[cfg(windows)]
     fn keyring_success_keeps_runtime_creds_and_sanitizes_disk() {
         const SVC: &str = "premium-radar-settings-test";
+        let _turn = keyring_turn();
         drop_service_entries(SVC);
 
         let dir = temp_dir("radar-keyring-ok-test");
