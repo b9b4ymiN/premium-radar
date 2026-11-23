@@ -31,3 +31,8 @@ Thumbs.db
 
 # consult scratch (images, briefs)
 tmp/
+
+# local agent tool scratch
+.claude/
+.codex/
+AGENTS.override.md
