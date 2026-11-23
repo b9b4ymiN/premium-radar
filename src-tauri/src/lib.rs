@@ -9,6 +9,7 @@ pub mod settings;
 
 use radar_core::engine::{Engine, EngineSnapshot};
 use radar_core::screener::{Filters, Mode};
+use radar_core::webull::sign::SignatureScheme;
 use scan::ScanControl;
 use settings::AppSettings;
 
@@ -74,18 +75,13 @@ fn start_scan(
         return Err("กรุณาระบุ symbol".into());
     }
     let settings = state.settings.lock().unwrap().clone();
-    let Some(creds) = settings.webull_credentials() else {
+    if settings.webull_credentials().is_none() {
         return Err("ไม่พบ Webull API keys — เปิดหน้า Setup เพื่อตั้งค่าก่อน".into());
-    };
-    let base_url = if settings.webull_base_url.is_empty() {
-        "https://api.webull.co.th".to_string()
-    } else {
-        settings.webull_base_url.clone()
-    };
+    }
 
     state
         .scan
-        .spawn(app, state.engine.clone(), creds, base_url, symbol.clone());
+        .spawn(app, state.engine.clone(), settings, symbol.clone());
 
     // remember the last symbol for the next session (persist goes through
     // the keyring path so the scrubbed file never regains plaintext secrets;
@@ -153,6 +149,7 @@ fn save_credentials(
     llm_base_url: Option<String>,
     llm_model: Option<String>,
     llm_api_key: Option<String>,
+    webull_signature_scheme: Option<SignatureScheme>,
 ) -> Result<AppSettings, String> {
     let dir = state.app_data_dir.clone();
     let mut s = state.settings.lock().unwrap();
@@ -163,6 +160,9 @@ fn save_credentials(
     candidate.webull_app_key = webull_key.trim().to_string();
     candidate.webull_app_secret = webull_secret.trim().to_string();
     candidate.webull_access_token = webull_access_token.unwrap_or_default().trim().to_string();
+    if let Some(scheme) = webull_signature_scheme {
+        candidate.webull_signature_scheme = scheme;
+    }
     if let Some(url) = webull_base_url
         && !url.trim().is_empty()
     {
@@ -194,6 +194,10 @@ pub struct ConnectionTestResult {
     /// "entitled" | "limit" | "none" | "unknown" — None when REST already failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub streaming: Option<String>,
+    /// Set only when the configured signing scheme was rejected and the other
+    /// one worked — the setup screen then saves it together with the keys.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_scheme: Option<SignatureScheme>,
 }
 
 /// Connect-only MQTT probe on a dedicated runtime (the command thread is sync).
@@ -231,6 +235,7 @@ fn test_connection(
     webull_base_url: Option<String>,
 ) -> ConnectionTestResult {
     let s = state.settings.lock().unwrap().clone();
+    let scheme = s.webull_signature_scheme;
     let key = webull_key
         .map(|k| k.trim().to_string())
         .filter(|k| !k.is_empty())
@@ -262,30 +267,32 @@ fn test_connection(
             webull_ok: false,
             detail: "ยังไม่ได้ใส่ App Key / Secret".into(),
             streaming: None,
+            signature_scheme: None,
         };
     }
 
-    let creds = radar_core::webull::rest::Credentials {
-        app_key: key.clone(),
-        app_secret: secret.clone(),
-        access_token: token.clone(),
-    };
-    let mut client =
-        radar_core::webull::transport::WebullClient::new(creds).with_base_url(base_url.clone());
-
-    // Token status probe — SIGNING ONLY (no x-access-token attached, matching
-    // the vcpSystem bootstrap), and NON-FATAL: an endpoint 401 here must not
-    // stop the real data probe below, which is the ground truth.
-    let mut tok_note = String::new();
-    if let Some(tok) = &token {
-        let auth_only = radar_core::webull::rest::Credentials {
+    let make_client = |scheme: SignatureScheme, with_token: bool| {
+        radar_core::webull::transport::WebullClient::new(radar_core::webull::rest::Credentials {
             app_key: key.clone(),
             app_secret: secret.clone(),
-            access_token: None,
-        };
-        let mut authc = radar_core::webull::transport::WebullClient::new(auth_only)
-            .with_base_url(base_url.clone());
-        tok_note = match radar_core::webull::auth::check_token(&mut authc, tok) {
+            access_token: if with_token { token.clone() } else { None },
+        })
+        .with_base_url(base_url.clone())
+        .with_signature_scheme(scheme)
+    };
+    let probe = |client: &mut radar_core::webull::transport::WebullClient| {
+        radar_core::webull::quotes::fetch_stock_update(client, "AAPL")
+            .map(|stock| stock.map(|stock| stock.price))
+            .map_err(|e| e.to_string())
+    };
+
+    // Token status probe — SIGNING ONLY (no x-access-token attached), and
+    // NON-FATAL: an endpoint 401 here must not stop the data probe below,
+    // which is the ground truth.
+    let mut tok_note = String::new();
+    if let Some(tok) = &token {
+        tok_note = match radar_core::webull::auth::check_token(&mut make_client(scheme, false), tok)
+        {
             Ok(tc) if tc.status == radar_core::webull::auth::TokenStatus::Normal => {
                 let exp = tc
                     .expires_ms
@@ -300,79 +307,81 @@ fn test_connection(
         };
     }
 
-    let probe = |c: &mut radar_core::webull::transport::WebullClient,
-                 sym: &str|
-     -> Result<Option<f64>, String> {
-        match radar_core::webull::quotes::fetch_stock_update(c, sym) {
-            Ok(stk) => Ok(stk.map(|s| s.price)),
-            Err(e) => Err(format!("{e}")),
-        }
-    };
-
-    // creds for the MQTT entitlement probe (client above owns the first set)
+    // creds for the MQTT entitlement probe
     let probe_creds = radar_core::webull::rest::Credentials {
         app_key: key.clone(),
         app_secret: secret.clone(),
         access_token: None,
     };
 
-    match probe(&mut client, "AAPL") {
-        Ok(Some(price)) => ConnectionTestResult {
-            webull_ok: true,
-            detail: format!("เชื่อมต่อสำเร็จ — AAPL ${price:.2}{tok_note}"),
-            streaming: Some(streaming_verdict(&probe_creds, &base_url)),
-        },
-        Ok(None) => ConnectionTestResult {
-            webull_ok: false,
-            detail: "ตอบกลับ 200 แต่ไม่พบข้อมูล (เช็คสิทธิ์ดูข้อมูล US ของ app key นี้)".into(),
-            streaming: None,
-        },
-        Err(with_tok_err) if token.is_some() => {
-            // The token may be the problem — retry the same probe WITHOUT it.
-            let no_tok = radar_core::webull::rest::Credentials {
-                app_key: key,
-                app_secret: secret,
-                access_token: None,
-            };
-            let mut bare =
-                radar_core::webull::transport::WebullClient::new(no_tok).with_base_url(base_url);
-            match probe(&mut bare, "AAPL") {
-                Ok(Some(price)) => ConnectionTestResult {
+    // The configured signing scheme goes first, then the other one. Each is
+    // tried with the token and — because a stale token alone can cause a 401
+    // on hosts that do not need one — without it.
+    let mut attempts: Vec<(SignatureScheme, bool)> = Vec::new();
+    for candidate in [scheme, scheme.other()] {
+        attempts.push((candidate, true));
+        if token.is_some() {
+            attempts.push((candidate, false));
+        }
+    }
+    let mut first_error: Option<String> = None;
+    for (candidate, with_token) in attempts {
+        let switched = (candidate != scheme).then_some(candidate);
+        match probe(&mut make_client(candidate, with_token)) {
+            Ok(Some(price)) if token.is_some() && !with_token => {
+                // the same scheme passes once the token is removed
+                return ConnectionTestResult {
                     webull_ok: false,
                     detail: format!(
                         "ใส่ Access Token แล้วโดน 401 แต่ตัด token ออกแล้วผ่าน (AAPL ${price:.2}) \
                          — token นี้ใช้ไม่ได้: ลบค่าในช่อง Access Token ทิ้งแล้วบันทึกได้เลย"
                     ),
                     streaming: None,
-                },
-                _ => ConnectionTestResult {
-                    webull_ok: false,
-                    detail: format!(
-                        "{with_tok_err}{tok_note} — ส่งทั้งมีและไม่มี token ก็ 401: \
-                         key อาจเป็นของ UAT (ลอง Base URL https://th-api.uat.webullbroker.com) \
-                         หรือ app key นี้ไม่มีสิทธิ์ market-data"
-                    ),
-                    streaming: None,
-                },
+                    signature_scheme: switched,
+                };
+            }
+            Ok(Some(price)) => {
+                let scheme_note = if candidate == scheme {
+                    String::new()
+                } else {
+                    format!(" · ใช้ลายเซ็น {}", candidate.x_version())
+                };
+                return ConnectionTestResult {
+                    webull_ok: true,
+                    detail: format!("เชื่อมต่อสำเร็จ — AAPL ${price:.2}{tok_note}{scheme_note}"),
+                    streaming: Some(streaming_verdict(&probe_creds, &base_url)),
+                    signature_scheme: switched,
+                };
+            }
+            Ok(None) => {
+                first_error.get_or_insert_with(|| {
+                    "ตอบกลับ 200 แต่ไม่พบข้อมูล (เช็คสิทธิ์ดูข้อมูล US ของ app key นี้)".to_string()
+                });
+            }
+            Err(e) => {
+                first_error.get_or_insert(e);
             }
         }
-        Err(e) => {
-            let d = e.to_string();
-            let hint = if d.contains("401") || d.to_lowercase().contains("unauthorized") {
-                " — Key/Secret ถูกแต่ไม่ผ่าน: สร้าง Access Token ใหม่ด้วย \
-                 `node tools/probe-webull.mjs --token-create` (ยืนยัน SMS ในแอป Webull) \
-                 หรือลอง Base URL ของ UAT (https://th-api.uat.webullbroker.com) ถ้า key เป็นคู่ทดสอบ"
-            } else if d.contains("403") {
-                " — key ถูกต้องแต่ไม่มีสิทธิ์เรียก endpoint นี้"
-            } else {
-                ""
-            };
-            ConnectionTestResult {
-                webull_ok: false,
-                detail: format!("{d}{hint}"),
-                streaming: None,
-            }
-        }
+    }
+
+    let d = first_error.unwrap_or_default();
+    let hint = if d.contains("401")
+        || d.contains("INVALID_TOKEN")
+        || d.to_lowercase().contains("unauthorized")
+    {
+        " — Key/Secret ถูกแต่ไม่ผ่าน: สร้าง Access Token ใหม่ด้วยปุ่ม \
+         \"สร้าง Access Token ใหม่ (SMS)\" (ยืนยัน SMS ในแอป Webull) \
+         หรือลอง Base URL ของ UAT (https://th-api.uat.webullbroker.com) ถ้า key เป็นคู่ทดสอบ"
+    } else if d.contains("403") {
+        " — key ถูกต้องแต่ไม่มีสิทธิ์เรียก endpoint นี้"
+    } else {
+        ""
+    };
+    ConnectionTestResult {
+        webull_ok: false,
+        detail: format!("{d}{tok_note}{hint}"),
+        streaming: None,
+        signature_scheme: None,
     }
 }
 
@@ -431,8 +440,9 @@ fn create_access_token(
         app_secret: secret,
         access_token: None,
     };
-    let mut client =
-        radar_core::webull::transport::WebullClient::new(creds).with_base_url(base_url);
+    let mut client = radar_core::webull::transport::WebullClient::new(creds)
+        .with_base_url(base_url)
+        .with_signature_scheme(s.webull_signature_scheme);
     match radar_core::webull::auth::create_token(&mut client) {
         Ok(c) => CreateTokenResult {
             ok: true,
@@ -564,29 +574,27 @@ fn lab_analyze(input: LabAnalyzeInput) -> Result<serde_json::Value, String> {
     }))
 }
 
-struct DataCreds {
-    creds: radar_core::webull::rest::Credentials,
-}
-
-/// โหลด credentials เหมือนแอป (settings + keyring) สำหรับ commands ที่ไม่แตะ engine
-fn app_state_for_data() -> Result<DataCreds, String> {
-    let app_data = std::env::var("APPDATA")
-        .map(|a| format!("{a}/premium-radar"))
-        .unwrap_or_else(|_| ".".into());
-    let mut settings = settings::AppSettings::load(&app_data);
-    settings.pull_secrets_from_keyring();
-    settings
-        .webull_credentials()
-        .map(|creds| DataCreds { creds })
+/// A REST client built from the saved settings — the shared in-memory state,
+/// not a re-read of the settings file and keyring on every call.
+fn data_client(state: &AppState) -> Result<radar_core::webull::transport::WebullClient, String> {
+    state
+        .settings
+        .lock()
+        .unwrap()
+        .webull_client()
         .ok_or_else(|| "ยังไม่ได้ตั้ง credentials — เปิดหน้า Setup ก่อน".to_string())
 }
 
 /// APP v2 — ประวัติราคาหุ้น (PLAN-APP2 P15): bars + MA + summary จาก Rust
 #[tauri::command]
-fn get_stock_history(symbol: String, range: String) -> Result<serde_json::Value, String> {
+fn get_stock_history(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+    range: String,
+) -> Result<serde_json::Value, String> {
     use radar_core::market_history::{moving_average, range_summary};
     use radar_core::webull::stocks::{fetch_stock_bars, timespan_valid};
-    let state = app_state_for_data()?;
+    let mut client = data_client(&state)?;
     let (timespan, count) = match range.as_str() {
         "1M" => ("D", 30u32),
         "3M" => ("D", 90),
@@ -596,7 +604,6 @@ fn get_stock_history(symbol: String, range: String) -> Result<serde_json::Value,
         _ => ("D", 180),
     };
     assert!(timespan_valid(timespan));
-    let mut client = radar_core::webull::transport::WebullClient::new(state.creds);
     let bars = fetch_stock_bars(&mut client, &[symbol], timespan, count)
         .map_err(|e| format!("ดึงข้อมูลราคาไม่สำเร็จ: {e}"))?;
     let ma5 = moving_average(&bars, 5);
@@ -611,10 +618,12 @@ fn get_stock_history(symbol: String, range: String) -> Result<serde_json::Value,
 
 /// APP v2 — ข้อมูลหลักทรัพย์ (เฉพาะ fields ที่ API ให้จริง ไม่มี fundamentals)
 #[tauri::command]
-fn get_instrument_profile(symbol: String) -> Result<serde_json::Value, String> {
+fn get_instrument_profile(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+) -> Result<serde_json::Value, String> {
     use radar_core::webull::stocks::fetch_instrument_profiles;
-    let state = app_state_for_data()?;
-    let mut client = radar_core::webull::transport::WebullClient::new(state.creds);
+    let mut client = data_client(&state)?;
     let profiles = fetch_instrument_profiles(&mut client, &[symbol])
         .map_err(|e| format!("ดึงโปรไฟล์ไม่สำเร็จ: {e}"))?;
     serde_json::to_value(profiles.into_iter().next()).map_err(|e| e.to_string())
@@ -622,12 +631,10 @@ fn get_instrument_profile(symbol: String) -> Result<serde_json::Value, String> {
 
 /// Home overview (P17.1) — quotes ของ active watchlist + สถานะ Lab capture
 #[tauri::command]
-fn get_home_overview() -> Result<serde_json::Value, String> {
+fn get_home_overview(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
     use radar_core::webull::quotes::fetch_stock_snapshot;
-    let mut client = app_state_for_data()
-        .ok()
-        .map(|data| radar_core::webull::transport::WebullClient::new(data.creds));
-    let store = load_watchlists();
+    let mut client = state.settings.lock().unwrap().webull_client();
+    let store = load_watchlists(&state.app_data_dir);
     let symbols: Vec<String> = store
         .active_list()
         .map(|l| l.symbols.iter().take(20).cloned().collect())
@@ -674,11 +681,9 @@ fn get_home_overview() -> Result<serde_json::Value, String> {
         })
         .collect();
     // สถานะ Lab capture (อ่านจาก storage จริง ไม่เดา)
-    let app_data = std::env::var("APPDATA")
-        .map(|a| format!("{a}/premium-radar"))
-        .unwrap_or_else(|_| ".".into());
-    let lab =
-        radar_core::lab::storage::LabStorage::open(std::path::Path::new(&app_data).join("lab"));
+    let lab = radar_core::lab::storage::LabStorage::open(
+        std::path::Path::new(&state.app_data_dir).join("lab"),
+    );
     let (capture_days, last_capture) = match &lab {
         Ok(st) => {
             let dates = st.captured_dates().unwrap_or_default();
@@ -696,23 +701,23 @@ fn get_home_overview() -> Result<serde_json::Value, String> {
 }
 
 /// Watchlists (P16) — persistence ที่ app-data/watchlists.json
-fn watchlist_store_path() -> std::path::PathBuf {
-    let app_data = std::env::var("APPDATA")
-        .map(|a| format!("{a}/premium-radar"))
-        .unwrap_or_else(|_| ".".into());
-    std::path::Path::new(&app_data).join("watchlists.json")
+fn watchlist_store_path(app_data_dir: &str) -> std::path::PathBuf {
+    std::path::Path::new(app_data_dir).join("watchlists.json")
 }
 
-fn load_watchlists() -> radar_core::watchlists::WatchlistStore {
-    let path = watchlist_store_path();
+fn load_watchlists(app_data_dir: &str) -> radar_core::watchlists::WatchlistStore {
+    let path = watchlist_store_path(app_data_dir);
     std::fs::read_to_string(&path)
         .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default()
 }
 
-fn save_watchlists(store: &radar_core::watchlists::WatchlistStore) -> Result<(), String> {
-    let path = watchlist_store_path();
+fn save_watchlists(
+    app_data_dir: &str,
+    store: &radar_core::watchlists::WatchlistStore,
+) -> Result<(), String> {
+    let path = watchlist_store_path(app_data_dir);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -721,18 +726,19 @@ fn save_watchlists(store: &radar_core::watchlists::WatchlistStore) -> Result<(),
 }
 
 #[tauri::command]
-fn list_watchlists() -> radar_core::watchlists::WatchlistStore {
-    load_watchlists()
+fn list_watchlists(state: tauri::State<'_, AppState>) -> radar_core::watchlists::WatchlistStore {
+    load_watchlists(&state.app_data_dir)
 }
 
 #[tauri::command]
 fn save_watchlist(
+    state: tauri::State<'_, AppState>,
     list_id: Option<String>,
     action: String,
     payload: String,
 ) -> Result<radar_core::watchlists::WatchlistStore, String> {
     use radar_core::watchlists as wl;
-    let mut store = load_watchlists();
+    let mut store = load_watchlists(&state.app_data_dir);
     // ลิสต์เป็น default เมื่อยังไม่มีไฟล์ + ไม่เคยสร้าง
     if store.lists.is_empty() {
         store = wl::WatchlistStore::with_default("NVDA");
@@ -753,27 +759,26 @@ fn save_watchlist(
         "newlist" => {
             let id = store.create_list(&payload).map_err(|e| e.reason_th())?;
             let _ = store.set_active(&id);
-            save_watchlists(&store)?;
+            save_watchlists(&state.app_data_dir, &store)?;
             return Ok(store);
         }
         "deletelist" => {
             store.delete_list(&lid);
-            save_watchlists(&store)?;
+            save_watchlists(&state.app_data_dir, &store)?;
             return Ok(store);
         }
         "setactive" => store.set_active(&payload).map_err(|e| e.reason_th())?,
         other => return Err(format!("ไม่รู้จัก action: {other}")),
     }
-    save_watchlists(&store)?;
+    save_watchlists(&state.app_data_dir, &store)?;
     Ok(store)
 }
 
 /// APP v2 — พอร์ต read-only (P18): accounts → positions + balance
 #[tauri::command]
-fn get_portfolio() -> Result<serde_json::Value, String> {
+fn get_portfolio(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
     use radar_core::webull::trading::{fetch_accounts, fetch_balance, fetch_positions};
-    let state = app_state_for_data()?;
-    let mut client = radar_core::webull::transport::WebullClient::new(state.creds);
+    let mut client = data_client(&state)?;
     let accounts = fetch_accounts(&mut client).map_err(|e| format!("ดึงบัญชีไม่สำเร็จ: {e}"))?;
     // v1: บัญชีแรก (docs บอก account_type CASH เดี่ยว) — mask ไม่เผยเต็ม
     let Some(acc) = accounts.first() else {
@@ -940,6 +945,7 @@ fn test_llm(
             webull_ok: false,
             detail: "ยังไม่ได้ใส่ Base URL / Model / API Key ของ AI".into(),
             streaming: None,
+            signature_scheme: None,
         };
     }
     match radar_core::copilot::ping(&cfg) {
@@ -951,11 +957,13 @@ fn test_llm(
                 reply.chars().take(80).collect::<String>()
             ),
             streaming: None,
+            signature_scheme: None,
         },
         Err(e) => ConnectionTestResult {
             webull_ok: false,
             detail: e,
             streaming: None,
+            signature_scheme: None,
         },
     }
 }

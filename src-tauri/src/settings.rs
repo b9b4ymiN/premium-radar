@@ -6,6 +6,8 @@
 
 use radar_core::copilot::LlmConfig;
 use radar_core::webull::rest::Credentials;
+use radar_core::webull::sign::SignatureScheme;
+use radar_core::webull::transport::WebullClient;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -46,6 +48,13 @@ pub struct AppSettings {
     #[serde(default)]
     pub webull_access_token: String,
 
+    /// Request signing scheme. V3 (HMAC-SHA256) is what the official guide and
+    /// SDK send and what the Thailand host accepts; V2 stays selectable for a
+    /// host that only takes the pre-v3 algorithm. The connection test detects
+    /// and stores the working one, so nobody has to edit this by hand.
+    #[serde(default)]
+    pub webull_signature_scheme: SignatureScheme,
+
     // LLM configuration (user-configurable via setup screen)
     #[serde(default)]
     pub llm: Option<LlmConfig>,
@@ -80,12 +89,34 @@ impl Default for AppSettings {
             webull_app_secret: String::new(),
             webull_base_url: default_webull_url(),
             webull_access_token: String::new(),
+            webull_signature_scheme: SignatureScheme::default(),
             llm: None,
         }
     }
 }
 
 impl AppSettings {
+    /// The REST base URL in effect: the saved one, else production.
+    pub fn webull_base_url_or_default(&self) -> String {
+        let url = self.webull_base_url.trim();
+        if url.is_empty() {
+            default_webull_url()
+        } else {
+            url.to_string()
+        }
+    }
+
+    /// A REST client configured exactly like every other call of the app —
+    /// saved credentials, effective base URL and the selected signing scheme —
+    /// so all callers share one coordinator and one quota.
+    pub fn webull_client(&self) -> Option<WebullClient> {
+        let creds = self.webull_credentials()?;
+        Some(
+            WebullClient::new(creds)
+                .with_base_url(self.webull_base_url_or_default())
+                .with_signature_scheme(self.webull_signature_scheme),
+        )
+    }
     pub fn load(app_data_dir: &str) -> Self {
         let path = Self::path(app_data_dir);
         match fs::read_to_string(&path) {

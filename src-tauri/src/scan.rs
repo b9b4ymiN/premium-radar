@@ -10,14 +10,14 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
+use crate::settings::AppSettings;
 use radar_core::engine::{DataSource, Engine, EngineSnapshot, QuoteUpdate, StockUpdate};
 use radar_core::webull::contracts::parse_occ;
 use radar_core::webull::discovery::{fetch_symbols_flow, pick_ws_symbols};
 use radar_core::webull::pb;
 use radar_core::webull::quotes::{self, OI_BATCH};
-use radar_core::webull::rest::{Credentials, MAX_CONTRACTS, PATH_STREAMING_SUBSCRIBE};
+use radar_core::webull::rest::{MAX_CONTRACTS, PATH_STREAMING_SUBSCRIBE};
 use radar_core::webull::stream::{StreamClient, StreamConfig, StreamEvent};
-use radar_core::webull::transport::WebullClient;
 
 /// REST poll interval when the real-time feed is silent (Python `_rest_tick`:
 /// 180 s without WS, 60 s with).
@@ -69,8 +69,7 @@ impl ScanControl {
         &self,
         app: AppHandle,
         engine: Arc<Mutex<Engine>>,
-        creds: Credentials,
-        base_url: String,
+        settings: AppSettings,
         root: String,
     ) {
         self.stop.store(false, Ordering::SeqCst);
@@ -81,7 +80,7 @@ impl ScanControl {
         std::thread::Builder::new()
             .name("radar-scan".into())
             .spawn(move || {
-                run(app, engine, stop, running, gen_ctr, creds, base_url, root);
+                run(app, engine, stop, running, gen_ctr, settings, root);
             })
             .expect("spawn radar-scan thread");
     }
@@ -116,15 +115,21 @@ fn run(
     stop: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
     gen_ctr: Arc<AtomicU64>,
-    creds: Credentials,
-    base_url: String,
+    settings: AppSettings,
     root: String,
 ) {
     let my_gen = gen_ctr.fetch_add(1, Ordering::SeqCst) + 1;
     let stale = || stop.load(Ordering::Relaxed) || gen_ctr.load(Ordering::Relaxed) != my_gen;
     let finish = |running: &Arc<AtomicBool>| running.store(false, Ordering::SeqCst);
 
-    let mut client = WebullClient::new(creds.clone()).with_base_url(base_url.clone());
+    let Some(mut client) = settings.webull_client() else {
+        progress(
+            &app,
+            "error",
+            "ไม่พบ Webull API keys — เปิดหน้า Setup เพื่อตั้งค่าก่อน",
+        );
+        return finish(&running);
+    };
 
     // ---- Phase 1: discovery ----
     progress(
@@ -133,16 +138,21 @@ fn run(
         format!("ค้นหา option contracts ของ {root} ..."),
     );
     let mut on_progress = |msg: String| progress(&app, "discovery", msg);
+    // The stale probe lets the windowed scan stop BETWEEN pages: a symbol
+    // change retires the old discovery instead of letting it spend the quota.
     let flow = fetch_symbols_flow(
         &mut client,
         &root,
         quotes::ny_today(),
-        None,
+        Some(&stale as &dyn Fn() -> bool),
         Some(&mut on_progress),
     );
     let (symbols, spot) = match flow {
         Ok(v) => v,
         Err(e) => {
+            if stale() {
+                return finish(&running);
+            }
             let mut msg = format!("discovery ล้มเหลว: {e}");
             if msg.contains("401") || msg.to_lowercase().contains("unauthorized") {
                 msg.push_str(" — Key/Secret ไม่ถูกต้องหรือขาด Access Token (กดปุ่ม Setup เพื่อแก้ไข)");
@@ -252,8 +262,7 @@ fn run(
                 stop.clone(),
                 gen_ctr.clone(),
                 my_gen,
-                creds.clone(),
-                base_url.clone(),
+                settings.clone(),
                 root.clone(),
                 ws_symbols,
                 ws_alive.clone(),
@@ -296,8 +305,7 @@ fn spawn_ws(
     stop: Arc<AtomicBool>,
     gen_ctr: Arc<AtomicU64>,
     scan_gen: u64,
-    creds: Credentials,
-    base_url: String,
+    settings: AppSettings,
     root: String,
     ws_symbols: Vec<String>,
     ws_alive: Arc<AtomicU64>,
@@ -312,7 +320,7 @@ fn spawn_ws(
                 return;
             };
             rt.block_on(ws_loop(
-                app, engine, stop, gen_ctr, scan_gen, creds, base_url, root, ws_symbols, ws_alive,
+                app, engine, stop, gen_ctr, scan_gen, settings, root, ws_symbols, ws_alive,
             ));
         });
 }
@@ -324,13 +332,16 @@ async fn ws_loop(
     stop: Arc<AtomicBool>,
     gen_ctr: Arc<AtomicU64>,
     scan_gen: u64,
-    creds: Credentials,
-    base_url: String,
+    settings: AppSettings,
     root: String,
     ws_symbols: Vec<String>,
     ws_alive: Arc<AtomicU64>,
 ) {
     let stale = || stop.load(Ordering::Relaxed) || gen_ctr.load(Ordering::Relaxed) != scan_gen;
+    let base_url = settings.webull_base_url_or_default();
+    let Some(creds) = settings.webull_credentials() else {
+        return;
+    };
     // session id mirrors the Python SDK: "th_" + uuid hex prefix
     let session_id = format!("th_{}", &uuid::Uuid::new_v4().simple().to_string()[..10]);
 
@@ -368,8 +379,7 @@ async fn ws_loop(
                             StreamEvent::Connected if !subscribed => {
                                 subscribed = true;
                                 if let Err(e) =
-                                    do_subscribe(&creds, &base_url, &session_id, &root, &ws_symbols)
-                                        .await
+                                    do_subscribe(&settings, &session_id, &root, &ws_symbols).await
                                 {
                                     return Err(format!("subscribe ล้มเหลว: {e}"));
                                 }
@@ -467,23 +477,23 @@ async fn ws_loop(
     }
 }
 
-/// HTTP subscribe (signed POST, x-version v2) — stock root on
-/// QUOTE+SNAPSHOT+TICK, option chunks on SNAPSHOT. The WebullClient throttle
-/// paces the calls; clean-session reconnects must re-run this.
+/// HTTP subscribe (signed POST) — stock root on QUOTE+SNAPSHOT+TICK, option
+/// chunks on SNAPSHOT. The shared coordinator paces the calls with everything
+/// else; clean-session reconnects must re-run this.
 async fn do_subscribe(
-    creds: &Credentials,
-    base_url: &str,
+    settings: &AppSettings,
     session_id: &str,
     root: &str,
     ws_symbols: &[String],
 ) -> Result<(), String> {
-    let creds = creds.clone();
-    let base = base_url.to_string();
+    let settings = settings.clone();
     let sid = session_id.to_string();
     let root = root.to_string();
     let symbols = ws_symbols.to_vec();
     tokio::task::spawn_blocking(move || {
-        let mut http = WebullClient::new(creds).with_base_url(base);
+        let mut http = settings
+            .webull_client()
+            .ok_or_else(|| "ไม่พบ Webull API keys".to_string())?;
         let stock_body = serde_json::json!({
             "session_id": sid, "symbols": [root], "category": "US_STOCK",
             "sub_types": ["QUOTE", "SNAPSHOT", "TICK"],

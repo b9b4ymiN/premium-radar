@@ -22,6 +22,8 @@ interface ConnectionTestResult {
   webull_ok: boolean;
   detail: string;
   streaming?: "entitled" | "limit" | "none" | "unknown" | null;
+  /** Set only when the configured signing scheme was rejected and the other one worked. */
+  signature_scheme?: "v3" | "v2" | null;
 }
 
 interface StoredLlm {
@@ -53,6 +55,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
+  const [detectedScheme, setDetectedScheme] = useState<"v3" | "v2" | null>(null);
   const [creatingToken, setCreatingToken] = useState(false);
   const [tokenNotice, setTokenNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [testingLlm, setTestingLlm] = useState(false);
@@ -103,6 +106,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
     setTesting(true);
     setError("");
     setTestResult(null);
+    setDetectedScheme(null);
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const r = await invoke<ConnectionTestResult>("test_connection", {
@@ -112,6 +116,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
         webullBaseUrl: webullUrl.trim() || null,
       });
       setTestResult(r);
+      setDetectedScheme(r.signature_scheme ?? null);
     } catch (e) {
       setError(`ทดสอบไม่สำเร็จ: ${e}`);
     } finally {
@@ -190,6 +195,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
           webullSecret: webullSecret.trim(),
           webullBaseUrl: webullUrl.trim() || null,
           webullAccessToken: webullToken.trim() || null,
+          webullSignatureScheme: detectedScheme,
           llmLabel: llmLabel.trim() || null,
           llmBaseUrl: llmUrl.trim() || null,
           llmModel: llmModel.trim() || null,

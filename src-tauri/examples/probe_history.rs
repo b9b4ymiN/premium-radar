@@ -66,7 +66,7 @@ impl Prober {
                 });
                 (status, Value::Null)
             }
-            Err(FetchError::Network(e)) => {
+            Err(e) => {
                 println!("[{ms:>5}ms] NET {step} — {e}");
                 self.log.push(CallLog {
                     step: step.to_string(),
@@ -216,7 +216,9 @@ fn main() {
     );
 
     let mut prober = Prober {
-        client: WebullClient::new(creds),
+        client: settings
+            .webull_client()
+            .expect("no webull credentials in settings/keyring/env — run the app setup first"),
         log: Vec::new(),
     };
 

@@ -27,7 +27,6 @@ use radar_core::webull::quotes::OI_BATCH;
 use radar_core::webull::rest::{
     Credentials, PATH_OPTION_SNAPSHOT, PATH_STOCK_SNAPSHOT, WINDOWS, get_json,
 };
-use radar_core::webull::transport::WebullClient;
 use serde_json::Value;
 
 #[derive(serde::Deserialize)]
@@ -104,7 +103,9 @@ fn main() {
         std::process::exit(2);
     };
     {
-        let mut probe_client = WebullClient::new(creds.clone());
+        let mut probe_client = settings
+            .webull_client()
+            .expect("ไม่มี credentials — เปิดแอปตั้งค่าก่อน");
         let expiry_note = |ms: Option<u64>| {
             ms.and_then(|m| chrono::DateTime::from_timestamp_millis(m as i64))
                 .map(|d| format!(" valid ถึง {d}"))
@@ -143,7 +144,9 @@ fn main() {
     };
     let _ = storage.log_session_event(session, &CaptureEvent::Started { at: now });
 
-    let mut client = WebullClient::new(creds);
+    let mut client = settings
+        .webull_client()
+        .expect("ไม่มี credentials — เปิดแอปตั้งค่าก่อน");
     let mut grand_written = 0usize;
     let mut grand_dupes = 0usize;
     let mut grand_rejected = 0usize;
