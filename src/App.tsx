@@ -76,7 +76,7 @@ export default function App() {
   const [strategy, setStrategy] = useState("CSP+CC");
   const [risk, setRisk] = useState("BALANCED");
   const [budget, setBudget] = useState("18000");
-  const [tab, setTab] = useState("all");
+  // (side-filter ใช้ strategy เดียวกับ FilterBar แล้ว)
   const [mainTab, setMainTab] = useState<"home" | "monitor" | "lab" | "portfolio" | "watchlist">("home");
   // watchlist จริงสำหรับ left panel (quotes + ชื่อลิสต์ มาจาก Rust ทีเดียว)
   const [wlQuotes, setWlQuotes] = useState<Array<{ symbol: string; price: number; change_pct: number | null }>>([]);
@@ -427,13 +427,7 @@ export default function App() {
           {/* Scanner Table */}
           <section className="tablemodule">
             <div className="table-head">
-              <button className={`t-tab ${tab === "all" ? "on" : ""}`} onClick={() => setTab("all")}>All ({rows.length})</button>
-              <button className={`t-tab ${tab === "put" ? "on" : ""}`} onClick={() => setTab("put")}>Put · CSP</button>
-              <button className={`t-tab ${tab === "call" ? "on" : ""}`} onClick={() => setTab("call")}>Call · CC</button>
-              <div className="tabletools">
-                <button className="tool-pill on">Scanner</button>
-                <button className="tool-pill" disabled title="มุม Option Chain ยังไม่เปิดใช้ — ใช้แท็บ Option Lab วิเคราะห์รายสัญญาแทน">Option Chain</button>
-              </div>
+              <span className="th-title">สัญญาที่ผ่านเกณฑ์ · {rows.length} รายการ</span>
             </div>
             <div className="table-status">
               <span>{hasTauri ? scanMsg : "Funnel: OTM → delta → DTE → spread → premium → budget"}</span>
@@ -450,7 +444,7 @@ export default function App() {
                 </thead>
                 <tbody>
                   {(() => {
-                    const visible = rows.filter(r => tab === "all" || (tab === "put" ? r.q.option_type === "P" : r.q.option_type === "C"));
+                    const visible = rows.filter(r => strategy === "CSP+CC" || (strategy === "CSP" ? r.q.option_type === "P" : r.q.option_type === "C"));
                     if (visible.length === 0 && hasTauri) {
                       return (
                         <tr className="empty-row">
