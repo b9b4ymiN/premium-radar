@@ -10,6 +10,7 @@ pub mod settings;
 use radar_core::engine::{Engine, EngineSnapshot};
 use radar_core::screener::{Filters, Mode};
 use radar_core::webull::sign::SignatureScheme;
+use radar_core::webull::transport::WebullClient;
 use scan::ScanControl;
 use settings::AppSettings;
 
@@ -227,14 +228,43 @@ fn streaming_verdict(creds: &radar_core::webull::rest::Credentials, base_url: &s
 /// surface before the user starts a full scan.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-fn test_connection(
+async fn test_connection(
     state: tauri::State<'_, AppState>,
     webull_key: Option<String>,
     webull_secret: Option<String>,
     webull_access_token: Option<String>,
     webull_base_url: Option<String>,
+) -> Result<ConnectionTestResult, String> {
+    let settings = state.settings.lock().unwrap().clone();
+    // several paced calls plus an MQTT probe — off the UI thread
+    let result = off_ui_thread(move || {
+        Ok(test_connection_with(
+            settings,
+            webull_key,
+            webull_secret,
+            webull_access_token,
+            webull_base_url,
+        ))
+    })
+    .await
+    .unwrap_or_else(|e| ConnectionTestResult {
+        webull_ok: false,
+        detail: e,
+        streaming: None,
+        signature_scheme: None,
+    });
+    Ok(result)
+}
+
+/// The probe itself; `s` is what typed values fall back to.
+#[allow(clippy::too_many_arguments)]
+fn test_connection_with(
+    s: AppSettings,
+    webull_key: Option<String>,
+    webull_secret: Option<String>,
+    webull_access_token: Option<String>,
+    webull_base_url: Option<String>,
 ) -> ConnectionTestResult {
-    let s = state.settings.lock().unwrap().clone();
     let scheme = s.webull_signature_scheme;
     let key = webull_key
         .map(|k| k.trim().to_string())
@@ -401,13 +431,39 @@ pub struct CreateTokenResult {
 /// user confirms in the Webull app within 5 minutes; `test_connection` then
 /// reports NORMAL.
 #[tauri::command]
-fn create_access_token(
+async fn create_access_token(
     state: tauri::State<'_, AppState>,
     webull_key: Option<String>,
     webull_secret: Option<String>,
     webull_base_url: Option<String>,
+) -> Result<CreateTokenResult, String> {
+    let settings = state.settings.lock().unwrap().clone();
+    let result = off_ui_thread(move || {
+        Ok(create_access_token_with(
+            settings,
+            webull_key,
+            webull_secret,
+            webull_base_url,
+        ))
+    })
+    .await
+    .unwrap_or_else(|e| CreateTokenResult {
+        ok: false,
+        status: "NONE".into(),
+        token: None,
+        expires_ms: None,
+        detail: e,
+    });
+    Ok(result)
+}
+
+/// The request itself; `s` is what typed values fall back to.
+fn create_access_token_with(
+    s: AppSettings,
+    webull_key: Option<String>,
+    webull_secret: Option<String>,
+    webull_base_url: Option<String>,
 ) -> CreateTokenResult {
-    let s = state.settings.lock().unwrap().clone();
     let key = webull_key
         .map(|k| k.trim().to_string())
         .filter(|k| !k.is_empty())
@@ -576,7 +632,7 @@ fn lab_analyze(input: LabAnalyzeInput) -> Result<serde_json::Value, String> {
 
 /// A REST client built from the saved settings — the shared in-memory state,
 /// not a re-read of the settings file and keyring on every call.
-fn data_client(state: &AppState) -> Result<radar_core::webull::transport::WebullClient, String> {
+fn data_client(state: &AppState) -> Result<WebullClient, String> {
     state
         .settings
         .lock()
@@ -585,9 +641,64 @@ fn data_client(state: &AppState) -> Result<radar_core::webull::transport::Webull
         .ok_or_else(|| "ยังไม่ได้ตั้ง credentials — เปิดหน้า Setup ก่อน".to_string())
 }
 
+/// Run blocking REST work off the UI thread. A plain `fn` command runs on the
+/// main thread in Tauri, so every paced call (≥ 1.1 s each) would freeze the
+/// window — and the blocking client cannot live on an async runtime thread.
+async fn off_ui_thread<T, F>(work: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| format!("background task failed: {e}"))?
+}
+
+/// Per-key TTL cache for answers that cost several paced calls or change by
+/// the minute. Values keep their original `fetched_at`, so a hit is honest
+/// about its age.
+struct TtlCache<T> {
+    ttl: std::time::Duration,
+    entries: std::collections::HashMap<String, (std::time::Instant, T)>,
+}
+
+impl<T: Clone> TtlCache<T> {
+    fn new(ttl: std::time::Duration) -> Self {
+        Self {
+            ttl,
+            entries: std::collections::HashMap::new(),
+        }
+    }
+
+    fn get(&self, key: &str) -> Option<T> {
+        self.entries
+            .get(key)
+            .filter(|(at, _)| at.elapsed() < self.ttl)
+            .map(|(_, value)| value.clone())
+    }
+
+    fn put(&mut self, key: &str, value: T) {
+        if self.entries.len() >= 32 {
+            self.entries.retain(|_, (at, _)| at.elapsed() < self.ttl);
+        }
+        self.entries
+            .insert(key.to_string(), (std::time::Instant::now(), value));
+    }
+}
+
+/// Company facts change slowly; screener ranks move by the minute.
+static OVERVIEW_CACHE: std::sync::LazyLock<std::sync::Mutex<TtlCache<serde_json::Value>>> =
+    std::sync::LazyLock::new(|| {
+        std::sync::Mutex::new(TtlCache::new(std::time::Duration::from_secs(600)))
+    });
+static MOVERS_CACHE: std::sync::LazyLock<std::sync::Mutex<TtlCache<serde_json::Value>>> =
+    std::sync::LazyLock::new(|| {
+        std::sync::Mutex::new(TtlCache::new(std::time::Duration::from_secs(60)))
+    });
+
 /// APP v2 — ประวัติราคาหุ้น (PLAN-APP2 P15): bars + MA + summary จาก Rust
 #[tauri::command]
-fn get_stock_history(
+async fn get_stock_history(
     state: tauri::State<'_, AppState>,
     symbol: String,
     range: String,
@@ -595,106 +706,150 @@ fn get_stock_history(
     use radar_core::market_history::{moving_average, range_summary};
     use radar_core::webull::stocks::{fetch_stock_bars, timespan_valid};
     let mut client = data_client(&state)?;
-    let (timespan, count) = match range.as_str() {
-        "1M" => ("D", 30u32),
-        "3M" => ("D", 90),
-        "6M" => ("D", 180),
-        "1Y" => ("D", 365),
-        "5Y" => ("D", 1200),
-        _ => ("D", 180),
-    };
-    assert!(timespan_valid(timespan));
-    let bars = fetch_stock_bars(&mut client, &[symbol], timespan, count)
-        .map_err(|e| format!("ดึงข้อมูลราคาไม่สำเร็จ: {e}"))?;
-    let ma5 = moving_average(&bars, 5);
-    let ma20 = moving_average(&bars, 20);
-    let summary = range_summary(&bars);
-    Ok(serde_json::json!({
-        "bars": bars, "ma5": ma5, "ma20": ma20,
-        "summary": summary, "range": range,
-        "note": "ราคาปิดรายวัน · ฐานปรับราคาตามที่ API ส่ง (ยังไม่ยืนยัน adjusted/crude)",
-    }))
+    off_ui_thread(move || {
+        let (timespan, count) = match range.as_str() {
+            "1M" => ("D", 30u32),
+            "3M" => ("D", 90),
+            "6M" => ("D", 180),
+            "1Y" => ("D", 365),
+            "5Y" => ("D", 1200),
+            _ => ("D", 180),
+        };
+        assert!(timespan_valid(timespan));
+        let bars = fetch_stock_bars(&mut client, &[symbol], timespan, count)
+            .map_err(|e| format!("ดึงข้อมูลราคาไม่สำเร็จ: {}", e.user_message()))?;
+        let ma5 = moving_average(&bars, 5);
+        let ma20 = moving_average(&bars, 20);
+        let summary = range_summary(&bars);
+        Ok(serde_json::json!({
+            "bars": bars, "ma5": ma5, "ma20": ma20,
+            "summary": summary, "range": range,
+            "note": "ราคาปิดรายวัน · ฐานปรับราคาตามที่ API ส่ง (ยังไม่ยืนยัน adjusted/crude)",
+        }))
+    })
+    .await
 }
 
-/// APP v2 — ข้อมูลหลักทรัพย์ (เฉพาะ fields ที่ API ให้จริง ไม่มี fundamentals)
+/// APP v2 — ข้อมูลหลักทรัพย์ (เฉพาะ fields ที่ API ให้จริง)
 #[tauri::command]
-fn get_instrument_profile(
+async fn get_instrument_profile(
     state: tauri::State<'_, AppState>,
     symbol: String,
 ) -> Result<serde_json::Value, String> {
     use radar_core::webull::stocks::fetch_instrument_profiles;
     let mut client = data_client(&state)?;
-    let profiles = fetch_instrument_profiles(&mut client, &[symbol])
-        .map_err(|e| format!("ดึงโปรไฟล์ไม่สำเร็จ: {e}"))?;
-    serde_json::to_value(profiles.into_iter().next()).map_err(|e| e.to_string())
+    off_ui_thread(move || {
+        let profiles = fetch_instrument_profiles(&mut client, &[symbol])
+            .map_err(|e| format!("ดึงโปรไฟล์ไม่สำเร็จ: {}", e.user_message()))?;
+        serde_json::to_value(profiles.into_iter().next()).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// Epoch milliseconds → RFC 3339; zero and missing stay `None`.
+fn epoch_ms(ms: Option<i64>) -> Option<String> {
+    ms.filter(|ms| *ms > 0)
+        .and_then(chrono::DateTime::from_timestamp_millis)
+        .map(|time| time.to_rfc3339())
+}
+
+/// One watchlist quote row. Only an available row carries numbers; any other
+/// row says why it has none.
+fn quote_row(
+    symbol: &str,
+    snapshot: Option<&radar_core::webull::stocks::StockSnapshot>,
+    reason: Option<&str>,
+    received_at: &str,
+) -> serde_json::Value {
+    match snapshot {
+        Some(snapshot) if snapshot.price.unwrap_or(0.0) > 0.0 => serde_json::json!({
+            "symbol": symbol,
+            "status": "available",
+            "price": snapshot.price,
+            "change_pct": snapshot.change_ratio.map(|ratio| ratio * 100.0),
+            "volume": snapshot.volume,
+            "source": "REST",
+            // a regular-session quote: the list never asks for extended hours
+            "market_session": "regular",
+            "source_timestamp": epoch_ms(snapshot.last_trade_time_ms),
+            "received_at": received_at,
+        }),
+        Some(_) => serde_json::json!({"symbol": symbol, "status": "no_data"}),
+        None => serde_json::json!({"symbol": symbol, "status": "error", "reason": reason}),
+    }
+}
+
+/// Every symbol of the watchlist in ONE batched request (it used to be one
+/// paced call per symbol), each row stating its own availability. Returns the
+/// rows and, when the whole call failed, the reason.
+fn home_overview_on(
+    mut client: Option<WebullClient>,
+    symbols: &[String],
+) -> (Vec<serde_json::Value>, Option<String>) {
+    use radar_core::webull::stocks::fetch_stock_snapshots;
+    if symbols.is_empty() {
+        return (Vec::new(), None);
+    }
+    let Some(client) = client.as_mut() else {
+        let rows = symbols
+            .iter()
+            .map(|symbol| serde_json::json!({"symbol": symbol, "status": "setup_required"}))
+            .collect();
+        return (rows, None);
+    };
+    let received_at = chrono::Utc::now().to_rfc3339();
+    match fetch_stock_snapshots(client, symbols, false) {
+        Ok(snapshots) => {
+            // keep the watchlist order; a symbol the broker did not price is "no data"
+            let rows = symbols
+                .iter()
+                .map(|symbol| {
+                    let snapshot = snapshots.iter().find(|snapshot| snapshot.symbol == *symbol);
+                    quote_row(symbol, snapshot, None, &received_at)
+                })
+                .collect();
+            (rows, None)
+        }
+        Err(error) => {
+            let reason = error.user_message();
+            let rows = symbols
+                .iter()
+                .map(|symbol| {
+                    serde_json::json!({"symbol": symbol, "status": "error", "reason": reason})
+                })
+                .collect();
+            (rows, Some(reason))
+        }
+    }
 }
 
 /// Home overview (P17.1) — quotes ของ active watchlist + สถานะ Lab capture
 #[tauri::command]
-fn get_home_overview(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
-    use radar_core::webull::quotes::fetch_stock_snapshot;
-    let mut client = state.settings.lock().unwrap().webull_client();
+async fn get_home_overview(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let client = state.settings.lock().unwrap().webull_client();
     let store = load_watchlists(&state.app_data_dir);
+    let watchlist_name = store.active_list().map(|list| list.name.clone());
     let symbols: Vec<String> = store
         .active_list()
-        .map(|l| l.symbols.iter().take(20).cloned().collect())
+        .map(|list| list.symbols.iter().take(20).cloned().collect())
         .unwrap_or_default();
-    let quotes: Vec<_> = symbols
-        .iter()
-        .map(|symbol| {
-            let Some(client) = client.as_mut() else {
-                return serde_json::json!({"symbol": symbol, "status": "setup_required"});
-            };
-            let snapshot = match fetch_stock_snapshot(client, symbol) {
-                Ok(Some(row)) => row,
-                Ok(None) => return serde_json::json!({"symbol": symbol, "status": "no_data"}),
-                Err(_) => return serde_json::json!({"symbol": symbol, "status": "error"}),
-            };
-            let number = |key| {
-                snapshot.get(key).and_then(|value| {
-                    value
-                        .as_f64()
-                        .or_else(|| value.as_str()?.parse().ok())
-                        .filter(|n| n.is_finite())
-                })
-            };
-            let Some(price) = number("price").filter(|price| *price > 0.0) else {
-                return serde_json::json!({"symbol": symbol, "status": "no_data"});
-            };
-            let source_timestamp = snapshot
-                .get("last_trade_time")
-                .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()))
-                .filter(|timestamp| *timestamp > 0)
-                .and_then(chrono::DateTime::from_timestamp_millis)
-                .map(|timestamp| timestamp.to_rfc3339());
-            serde_json::json!({
-                "symbol": symbol,
-                "status": "available",
-                "price": price,
-                "change_pct": number("change_ratio").map(|ratio| ratio * 100.0),
-                "volume": number("volume").filter(|volume| *volume >= 0.0),
-                "source": "REST",
-                "market_session": "regular",
-                "source_timestamp": source_timestamp,
-                "received_at": chrono::Utc::now().to_rfc3339(),
-            })
-        })
-        .collect();
     // สถานะ Lab capture (อ่านจาก storage จริง ไม่เดา)
     let lab = radar_core::lab::storage::LabStorage::open(
         std::path::Path::new(&state.app_data_dir).join("lab"),
     );
     let (capture_days, last_capture) = match &lab {
-        Ok(st) => {
-            let dates = st.captured_dates().unwrap_or_default();
-            let last = dates.last().map(|d| d.to_string());
+        Ok(storage) => {
+            let dates = storage.captured_dates().unwrap_or_default();
+            let last = dates.last().map(|date| date.to_string());
             (dates.len(), last)
         }
         Err(_) => (0, None),
     };
+    let (quotes, error) = off_ui_thread(move || Ok(home_overview_on(client, &symbols))).await?;
     Ok(serde_json::json!({
-        "watchlist_name": store.active_list().map(|l| l.name.clone()),
+        "watchlist_name": watchlist_name,
         "quotes": quotes,
+        "error": error,
         "lab": {"capture_days": capture_days, "last_capture": last_capture},
         "fetched_at": chrono::Utc::now().to_rfc3339(),
     }))
@@ -774,30 +929,10 @@ fn save_watchlist(
     Ok(store)
 }
 
-/// APP v2 — พอร์ต read-only (P18): accounts → positions + balance
-#[tauri::command]
-fn get_portfolio(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
-    use radar_core::webull::trading::{fetch_accounts, fetch_balance, fetch_positions};
-    let mut client = data_client(&state)?;
-    let accounts = fetch_accounts(&mut client).map_err(|e| format!("ดึงบัญชีไม่สำเร็จ: {e}"))?;
-    // v1: บัญชีแรก (docs บอก account_type CASH เดี่ยว) — mask ไม่เผยเต็ม
-    let Some(acc) = accounts.first() else {
-        return Ok(serde_json::json!({
-            "accounts": [], "positions": [], "balance": null,
-            "note": "ไม่พบบัญชีในสิทธิ์นี้"
-        }));
-    };
-    let positions = fetch_positions(&mut client, &acc.account_id)
-        .map_err(|e| format!("ดึงสถานะถือครองไม่สำเร็จ: {e}"))?;
-    let balance = fetch_balance(&mut client, &acc.account_id)
-        .map_err(|e| {
-            // balance ล้มไม่ทำทั้งหน้าพัง — แสดง positions พร้อมบอกว่ายอดเงินดึงไม่ได้
-            let _ = e;
-        })
-        .ok();
-    let head: String = acc.account_number.chars().take(4).collect();
-    let tail: String = acc
-        .account_number
+/// Show only the first 4 and last 3 characters of an account number.
+fn mask_account(number: &str) -> String {
+    let head: String = number.chars().take(4).collect();
+    let tail: String = number
         .chars()
         .rev()
         .take(3)
@@ -805,14 +940,235 @@ fn get_portfolio(state: tauri::State<'_, AppState>) -> Result<serde_json::Value,
         .into_iter()
         .rev()
         .collect();
-    let masked = format!("{head}…{tail}");
-    Ok(serde_json::json!({
-        "account_label": acc.account_label,
-        "account_masked": masked,
-        "as_of": chrono::Utc::now().to_rfc3339(),
-        "positions": positions,
-        "balance": balance,
-    }))
+    format!("{head}…{tail}")
+}
+
+/// APP v2 — พอร์ต read-only (P18): accounts → positions + balance + open orders
+#[tauri::command]
+async fn get_portfolio(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
+    use radar_core::webull::trading::{
+        fetch_accounts, fetch_balance, fetch_open_orders, fetch_positions,
+    };
+    let mut client = data_client(&state)?;
+    off_ui_thread(move || {
+        let accounts = fetch_accounts(&mut client)
+            .map_err(|e| format!("ดึงบัญชีไม่สำเร็จ: {}", e.user_message()))?;
+        // v1: บัญชีแรก (docs บอก account_type CASH เดี่ยว) — mask ไม่เผยเต็ม
+        let Some(acc) = accounts.first() else {
+            return Ok(serde_json::json!({
+                "accounts": [], "positions": [], "balance": null, "open_orders": [],
+                "note": "ไม่พบบัญชีในสิทธิ์นี้"
+            }));
+        };
+        let positions = fetch_positions(&mut client, &acc.account_id)
+            .map_err(|e| format!("ดึงสถานะถือครองไม่สำเร็จ: {}", e.user_message()))?;
+        // balance/orders ล้มไม่ทำทั้งหน้าพัง — แสดง positions พร้อมบอกว่าส่วนไหนดึงไม่ได้
+        let (balance, balance_error) = match fetch_balance(&mut client, &acc.account_id) {
+            Ok(balance) => (Some(balance), None),
+            Err(e) => (None, Some(e.user_message())),
+        };
+        let (open_orders, open_orders_error) = match fetch_open_orders(&mut client, &acc.account_id)
+        {
+            Ok(orders) => (orders, None),
+            Err(e) => (Vec::new(), Some(e.user_message())),
+        };
+        Ok(serde_json::json!({
+            "account_label": acc.account_label,
+            "account_masked": mask_account(&acc.account_number),
+            "as_of": chrono::Utc::now().to_rfc3339(),
+            "positions": positions,
+            "balance": balance,
+            "balance_error": balance_error,
+            "open_orders": open_orders,
+            "open_orders_error": open_orders_error,
+        }))
+    })
+    .await
+}
+
+/// Quote-header context: the stock WITH its extended-hours block and the
+/// broker's own stats. The scanner's stock price stays regular-session; this
+/// call exists so a pre/after-hours move is visible next to it, labelled.
+#[tauri::command]
+async fn get_stock_quote(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+) -> Result<serde_json::Value, String> {
+    use radar_core::webull::stocks::fetch_stock_snapshots;
+    let symbol = symbol.trim().to_uppercase();
+    let mut client = data_client(&state)?;
+    off_ui_thread(move || {
+        let fetched_at = chrono::Utc::now().to_rfc3339();
+        let snapshots = fetch_stock_snapshots(&mut client, std::slice::from_ref(&symbol), true)
+            .map_err(|e| e.user_message())?;
+        let quote = snapshots
+            .into_iter()
+            .next()
+            .filter(|snapshot| snapshot.price.unwrap_or(0.0) > 0.0);
+        Ok(serde_json::json!({
+            "symbol": symbol, "quote": quote, "fetched_at": fetched_at, "source": "REST",
+        }))
+    })
+    .await
+}
+
+/// What the company is, when it reports and goes ex-dividend, and where
+/// analysts stand. Five paced calls, so an answer that carries something is
+/// reused for ten minutes; `refresh` asks again.
+#[tauri::command]
+async fn get_stock_overview(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+    refresh: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    use radar_core::webull::fundamentals::fetch_stock_overview;
+    let symbol = symbol.trim().to_uppercase();
+    if !refresh.unwrap_or(false)
+        && let Some(cached) = OVERVIEW_CACHE.lock().unwrap().get(&symbol)
+    {
+        return Ok(cached);
+    }
+    let mut client = data_client(&state)?;
+    let cache_key = symbol.clone();
+    let value = off_ui_thread(move || {
+        let overview = fetch_stock_overview(&mut client, &symbol);
+        Ok(serde_json::json!({
+            "symbol": symbol, "overview": overview, "fetched_at": chrono::Utc::now().to_rfc3339(),
+        }))
+    })
+    .await?;
+    let landed =
+        value["overview"]["profile"].is_object() || value["overview"]["next_earnings"].is_object();
+    if landed {
+        OVERVIEW_CACHE
+            .lock()
+            .unwrap()
+            .put(&cache_key, value.clone());
+    }
+    Ok(value)
+}
+
+/// One screener list in the broker's ranking order, reused for a minute.
+#[tauri::command]
+async fn get_movers(
+    state: tauri::State<'_, AppState>,
+    list: radar_core::webull::screeners::MoverList,
+    refresh: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    use radar_core::webull::screeners::fetch_movers;
+    let key = format!("movers:{list:?}");
+    if !refresh.unwrap_or(false)
+        && let Some(cached) = MOVERS_CACHE.lock().unwrap().get(&key)
+    {
+        return Ok(cached);
+    }
+    let mut client = data_client(&state)?;
+    let value = off_ui_thread(move || {
+        let rows = fetch_movers(&mut client, list).map_err(|e| e.user_message())?;
+        Ok(serde_json::json!({
+            "list": list, "rows": rows,
+            "fetched_at": chrono::Utc::now().to_rfc3339(), "source": "REST",
+        }))
+    })
+    .await?;
+    MOVERS_CACHE.lock().unwrap().put(&key, value.clone());
+    Ok(value)
+}
+
+/// Market sectors with breadth and leading stock, reused for a minute.
+#[tauri::command]
+async fn get_sectors(
+    state: tauri::State<'_, AppState>,
+    refresh: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    use radar_core::webull::screeners::fetch_sectors;
+    let key = "sectors";
+    if !refresh.unwrap_or(false)
+        && let Some(cached) = MOVERS_CACHE.lock().unwrap().get(key)
+    {
+        return Ok(cached);
+    }
+    let mut client = data_client(&state)?;
+    let value = off_ui_thread(move || {
+        let rows = fetch_sectors(&mut client).map_err(|e| e.user_message())?;
+        Ok(serde_json::json!({
+            "rows": rows, "fetched_at": chrono::Utc::now().to_rfc3339(), "source": "REST",
+        }))
+    })
+    .await?;
+    MOVERS_CACHE.lock().unwrap().put(key, value.clone());
+    Ok(value)
+}
+
+/// The stocks of one sector, reused for a minute.
+#[tauri::command]
+async fn get_sector_detail(
+    state: tauri::State<'_, AppState>,
+    sector_id: String,
+    refresh: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    use radar_core::webull::screeners::fetch_sector_detail;
+    let key = format!("sector:{sector_id}");
+    if !refresh.unwrap_or(false)
+        && let Some(cached) = MOVERS_CACHE.lock().unwrap().get(&key)
+    {
+        return Ok(cached);
+    }
+    let mut client = data_client(&state)?;
+    let value = off_ui_thread(move || {
+        let rows = fetch_sector_detail(&mut client, &sector_id).map_err(|e| e.user_message())?;
+        Ok(serde_json::json!({
+            "sector_id": sector_id, "rows": rows,
+            "fetched_at": chrono::Utc::now().to_rfc3339(), "source": "REST",
+        }))
+    })
+    .await?;
+    MOVERS_CACHE.lock().unwrap().put(&key, value.clone());
+    Ok(value)
+}
+
+/// What the broker itself quotes for one contract: sizes, open interest,
+/// greeks, implied volatility and the quote's own timestamps.
+#[tauri::command]
+async fn get_option_quote(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+) -> Result<serde_json::Value, String> {
+    use radar_core::webull::options::fetch_option_quotes;
+    let symbol = symbol.trim().replace(' ', "");
+    let mut client = data_client(&state)?;
+    off_ui_thread(move || {
+        let fetched_at = chrono::Utc::now().to_rfc3339();
+        let quotes = fetch_option_quotes(&mut client, std::slice::from_ref(&symbol))
+            .map_err(|e| e.user_message())?;
+        Ok(serde_json::json!({
+            "symbol": symbol, "quote": quotes.into_iter().next(),
+            "fetched_at": fetched_at, "source": "REST",
+        }))
+    })
+    .await
+}
+
+/// The last trades of one contract, latest first.
+#[tauri::command]
+async fn get_option_ticks(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+    count: Option<u32>,
+) -> Result<serde_json::Value, String> {
+    use radar_core::webull::options::fetch_option_ticks;
+    let symbol = symbol.trim().replace(' ', "");
+    let count = count.unwrap_or(15).min(50);
+    let mut client = data_client(&state)?;
+    off_ui_thread(move || {
+        let fetched_at = chrono::Utc::now().to_rfc3339();
+        let ticks =
+            fetch_option_ticks(&mut client, &symbol, count).map_err(|e| e.user_message())?;
+        Ok(serde_json::json!({
+            "symbol": symbol, "ticks": ticks, "fetched_at": fetched_at, "source": "REST",
+        }))
+    })
+    .await
 }
 
 /// Option Lab — บันทึกคำทำนาย (freeze) ห้ามแก้ย้อนหลัง (P9.4)
@@ -898,7 +1254,7 @@ fn lab_predictions(state: tauri::State<'_, AppState>) -> Result<Vec<serde_json::
 /// Ask the AI copilot a question, grounded in the live engine data via
 /// function calling (top_candidates / contract_detail / chain_stats).
 #[tauri::command]
-fn ask_copilot(
+async fn ask_copilot(
     state: tauri::State<'_, AppState>,
     messages: Vec<radar_core::copilot::ChatMessage>,
 ) -> Result<String, String> {
@@ -908,25 +1264,58 @@ fn ask_copilot(
         .unwrap()
         .llm_config()
         .ok_or("ยังไม่ได้ตั้งค่า AI — เปิดหน้า Setup (ไอคอน ⚙) เพื่อใส่ LLM")?;
-    let mut engine = state.engine.lock().unwrap();
-    radar_core::copilot::chat_with_tools(&cfg, &messages, &mut engine)
+    // the model call takes seconds to a minute — off the UI thread
+    let engine = state.engine.clone();
+    off_ui_thread(move || {
+        let mut engine = engine.lock().unwrap();
+        radar_core::copilot::chat_with_tools(&cfg, &messages, &mut engine)
+    })
+    .await
 }
 
 /// Probe the LLM endpoint with either the given values (setup screen,
 /// unsaved) or the stored settings — one tiny chat completion.
 #[tauri::command]
-fn test_llm(
+async fn test_llm(
     state: tauri::State<'_, AppState>,
     llm_label: Option<String>,
     llm_base_url: Option<String>,
     llm_model: Option<String>,
     llm_api_key: Option<String>,
+) -> Result<ConnectionTestResult, String> {
+    let settings = state.settings.lock().unwrap().clone();
+    let result = off_ui_thread(move || {
+        Ok(test_llm_with(
+            settings,
+            llm_label,
+            llm_base_url,
+            llm_model,
+            llm_api_key,
+        ))
+    })
+    .await
+    .unwrap_or_else(|e| ConnectionTestResult {
+        webull_ok: false,
+        detail: e,
+        streaming: None,
+        signature_scheme: None,
+    });
+    Ok(result)
+}
+
+/// The probe itself; `s` is what typed values fall back to.
+fn test_llm_with(
+    s: AppSettings,
+    llm_label: Option<String>,
+    llm_base_url: Option<String>,
+    llm_model: Option<String>,
+    llm_api_key: Option<String>,
 ) -> ConnectionTestResult {
-    let s = state.settings.lock().unwrap().clone();
-    let pick = |o: Option<String>, cur: &str| {
-        o.map(|v| v.trim().to_string())
+    let pick = |value: Option<String>, current: &str| {
+        value
+            .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| cur.trim().to_string())
+            .unwrap_or_else(|| current.trim().to_string())
     };
     let stored = s
         .llm
@@ -965,6 +1354,79 @@ fn test_llm(
             streaming: None,
             signature_scheme: None,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// TtlCache: fresh hits only, and an entry expires by its own age.
+    #[test]
+    fn ttl_cache_expires() {
+        let mut cache = TtlCache::new(std::time::Duration::from_millis(40));
+        cache.put("a", json!(1));
+        assert_eq!(cache.get("a"), Some(json!(1)));
+        assert_eq!(cache.get("missing"), None);
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        assert_eq!(cache.get("a"), None);
+    }
+
+    #[test]
+    fn account_number_is_masked() {
+        assert_eq!(mask_account("1234567890"), "1234…890");
+        assert_eq!(mask_account("12"), "12…12");
+    }
+
+    /// A watchlist row states its own availability; numbers only when priced.
+    #[test]
+    fn quote_row_reports_availability() {
+        use radar_core::webull::stocks::StockSnapshot;
+        let mut snapshot = StockSnapshot {
+            price: Some(101.5),
+            change_ratio: Some(0.0125),
+            last_trade_time_ms: Some(1_795_208_309_936),
+            ..Default::default()
+        };
+        let row = quote_row("MSFT", Some(&snapshot), None, "t0");
+        assert_eq!(row["status"], "available");
+        assert_eq!(row["price"], json!(101.5));
+        assert_eq!(row["change_pct"], json!(1.25));
+        assert_eq!(row["market_session"], "regular");
+        let stamped = chrono::DateTime::from_timestamp_millis(1_795_208_309_936)
+            .map(|time| time.to_rfc3339())
+            .expect("valid epoch");
+        assert_eq!(row["source_timestamp"], json!(stamped));
+
+        snapshot.price = Some(0.0);
+        assert_eq!(
+            quote_row("MSFT", Some(&snapshot), None, "t0")["status"],
+            "no_data"
+        );
+        let failed = quote_row("MSFT", None, Some("why"), "t0");
+        assert_eq!(failed["status"], "error");
+        assert_eq!(failed["reason"], "why");
+        assert!(failed.get("price").is_none());
+    }
+
+    /// Blocking work really leaves the UI thread, and a nested current-thread
+    /// runtime (the MQTT probe) is legal on that worker.
+    #[tokio::test]
+    async fn blocking_work_runs_off_the_async_thread() {
+        let result = off_ui_thread(|| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| e.to_string())?;
+            let answer = runtime.block_on(async {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                42
+            });
+            Ok(answer)
+        })
+        .await;
+        assert_eq!(result, Ok(42));
     }
 }
 
@@ -1031,6 +1493,13 @@ pub fn run() {
             list_watchlists,
             save_watchlist,
             get_portfolio,
+            get_stock_quote,
+            get_stock_overview,
+            get_option_quote,
+            get_option_ticks,
+            get_movers,
+            get_sectors,
+            get_sector_detail,
             lab_analyze,
             lab_freeze_prediction,
             lab_predictions,
