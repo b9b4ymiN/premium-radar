@@ -1,5 +1,12 @@
 # PROGRESS — loop ledger (memory นอก context)
 
+## Webull Thailand and Terminal refinement · 2026-11-23
+
+- Feature branch `feat/premium-radar-webull-terminal` from `cde32a8`. CSS review `633b35e` and keyboard/preview fixes `36aeab4`.
+- Security `da792fd` removes the raw secret header, retains v2 signing, and restores prior keyring entries on a failed settings save where the OS permits rollback. `cargo test --workspace` passed 160 tests with 1 ignored. `cargo fmt --all --check` and `git diff --check` passed.
+- `npm run check` passed with 4 existing React Hooks warnings. `npm run build` passed. Strict workspace Clippy reported existing lint errors in `mqtt_probe.rs`, `lab/quality.rs` and `lab/storage.rs`.
+- Documented GET inventory `3c4bf79` is the first portion of the capability matrix. Guide-tier routes, live Thai entitlement checks, request coordination, and native desktop validation remain open.
+
 > Method: [[concepts/loop-engineering]] + [[concepts/graph-engineering]] + [[procedural/development/builder-validator-loop]] (จาก brain)
 > **กติกาที่บังคับใช้ตั้งแต่ 2026-11-22:**
 > - ทุก top-level task: **Builder** (implement จน gates เขียว) → **Independent Validator** (fresh read-only agent ตรวจตาม DOD เอง: อ่านโค้ดเอง รันคำสั่งเอง ไม่เชื่อ builder summary) → **PASS เท่านั้นถึงเปลี่ยนสถานะเป็น DONE** (1 validator ต่อ task)
