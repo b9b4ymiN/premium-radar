@@ -27,6 +27,16 @@ pub fn fetch_stock_update<F: HttpFetch>(
     f: &mut F,
     root: &str,
 ) -> Result<Option<StockUpdate>, FetchError> {
+    Ok(fetch_stock_snapshot(f, root)?
+        .as_ref()
+        .and_then(|row| parse_stock_update(row, DataSource::Rest)))
+}
+
+/// Regular-session REST snapshot, preserving optional fields for display consumers.
+pub fn fetch_stock_snapshot<F: HttpFetch>(
+    f: &mut F,
+    root: &str,
+) -> Result<Option<Value>, FetchError> {
     let data = get_json(
         f,
         PATH_STOCK_SNAPSHOT,
@@ -37,9 +47,7 @@ pub fn fetch_stock_update<F: HttpFetch>(
             ("overnight_required".into(), "false".into()),
         ],
     )?;
-    Ok(extract_list(&data)
-        .first()
-        .and_then(|r| parse_stock_update(r, DataSource::Rest)))
+    Ok(extract_list(&data).into_iter().next())
 }
 
 /// Option snapshot for one batch → (usable seeds, symbols still without a

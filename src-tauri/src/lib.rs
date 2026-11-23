@@ -623,26 +623,56 @@ fn get_instrument_profile(symbol: String) -> Result<serde_json::Value, String> {
 /// Home overview (P17.1) — quotes ของ active watchlist + สถานะ Lab capture
 #[tauri::command]
 fn get_home_overview() -> Result<serde_json::Value, String> {
-    use radar_core::webull::quotes::fetch_stock_update;
-    let data = app_state_for_data()?;
-    let mut client = radar_core::webull::transport::WebullClient::new(data.creds);
+    use radar_core::webull::quotes::fetch_stock_snapshot;
+    let mut client = app_state_for_data()
+        .ok()
+        .map(|data| radar_core::webull::transport::WebullClient::new(data.creds));
     let store = load_watchlists();
     let symbols: Vec<String> = store
         .active_list()
         .map(|l| l.symbols.iter().take(20).cloned().collect())
         .unwrap_or_default();
-    let mut quotes = Vec::new();
-    for sym in &symbols {
-        if let Ok(Some(u)) = fetch_stock_update(&mut client, sym) {
-            quotes.push(serde_json::json!({
-                "symbol": sym,
-                "price": u.price,
-                "change_pct": if u.pre_close > 0.0 { Some(u.change_ratio * 100.0) } else { None },
-                "source": format!("{:?}", u.src),
-                "volume": u.volume,
-            }));
-        }
-    }
+    let quotes: Vec<_> = symbols
+        .iter()
+        .map(|symbol| {
+            let Some(client) = client.as_mut() else {
+                return serde_json::json!({"symbol": symbol, "status": "setup_required"});
+            };
+            let snapshot = match fetch_stock_snapshot(client, symbol) {
+                Ok(Some(row)) => row,
+                Ok(None) => return serde_json::json!({"symbol": symbol, "status": "no_data"}),
+                Err(_) => return serde_json::json!({"symbol": symbol, "status": "error"}),
+            };
+            let number = |key| {
+                snapshot.get(key).and_then(|value| {
+                    value
+                        .as_f64()
+                        .or_else(|| value.as_str()?.parse().ok())
+                        .filter(|n| n.is_finite())
+                })
+            };
+            let Some(price) = number("price").filter(|price| *price > 0.0) else {
+                return serde_json::json!({"symbol": symbol, "status": "no_data"});
+            };
+            let source_timestamp = snapshot
+                .get("last_trade_time")
+                .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()))
+                .filter(|timestamp| *timestamp > 0)
+                .and_then(chrono::DateTime::from_timestamp_millis)
+                .map(|timestamp| timestamp.to_rfc3339());
+            serde_json::json!({
+                "symbol": symbol,
+                "status": "available",
+                "price": price,
+                "change_pct": number("change_ratio").map(|ratio| ratio * 100.0),
+                "volume": number("volume").filter(|volume| *volume >= 0.0),
+                "source": "REST",
+                "market_session": "regular",
+                "source_timestamp": source_timestamp,
+                "received_at": chrono::Utc::now().to_rfc3339(),
+            })
+        })
+        .collect();
     // สถานะ Lab capture (อ่านจาก storage จริง ไม่เดา)
     let app_data = std::env::var("APPDATA")
         .map(|a| format!("{a}/premium-radar"))
