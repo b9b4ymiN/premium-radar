@@ -220,9 +220,11 @@ impl Probe {
                 )
             };
         }
-        if let (Some(rows), false, 200) = (rows.as_ref(), step.sensitive, outcome.status) {
-            entry["sample"] = clipped(rows[0], 0);
-            if rows.len() <= 5 {
+        if let (Some(row), false, 200) = (first, step.sensitive, outcome.status) {
+            entry["sample"] = clipped(row, 0);
+            if row_count <= 5
+                && let Some(rows) = &rows
+            {
                 // small responses (calendars, single objects) are kept whole
                 entry["rows_small"] =
                     Value::Array(rows.iter().map(|row| clipped(row, 0)).collect());
