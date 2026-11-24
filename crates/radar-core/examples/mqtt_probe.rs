@@ -85,8 +85,14 @@ async fn main() {
         match se {
             StreamEvent::Connected => {
                 println!("[probe] ✅ MQTT CONNECTED (session {session_id}) — subscribing ...");
-                let sub = do_subscribe(&creds, &base_url, &session_id);
-                match tokio::task::spawn_blocking(move || sub).await {
+                // the blocking client must only be built and used inside
+                // spawn_blocking — reqwest::blocking panics on an async thread
+                let creds = creds.clone();
+                let base = base_url.clone();
+                let sid = session_id.clone();
+                let sub =
+                    tokio::task::spawn_blocking(move || do_subscribe(&creds, &base, &sid)).await;
+                match sub {
                     Ok(Ok(())) => println!("[probe] ✅ subscribe สำเร็จ (stock + options)"),
                     Ok(Err(e)) => {
                         println!("[probe] ❌ subscribe ล้มเหลว: {e}");

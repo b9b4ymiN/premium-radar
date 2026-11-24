@@ -10,6 +10,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
+use crate::lock;
 use crate::settings::AppSettings;
 use radar_core::engine::{
     DataSource, Engine, EngineSnapshot, QuoteUpdate, StockUpdate, ws_stock_change,
@@ -106,7 +107,7 @@ fn progress(app: &AppHandle, phase: &str, message: impl Into<String>) {
 }
 
 fn emit_snapshot(app: &AppHandle, engine: &Arc<Mutex<Engine>>) {
-    let snap: EngineSnapshot = engine.lock().unwrap().snapshot();
+    let snap: EngineSnapshot = lock(engine).snapshot();
     let _ = app.emit("scan://snapshot", &snap);
 }
 
@@ -172,10 +173,7 @@ fn run(
     if stale() {
         return finish(&running);
     }
-    engine
-        .lock()
-        .unwrap()
-        .set_symbols(symbols.clone(), Some(spot));
+    lock(&engine).set_symbols(symbols.clone(), Some(spot));
     progress(
         &app,
         "seed",
@@ -193,7 +191,7 @@ fn run(
     'outer: loop {
         if let Ok(Some(mut stk)) = quotes::fetch_stock_update(&mut client, &root) {
             stk.symbol = root.clone();
-            engine.lock().unwrap().push_stock(stk);
+            lock(&engine).push_stock(stk);
         }
         if stale() {
             break 'outer;
@@ -208,7 +206,7 @@ fn run(
             match quotes::fetch_option_seeds(&mut client, batch) {
                 Ok((seeds, miss)) => {
                     {
-                        let mut eng = engine.lock().unwrap();
+                        let mut eng = lock(&engine);
                         for q in seeds {
                             eng.seed_quote(q);
                         }
@@ -242,7 +240,7 @@ fn run(
                 break 'outer;
             }
             if let Ok(seeds) = quotes::fetch_bars_seeds(&mut client, batch) {
-                let mut eng = engine.lock().unwrap();
+                let mut eng = lock(&engine);
                 for q in seeds {
                     eng.seed_quote(q);
                 }
@@ -410,7 +408,7 @@ async fn ws_loop(
                                 let sym = snap.symbol.replace(' ', "");
                                 if parse_occ(&sym).is_some() {
                                     // option contract snapshot — WS wins in the engine
-                                    engine.lock().unwrap().push_quote(QuoteUpdate {
+                                    lock(&engine).push_quote(QuoteUpdate {
                                         symbol: sym,
                                         price: snap.price,
                                         volume: snap.volume,
@@ -429,7 +427,7 @@ async fn ws_loop(
                                         snap.price,
                                         snap.pre_close,
                                     );
-                                    engine.lock().unwrap().push_stock(StockUpdate {
+                                    lock(&engine).push_stock(StockUpdate {
                                         symbol: root.clone(),
                                         price: snap.price,
                                         open: snap.open,

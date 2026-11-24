@@ -446,14 +446,17 @@ pub fn ping(config: &LlmConfig) -> Result<String, String> {
     }
 }
 
-/// Full copilot round-trip: system prompt + conversation history →
-/// (tool call → execute against the engine)* → final Thai answer.
-/// Any OpenAI-compatible endpoint; max 6 tool rounds per question.
+/// Full copilot round-trip with a caller-supplied tool executor: system
+/// prompt + conversation history → (tool call → `run_tool`)* → final Thai
+/// answer. The executor runs only between HTTP calls, so a caller holding
+/// the engine behind a mutex can lock inside `run_tool` alone and keep the
+/// lock out of the (slow) network path. Any OpenAI-compatible endpoint;
+/// max 6 tool rounds per question.
 #[cfg(feature = "client")]
-pub fn chat_with_tools(
+pub fn chat_with_tool_runner(
     config: &LlmConfig,
     history: &[ChatMessage],
-    engine: &mut Engine,
+    run_tool: &mut dyn FnMut(&str, &str) -> String,
 ) -> Result<String, String> {
     let http = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(90))
@@ -484,7 +487,7 @@ pub fn chat_with_tools(
                 name,
                 arguments,
             } => {
-                let result = execute_tool(&name, &arguments, engine);
+                let result = run_tool(&name, &arguments);
                 messages.push(ChatMessage {
                     role: "assistant".into(),
                     content: String::new(),
@@ -506,6 +509,20 @@ pub fn chat_with_tools(
         }
     }
     Err("AI เรียก tool ยาวเกิน 6 รอบ — ลองถามให้เจาะจงขึ้น".into())
+}
+
+/// Full copilot round-trip: system prompt + conversation history →
+/// (tool call → execute against the engine)* → final Thai answer.
+/// Any OpenAI-compatible endpoint; max 6 tool rounds per question.
+#[cfg(feature = "client")]
+pub fn chat_with_tools(
+    config: &LlmConfig,
+    history: &[ChatMessage],
+    engine: &mut Engine,
+) -> Result<String, String> {
+    chat_with_tool_runner(config, history, &mut |name, arguments| {
+        execute_tool(name, arguments, engine)
+    })
 }
 
 #[cfg(test)]

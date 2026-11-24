@@ -31,7 +31,7 @@ pub struct AppState {
 
 #[tauri::command]
 fn get_snapshot(state: tauri::State<'_, AppState>) -> EngineSnapshot {
-    state.engine.lock().unwrap().snapshot()
+    lock(&state.engine).snapshot()
 }
 
 #[tauri::command]
@@ -63,7 +63,7 @@ fn set_filters(
         relax: false,
         budget,
     };
-    let mut engine = state.engine.lock().unwrap();
+    let mut engine = lock(&state.engine);
     engine.set_filters(filters);
     engine.snapshot()
 }
@@ -79,7 +79,7 @@ fn start_scan(
     if symbol.is_empty() {
         return Err("กรุณาระบุ symbol".into());
     }
-    let settings = state.settings.lock().unwrap().clone();
+    let settings = lock(&state.settings).clone();
     if settings.webull_credentials().is_none() {
         return Err("ไม่พบ Webull API keys — เปิดหน้า Setup เพื่อตั้งค่าก่อน".into());
     }
@@ -87,7 +87,7 @@ fn start_scan(
     // Drop everything that belongs to the previously scanned underlying so a
     // new scan never shows the old symbol's stock/option prices; the lock is
     // released before the scan thread (and any network call) starts.
-    state.engine.lock().unwrap().begin_symbol(&symbol);
+    lock(&state.engine).begin_symbol(&symbol);
 
     state
         .scan
@@ -97,7 +97,7 @@ fn start_scan(
     // the keyring path so the scrubbed file never regains plaintext secrets;
     // fail-closed — on keyring error this preference is simply not saved)
     {
-        let mut s = state.settings.lock().unwrap();
+        let mut s = lock(&state.settings);
         s.last_symbol = symbol;
         let dir = state.app_data_dir.clone();
         if let Err(e) = s.save_with_keyring(&dir) {
@@ -115,7 +115,7 @@ fn stop_scan(state: tauri::State<'_, AppState>) -> bool {
 
 #[tauri::command]
 fn get_status(state: tauri::State<'_, AppState>) -> String {
-    let engine = state.engine.lock().unwrap();
+    let engine = lock(&state.engine);
     format!(
         "quotes: {} (live: {}), spot: {:?}, scanning: {}",
         engine.quote_count(),
@@ -140,14 +140,11 @@ fn save_settings(
     // is overwritten with the current in-memory (keyring) values — a prefs
     // push can neither inject nor move credentials
     let mut new_settings = {
-        let current = state
-            .settings
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let current = lock(&state.settings);
         settings::copy_saved_secrets(&current, new_settings)
     };
     new_settings.save_with_keyring(&dir)?;
-    *state.settings.lock().unwrap() = new_settings;
+    *lock(&state.settings) = new_settings;
     Ok(())
 }
 
@@ -182,17 +179,10 @@ fn save_credentials(
         Some(typed) => settings::normalise_webull_base_url(typed).ok_or(URL_ERROR)?,
         None => settings::WEBULL_PRODUCTION_BASE_URL.to_string(),
     };
-    let pending = state
-        .pending_token
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
+    let pending = lock(&state.pending_token).clone();
 
     let dir = state.app_data_dir.clone();
-    let mut s = state
-        .settings
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut s = lock(&state.settings);
 
     // stage on a copy — the shared state must keep the previously saved
     // (and still working) credentials until this save is fully committed
@@ -220,10 +210,7 @@ fn save_credentials(
     *s = candidate;
     // answers fetched with the previous credentials must never be served again
     clear_bridge_caches(&s.webull_base_url_or_default());
-    *state
-        .pending_token
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    *lock(&state.pending_token) = None;
     Ok(s.view())
 }
 
@@ -232,12 +219,8 @@ fn save_credentials(
 /// and movers TTL caches here, plus the transport's shared response cache
 /// for the origin.
 fn clear_bridge_caches(base_url: &str) {
-    if let Ok(mut cache) = OVERVIEW_CACHE.lock() {
-        cache.clear();
-    }
-    if let Ok(mut cache) = MOVERS_CACHE.lock() {
-        cache.clear();
-    }
+    lock(&OVERVIEW_CACHE).clear();
+    lock(&MOVERS_CACHE).clear();
     radar_core::webull::transport::clear_shared_cache(base_url);
 }
 
@@ -294,11 +277,7 @@ async fn test_connection(
     webull_base_url: Option<String>,
 ) -> Result<ConnectionTestResult, String> {
     let settings = settings_of(&state);
-    let pending = state
-        .pending_token
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
+    let pending = lock(&state.pending_token).clone();
     // several paced calls plus an MQTT probe — off the UI thread
     let result = off_ui_thread(move || {
         Ok(test_connection_with(
@@ -535,10 +514,7 @@ async fn create_access_token(
         )
     });
     if let Some(token) = issued_token {
-        *state
-            .pending_token
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(token);
+        *lock(&state.pending_token) = Some(token);
     }
     Ok(result)
 }
@@ -745,11 +721,17 @@ fn lab_analyze(input: LabAnalyzeInput) -> Result<serde_json::Value, String> {
 /// thread panicked while holding it) still hands out a usable copy instead of
 /// taking every later command down with it.
 fn settings_of(state: &AppState) -> AppSettings {
-    state
-        .settings
+    lock(&state.settings).clone()
+}
+
+/// Lock any of the app's mutexes, poison-tolerant: a thread that panics while
+/// holding one (engine, settings, pending token, caches) must not turn every
+/// later command into a panic — what they guard is plain data that stays
+/// usable after a recovered panic. Every lock site goes through here.
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
 }
 
 /// Run blocking REST work off the UI thread. A plain `fn` command runs on the
@@ -1168,7 +1150,7 @@ async fn get_stock_overview(
     use radar_core::webull::fundamentals::fetch_stock_overview;
     let symbol = symbol.trim().to_uppercase();
     if !refresh.unwrap_or(false)
-        && let Some(cached) = OVERVIEW_CACHE.lock().unwrap().get(&symbol)
+        && let Some(cached) = lock(&OVERVIEW_CACHE).get(&symbol)
     {
         return Ok(cached);
     }
@@ -1183,10 +1165,7 @@ async fn get_stock_overview(
     let landed =
         value["overview"]["profile"].is_object() || value["overview"]["next_earnings"].is_object();
     if landed {
-        OVERVIEW_CACHE
-            .lock()
-            .unwrap()
-            .put(&cache_key, value.clone());
+        lock(&OVERVIEW_CACHE).put(&cache_key, value.clone());
     }
     Ok(value)
 }
@@ -1201,7 +1180,7 @@ async fn get_movers(
     use radar_core::webull::screeners::fetch_movers;
     let key = format!("movers:{list:?}");
     if !refresh.unwrap_or(false)
-        && let Some(cached) = MOVERS_CACHE.lock().unwrap().get(&key)
+        && let Some(cached) = lock(&MOVERS_CACHE).get(&key)
     {
         return Ok(cached);
     }
@@ -1213,7 +1192,7 @@ async fn get_movers(
         }))
     })
     .await?;
-    MOVERS_CACHE.lock().unwrap().put(&key, value.clone());
+    lock(&MOVERS_CACHE).put(&key, value.clone());
     Ok(value)
 }
 
@@ -1226,7 +1205,7 @@ async fn get_sectors(
     use radar_core::webull::screeners::fetch_sectors;
     let key = "sectors";
     if !refresh.unwrap_or(false)
-        && let Some(cached) = MOVERS_CACHE.lock().unwrap().get(key)
+        && let Some(cached) = lock(&MOVERS_CACHE).get(key)
     {
         return Ok(cached);
     }
@@ -1237,7 +1216,7 @@ async fn get_sectors(
         }))
     })
     .await?;
-    MOVERS_CACHE.lock().unwrap().put(key, value.clone());
+    lock(&MOVERS_CACHE).put(key, value.clone());
     Ok(value)
 }
 
@@ -1251,7 +1230,7 @@ async fn get_sector_detail(
     use radar_core::webull::screeners::fetch_sector_detail;
     let key = format!("sector:{sector_id}");
     if !refresh.unwrap_or(false)
-        && let Some(cached) = MOVERS_CACHE.lock().unwrap().get(&key)
+        && let Some(cached) = lock(&MOVERS_CACHE).get(&key)
     {
         return Ok(cached);
     }
@@ -1263,7 +1242,7 @@ async fn get_sector_detail(
         }))
     })
     .await?;
-    MOVERS_CACHE.lock().unwrap().put(&key, value.clone());
+    lock(&MOVERS_CACHE).put(&key, value.clone());
     Ok(value)
 }
 
@@ -1277,7 +1256,7 @@ async fn get_broker_watchlists(
     use radar_core::webull::watchlists::fetch_watchlists;
     let key = "broker-watchlists";
     if !refresh.unwrap_or(false)
-        && let Some(cached) = MOVERS_CACHE.lock().unwrap().get(key)
+        && let Some(cached) = lock(&MOVERS_CACHE).get(key)
     {
         return Ok(cached);
     }
@@ -1288,7 +1267,7 @@ async fn get_broker_watchlists(
         }))
     })
     .await?;
-    MOVERS_CACHE.lock().unwrap().put(key, value.clone());
+    lock(&MOVERS_CACHE).put(key, value.clone());
     Ok(value)
 }
 
@@ -1302,7 +1281,7 @@ async fn get_broker_watchlist(
     use radar_core::webull::watchlists::fetch_watchlist_instruments;
     let key = format!("broker-watchlist:{watchlist_id}");
     if !refresh.unwrap_or(false)
-        && let Some(cached) = MOVERS_CACHE.lock().unwrap().get(&key)
+        && let Some(cached) = lock(&MOVERS_CACHE).get(&key)
     {
         return Ok(cached);
     }
@@ -1315,7 +1294,7 @@ async fn get_broker_watchlist(
         }))
     })
     .await?;
-    MOVERS_CACHE.lock().unwrap().put(&key, value.clone());
+    lock(&MOVERS_CACHE).put(&key, value.clone());
     Ok(value)
 }
 
@@ -1447,17 +1426,19 @@ async fn ask_copilot(
     state: tauri::State<'_, AppState>,
     messages: Vec<radar_core::copilot::ChatMessage>,
 ) -> Result<String, String> {
-    let cfg = state
-        .settings
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    let cfg = lock(&state.settings)
         .llm_config()
         .ok_or("ยังไม่ได้ตั้งค่า AI — เปิดหน้า Setup (ไอคอน ⚙) เพื่อใส่ LLM")?;
-    // the model call takes seconds to a minute — off the UI thread
+    // the model call takes seconds to a minute — off the UI thread. The
+    // engine lock is taken only while a tool executes inside the runner and
+    // released before each LLM HTTP round-trip, so `get_snapshot` polling
+    // and the scan worker never block on a slow answer.
     let engine = state.engine.clone();
     off_ui_thread(move || {
-        let mut engine = engine.lock().unwrap();
-        radar_core::copilot::chat_with_tools(&cfg, &messages, &mut engine)
+        radar_core::copilot::chat_with_tool_runner(&cfg, &messages, &mut |name, arguments| {
+            let mut engine = lock(&engine);
+            radar_core::copilot::execute_tool(name, arguments, &mut engine)
+        })
     })
     .await
 }
@@ -1677,12 +1658,56 @@ mod tests {
         );
         assert_eq!(settings_of(&state).last_symbol, "NVDA");
     }
+
+    /// The shared `lock` helper: poison the engine AND the settings mutex,
+    /// and it still returns usable guards — a panic in one thread must not
+    /// make every later command panic (the engine is what `get_snapshot`
+    /// and the scan worker read through it).
+    #[test]
+    fn lock_helper_survives_poisoned_mutexes() {
+        const WHY: &str = "a worker died while holding the lock";
+        std::panic::set_hook(Box::new(|info| {
+            let payload = info.payload();
+            let text = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("");
+            if !text.contains(WHY) {
+                eprintln!("unexpected panic: {text}");
+            }
+        }));
+        let engine = std::sync::Arc::new(Mutex::new(Engine::new(Utc::now())));
+        let settings = Mutex::new(AppSettings::default());
+        let settings_lock: &Mutex<AppSettings> = &settings;
+        std::thread::scope(|scope| {
+            let poisoned_engine = scope.spawn({
+                let engine = engine.clone();
+                move || {
+                    let _guard = engine.lock().unwrap();
+                    panic!("{WHY}");
+                }
+            });
+            let poisoned_settings = scope.spawn(move || {
+                let _guard = settings_lock.lock().unwrap();
+                panic!("{WHY}");
+            });
+            assert!(poisoned_engine.join().is_err());
+            assert!(poisoned_settings.join().is_err());
+        });
+        let _ = std::panic::take_hook();
+
+        assert!(engine.lock().is_err(), "engine lock should be poisoned");
+        assert!(settings.lock().is_err(), "settings lock should be poisoned");
+        assert_eq!(lock(&engine).quote_count(), 0);
+        assert_eq!(lock(&settings).last_symbol, "NVDA");
+    }
 }
 
 /// Check if first-run setup is needed (no Webull keys configured).
 #[tauri::command]
 fn needs_setup(state: tauri::State<'_, AppState>) -> bool {
-    !state.settings.lock().unwrap().is_configured()
+    !lock(&state.settings).is_configured()
 }
 
 // ---------- Tauri app entry ----------
