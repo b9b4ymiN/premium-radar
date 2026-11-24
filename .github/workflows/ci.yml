@@ -43,3 +43,15 @@ jobs:
 
       - name: Rust tests
         run: cargo test --workspace
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      # fails on known vulnerabilities (RustSec); "unmaintained" notices stay warnings
+      - name: Rust dependency audit
+        run: cargo audit
+
+      - name: npm dependency audit
+        run: npm audit --audit-level=high
