@@ -391,6 +391,47 @@ async fn non_json_body_is_kept_as_text() {
     );
 }
 
+/// reqwest's default redirect policy replays custom headers (app key, access
+/// token, signature) on whatever host a 3xx `Location` names. The client must
+/// return the 3xx as-is instead, so the redirect target sees zero requests.
+#[tokio::test]
+async fn redirect_never_leaks_credentials_to_another_host() {
+    let a = MockServer::start().await;
+    let b = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/r"))
+        .respond_with(
+            ResponseTemplate::new(302).insert_header("Location", format!("{}/leak", b.uri())),
+        )
+        .mount(&a)
+        .await;
+    let uri = a.uri();
+    let status = std::thread::spawn(move || {
+        let mut c = WebullClient::new(Credentials {
+            access_token: Some("ACCESS-TOKEN".into()),
+            ..test_creds()
+        })
+        .with_base_url(uri);
+        c.get("/r", &[]).unwrap().0
+    })
+    .join()
+    .expect("client thread");
+    assert_eq!(
+        status, 302,
+        "the 3xx must surface instead of being followed"
+    );
+    assert_eq!(
+        a.received_requests().await.unwrap().len(),
+        1,
+        "a 3xx is terminal — no retry"
+    );
+    assert_eq!(
+        b.received_requests().await.unwrap().len(),
+        0,
+        "credential headers must never reach the redirect target"
+    );
+}
+
 // ---------- live smoke (ignored by default; run with -- --ignored) ----------
 
 #[tokio::test]

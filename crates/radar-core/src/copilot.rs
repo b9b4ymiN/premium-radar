@@ -109,14 +109,18 @@ impl LlmConfig {
         }
     }
 
-    /// Log-safe display — no api_key.
+    /// Log-safe display — no api_key, not even its length.
     pub fn masked(&self) -> String {
         format!(
-            "LlmConfig(label={}, base_url={}, model={}, api_key=***{}***)",
+            "LlmConfig(label={}, base_url={}, model={}, api_key={})",
             self.label,
             self.base_url,
             self.model,
-            self.api_key.len()
+            if self.api_key.is_empty() {
+                "empty"
+            } else {
+                "set"
+            }
         )
     }
 
@@ -412,6 +416,7 @@ pub fn execute_tool(name: &str, arguments: &str, engine: &mut Engine) -> String 
 #[cfg(feature = "client")]
 pub fn ping(config: &LlmConfig) -> Result<String, String> {
     let http = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("build http client: {e}"))?;
@@ -459,6 +464,7 @@ pub fn chat_with_tool_runner(
     run_tool: &mut dyn FnMut(&str, &str) -> String,
 ) -> Result<String, String> {
     let http = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(90))
         .build()
         .map_err(|e| format!("build http client: {e}"))?;
@@ -657,10 +663,15 @@ mod tests {
 
     #[test]
     fn debug_never_leaks_key() {
-        let c = LlmConfig::new("test", "https://example.com", "model", "SUPERSECRET");
-        let d = format!("{c:?}");
-        assert!(!d.contains("SUPERSECRET"));
-        assert!(d.contains("***"));
+        let c = LlmConfig::new("L", "https://x", "m", "sk-123456");
+        for text in [format!("{c:?}"), c.masked()] {
+            assert!(text.contains("api_key=set"), "got: {text}");
+            assert!(!text.contains("sk-"), "got: {text}");
+            assert!(
+                !text.chars().any(|ch| ch.is_ascii_digit()),
+                "the key's length must not leak: {text}"
+            );
+        }
     }
 
     #[test]

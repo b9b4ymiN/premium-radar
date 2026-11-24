@@ -209,15 +209,27 @@ pub struct WebullClient {
     use_cache: bool,
 }
 
-impl WebullClient {
-    pub fn new(creds: Credentials) -> Self {
-        let http = reqwest::blocking::Client::builder()
+/// A blocking client that never follows redirects. reqwest's default policy
+/// replays custom headers (app key, access token, signature) on whatever host
+/// a 3xx `Location` names — the broker needs no redirects, so a 3xx must
+/// surface as-is and hit the existing non-200 handling instead.
+fn http_client() -> reqwest::blocking::Client {
+    let build = || {
+        reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(15))
             .build()
-            .unwrap_or_default();
+    };
+    // A default client would follow redirects again, so the fallback retries
+    // the same policy before ever settling for the bare default.
+    build().unwrap_or_else(|_| build().unwrap_or_default())
+}
+
+impl WebullClient {
+    pub fn new(creds: Credentials) -> Self {
         Self {
             creds,
-            http,
+            http: http_client(),
             coordinator: coordinator(BASE_URL),
             base_url: BASE_URL.to_string(),
             production_gate: production_gate_path(BASE_URL),
