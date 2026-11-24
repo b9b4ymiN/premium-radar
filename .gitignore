@@ -37,3 +37,6 @@ tmp/
 .claude/
 .codex/
 AGENTS.override.md
+
+# codegraph index
+.codegraph/

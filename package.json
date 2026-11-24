@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "check": "tsc --noEmit && eslint .",
-    "verify": "npm run check && npm run build && cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test"
+    "verify": "npm run check && npm run build && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
