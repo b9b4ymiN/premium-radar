@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SetupScreen } from "./components/SetupScreen";
@@ -48,6 +48,20 @@ async function tauriListen<T>(event: string, handler: (payload: T) => void): Pro
 interface ScanProgress {
   phase: string; // discovery | seed | bars | live | error
   message: string;
+}
+
+/** A snapshot belongs to `sym` only when its stock root and every row's
+ *  underlying match it (case-insensitive); one with neither stock nor rows
+ *  is the neutral empty state and always passes. Late events from a scan
+ *  that a symbol switch already replaced are dropped here. */
+function snapshotIsFor(s: EngineSnapshot, sym: string): boolean {
+  // OCC roots differ from tickers (BRK.B → BRKB, adjusted AAPL1, SPX → SPXW),
+  // so rows match on a normalised prefix and only when the stock is absent.
+  const norm = (v: string) => v.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const want = norm(sym);
+  if (s.stock) return norm(s.stock.symbol) === want;
+  const all = [...s.rows, ...s.candidates];
+  return all.length === 0 || all.some(r => norm(r.q.underlying).startsWith(want));
 }
 
 // ---------- mock data (browser preview ONLY — never inside the desktop app) ----------
@@ -179,6 +193,8 @@ export default function App() {
   const [scanMsg, setScanMsg] = useState("กำลังเชื่อมต่อ backend ...");
   const [scanPhase, setScanPhase] = useState("idle");
   const [wsLive, setWsLive] = useState(false);
+  // the symbol every arriving snapshot must match (listeners outlive renders)
+  const symbolRef = useRef(symbol);
 
   // AI copilot — its configuration is INDEPENDENT of the data feed
   const [llmInfo, setLlmInfo] = useState<{ label: string; model: string } | null>(null);
@@ -203,7 +219,9 @@ export default function App() {
           if (p.phase === "realtime") setWsLive(true);
           else if (p.message.includes("real-time")) setWsLive(false);
         }));
-        uns.push(await tauriListen<EngineSnapshot>("scan://snapshot", (s) => setSnap(s)));
+        uns.push(await tauriListen<EngineSnapshot>("scan://snapshot", (s) => {
+          if (snapshotIsFor(s, symbolRef.current)) setSnap(s);
+        }));
 
         const needs = await tauriInvoke<boolean>("needs_setup");
         setSetupMode("first-run");
@@ -227,6 +245,20 @@ export default function App() {
     })();
     return () => { disposed = true; uns.forEach((u) => u()); };
   }, []);
+
+  // A symbol switch drops the previous chain immediately: rows, selection and
+  // sort reset, and the scan status becomes a loading text naming the new
+  // symbol — until the new scan's first event arrives, nothing of the old
+  // symbol stays on screen. (Declared before the scan-restart effect so the
+  // ref is current before `start_scan` fires.)
+  useEffect(() => {
+    symbolRef.current = symbol;
+    setSnap(null);
+    setSelected(null);
+    setSort(null);
+    setScanPhase("discovery");
+    setScanMsg(`กำลังโหลด ${symbol} …`);
+  }, [symbol]);
 
   // Start / restart the scan whenever the symbol changes (or setup completes);
   // opening Setup stops any running scan (it may be failing on bad keys).
@@ -288,7 +320,7 @@ export default function App() {
     if (!tauriReady) return;
     try {
       const res = await tauriInvoke<EngineSnapshot>("set_filters", { strategy: s, risk: r, expiry: e, budget: b });
-      if (res) setSnap(res);
+      if (res && snapshotIsFor(res, symbolRef.current)) setSnap(res);
     } catch { /* browser preview mode */ }
   }, [tauriReady]);
 
@@ -313,9 +345,12 @@ export default function App() {
   // Inside the desktop app we NEVER fall back to mock data — an empty table
   // with the scan status is honest; synthetic rows are browser-preview only.
   const isLive = snap !== null;
+  // browser preview shows the mock chain only for the mock's own symbol;
+  // any other symbol gets the same honest empty state as the desktop app
   const rows: EnrichedRow[] = useMemo(
-    () => snap?.candidates ?? (hasTauri ? [] : (MOCK_ROWS as EnrichedRow[])),
-    [snap],
+    () => snap?.candidates
+      ?? (hasTauri ? [] : (MOCK_ROWS as EnrichedRow[]).filter(r => r.q.underlying.toUpperCase() === symbol.toUpperCase())),
+    [snap, symbol],
   );
   const toggleSort = (key: SortKey) => setSort(current =>
     current?.key !== key ? { key, dir: 1 } : current.dir === 1 ? { key, dir: -1 } : null,
@@ -342,7 +377,8 @@ export default function App() {
         : sameSymbol(MOCK_STOCK)
           ? MOCK_STOCK
           : null;
-  const stats: ChainStats | null = snap?.stats ?? (hasTauri ? null : MOCK_STATS);
+  const mockOn = !hasTauri && sameSymbol(MOCK_STOCK);
+  const stats: ChainStats | null = snap?.stats ?? (mockOn ? MOCK_STATS : null);
   const selectedRow = rows.find(r => r.q.symbol === selected) ?? rows[0];
   const chg = stock?.change ?? null;
   const chgPct = stock?.change_ratio != null ? stock.change_ratio * 100 : null;
@@ -388,7 +424,7 @@ export default function App() {
       { label: "HIGHEST ANNUALIZED", tag: "High yield", contract: fc(topAnn), meta: fm(topAnn) },
     ];
   }, [rows, symbol]);
-  const oppCards = opps ?? (hasTauri
+  const oppCards = opps ?? (!mockOn
     ? [
         { label: "LOWEST DELTA", tag: "—", contract: "รอข้อมูลจริง", meta: " " },
         { label: "BALANCED SETUP", tag: "—", contract: "รอข้อมูลจริง", meta: " " },

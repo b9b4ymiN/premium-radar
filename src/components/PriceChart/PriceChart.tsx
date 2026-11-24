@@ -1,7 +1,7 @@
 //! กราฟราคาหุ้น (PLAN-APP2 P15.4) — series/MA/สรุปมาจาก Rust ทั้งหมด
 //! component เรนเดอร์อย่างเดียว: candles (≤300 แท่ง) หรือเส้น close (ยาวกว่านั้น)
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -22,8 +22,14 @@ export default function PriceChart({ symbol }: { symbol: string }) {
   const [h, setH] = useState<History | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const lastSym = useRef(symbol);
 
   useEffect(() => {
+    // สลับหุ้น = ล้างกราฟของหุ้นเดิมทันที ให้พื้นที่กราฟโชว์สถานะโหลดแทน
+    // (เปลี่ยนแค่ range ยังเป็นหุ้นเดิม — ถือกราฟเก่าระหว่างโหลดได้)
+    const switched = lastSym.current !== symbol;
+    lastSym.current = symbol;
+    if (switched) setH(null);
     if (!hasTauri) {
       setErr("เปิดแอปเดสก์ท็อปเพื่อดูกราฟราคาย้อนหลัง");
       return;
