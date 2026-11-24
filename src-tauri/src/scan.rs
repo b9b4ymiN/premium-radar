@@ -120,7 +120,13 @@ fn run(
 ) {
     let my_gen = gen_ctr.fetch_add(1, Ordering::SeqCst) + 1;
     let stale = || stop.load(Ordering::Relaxed) || gen_ctr.load(Ordering::Relaxed) != my_gen;
-    let finish = |running: &Arc<AtomicBool>| running.store(false, Ordering::SeqCst);
+    // A superseded scan exits after its successor has started and must not
+    // report "not running" on that successor's behalf; an explicit stop may.
+    let finish = |running: &Arc<AtomicBool>| {
+        if stop.load(Ordering::SeqCst) || gen_ctr.load(Ordering::SeqCst) == my_gen {
+            running.store(false, Ordering::SeqCst);
+        }
+    };
 
     let Some(mut client) = settings.webull_client() else {
         progress(
