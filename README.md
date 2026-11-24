@@ -1,15 +1,31 @@
 # PREMIUM RADAR
 
-CSP / Covered Call screener สำหรับหุ้น US ผ่าน Webull Thailand API — desktop app (Tauri 2)
+CSP / Covered Call screener สำหรับหุ้น US ผ่าน Webull Thailand API — desktop app (Tauri 2) · by THPForge
 
-## ติดตั้ง
+> ⚠️ **ไม่ใช่คำแนะนำการลงทุน** — แอปนี้เป็นเครื่องมือคัดกรองและคำนวณเพื่อการศึกษา ผลลัพธ์ เกรด และคำตอบของ AI อาจผิดพลาดได้ การขาย option มีความเสี่ยงสูง ตัดสินใจและรับผิดชอบเองทุกครั้ง
 
-### สำหรับผู้ใช้ทั่วไป
-1. ดาวน์โหลด installer (.msi / .exe) จาก releases
-2. เปิดแอปครั้งแรก → หน้า Setup จะขึ้นมา
-3. ใส่ Webull App Key + Secret (สมัครจาก Webull Developer Portal)
-4. เลือก AI provider (Z.ai / OpenAI / Ollama / custom) หรือข้ามไปก่อน
-5. กด "บันทึกและเริ่มใช้งาน"
+## ดาวน์โหลดและติดตั้ง (Windows 10/11)
+
+1. เปิดหน้า **[Releases ล่าสุด](https://github.com/b9b4ymiN/option2/releases/latest)** แล้วดาวน์โหลด `PREMIUM.RADAR_x.y.z_x64-setup.exe`
+2. ดับเบิลคลิกเพื่อติดตั้ง — ถ้า Windows ขึ้นหน้าจอสีน้ำเงิน **"Windows protected your PC"** (เพราะแอปยังไม่ได้ซื้อใบรับรอง code signing) ให้กด **More info → Run anyway**
+3. ถ้าเครื่องยังไม่มี Microsoft Edge WebView2 ตัวติดตั้งจะดาวน์โหลดให้เอง (ต้องต่ออินเทอร์เน็ต)
+4. แอปจะเช็กเวอร์ชันใหม่ทุกครั้งที่เปิด และอัปเดตให้ได้ในคลิกเดียว
+
+## เริ่มใช้งานครั้งแรก
+
+1. เปิดแอป → หน้า **Setup** จะขึ้นมา
+2. ใส่ **Webull App Key + App Secret ของคุณเอง** (ขอได้จาก Webull Thailand OpenAPI / Developer Portal ด้วยบัญชี Webull ของคุณ) — key เก็บใน Windows Credential Manager ของเครื่องคุณเท่านั้น แอปไม่ส่ง key ไปที่อื่นนอกจาก `api.webull.co.th`
+3. ถ้าบัญชีต้องใช้ Access Token: กด **สร้าง token** → ยืนยัน SMS ในแอป Webull ภายใน 5 นาที → กด **ทดสอบการเชื่อมต่อ**
+4. (ไม่บังคับ) ใส่ AI provider (Z.ai / OpenAI / Ollama) สำหรับ Radar Assistant
+5. กด **บันทึกและเริ่มใช้งาน** — คู่มือการใช้งานภาษาไทย: [`USAGE-TH.md`](USAGE-TH.md)
+
+แอปเรียก API ของ Webull แบบอ่านอย่างเดียว ไม่มีคำสั่งซื้อขายหรือแก้ไขบัญชี
+
+## License
+
+[Apache-2.0](LICENSE)
+
+---
 
 ### สำหรับ developer
 
