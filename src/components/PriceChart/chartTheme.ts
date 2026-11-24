@@ -15,16 +15,26 @@ export function chartTheme(element: HTMLElement): Parameters<Chart["setStyles"]>
   const red = token("red");
   const family = token("sans");
   const text = { color: token("text"), backgroundColor: token("surface3"), family, size: 10 };
+  // axes: larger, slightly heavier labels so prices read at a glance
   const axis = {
     axisLine: { color: border },
-    tickLine: { color: border },
-    tickText: { color: secondary, family, size: 10 },
+    tickLine: { color: border, length: 4 },
+    tickText: { color: secondary, family, size: 11.5, weight: 500, marginStart: 5, marginEnd: 5 },
   };
-  const crosshair = { line: { color: dim }, text };
+  // crosshair labels on a solid, contrasting chip
+  const crosshairText = {
+    color: token("text"), backgroundColor: token("blue-soft"), borderColor: blue,
+    family, size: 11, weight: 600, paddingLeft: 6, paddingRight: 6, paddingTop: 3, paddingBottom: 3,
+  };
+  const crosshair = { line: { color: dim, style: "dashed" as const, dashedValue: [4, 3] }, text: crosshairText };
 
   return {
-    grid: { horizontal: { color: grid, style: "solid" }, vertical: { color: grid, style: "solid" } },
-    xAxis: { ...axis, size: 22 },
+    // vertical grid fainter than horizontal: price levels guide, time lines stay quiet
+    grid: {
+      horizontal: { color: grid, style: "solid" },
+      vertical: { color: grid, style: "dashed", dashedValue: [2, 4] },
+    },
+    xAxis: { ...axis, size: 26 },
     yAxis: axis,
     crosshair: { horizontal: crosshair, vertical: crosshair },
     separator: { color: border, activeBackgroundColor: token("surface2") },
@@ -37,7 +47,24 @@ export function chartTheme(element: HTMLElement): Parameters<Chart["setStyles"]>
         const color = close > open ? green : close < open ? red : dim;
         return { color, borderColor: color, wickColor: color };
       },
-      priceMark: { show: false },
+      // last price: coloured tag on the axis + thin dashed line (TradingView style)
+      priceMark: {
+        show: true,
+        high: { show: false },
+        low: { show: false },
+        last: {
+          show: true,
+          compareRule: "previous_close",
+          upColor: green,
+          downColor: red,
+          noChangeColor: dim,
+          line: { show: true, style: "dashed", dashedValue: [4, 4], size: 1 },
+          text: {
+            show: true, color: token("canvas"), family, size: 11, weight: 700,
+            paddingLeft: 5, paddingRight: 5, paddingTop: 3, paddingBottom: 3, borderRadius: 2,
+          },
+        },
+      },
       tooltip: { showRule: "none" },
     },
     indicator: {

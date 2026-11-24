@@ -1,6 +1,7 @@
 import { dispose, getOverlayClass, init, registerOverlay, utils, type Overlay, type OverlayCreate, type Period } from "klinecharts";
 import type { ChartBar } from "./chartData";
 import { chartTheme } from "./chartTheme";
+import { priceTicks, timeTicks } from "./chartAxes";
 import { isDrawingName, POINT_COUNTS, readDrawings, writeDrawings, type Drawing, type DrawingTool, type Tool } from "./drawingsStore";
 import { CHART_TIMEZONE, DEFAULT_TIMEFRAME, TIMEFRAMES, type Timeframe } from "./timeframes";
 
@@ -68,6 +69,7 @@ export function createPriceCanvas(element: HTMLElement, onDrawingChange: (state:
   if (root) root.tabIndex = -1;
 
   let bars: ChartBar[] = [];
+  let stamps: number[] = [];
   let ticker: string | null = null;
   let drawingSymbol: string | null = null;
   let pendingId: string | null = null;
@@ -80,6 +82,9 @@ export function createPriceCanvas(element: HTMLElement, onDrawingChange: (state:
   const bySymbol = new Map<string, Drawing[]>();
   const drawings = new Map<string, Drawing>();
 
+  // readable axes: round price levels, time labels that mark day/month/year
+  chart.overrideYAxis({ paneId: PRICE, createTicks: params => priceTicks(params) });
+  chart.overrideXAxis({ createTicks: params => timeTicks(params, stamps, period) });
   chart.setDataLoader({ getBars: ({ type, callback }) => callback(type === "init" ? bars : [], false) });
   chart.createIndicator({
     name: "MA",
@@ -259,6 +264,7 @@ export function createPriceCanvas(element: HTMLElement, onDrawingChange: (state:
         drawings.clear();
       }
       bars = data.length > 1 ? data : [];
+      stamps = bars.map(bar => bar.timestamp);
       if (bars.length) chart.resize();
       period = TIMEFRAMES[timespan].period;
       if (symbolChanged) {
