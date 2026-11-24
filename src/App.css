@@ -432,7 +432,9 @@ button:focus-visible, input:focus-visible {
 .pc-title { font-size: 11.5px; color: var(--text); }
 .pc-title strong { font-size: 13px; }
 .pc-title small { color: var(--secondary); font-size: 9.5px; margin-left: 6px; }
-.pc-ranges, .pc-chart-actions { display: flex; gap: 3px; }
+.pc-timeframes, .pc-chart-actions { display: flex; gap: 3px; }
+.pc-timeframes { flex-wrap: wrap; align-items: center; }
+.pc-timeframe-divider { width: 1px; height: 15px; margin: 0 3px; background: var(--border); }
 .pc-range, .pc-tool {
   background: transparent; border: 1px solid var(--border); color: var(--secondary);
   font: inherit; font-size: 10px; padding: 2px 8px; border-radius: 2px; cursor: pointer;
@@ -443,6 +445,7 @@ button:focus-visible, input:focus-visible {
 }
 .pc-range:disabled, .pc-tool:disabled { opacity: 0.45; cursor: default; }
 .pc-status { color: var(--secondary); font-size: 11px; padding: 14px 0; text-align: center; }
+.pc-loading { padding: 2px 0; text-align: right; }
 .pc-status.err { color: var(--red); }
 .pc-note { color: var(--secondary); font-size: 10px; line-height: 1.5; }
 .pc-content { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--border); background: var(--canvas); }

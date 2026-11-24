@@ -3,15 +3,17 @@ import type { Chart, Crosshair } from "klinecharts";
 import type { ChartBar } from "./chartData";
 import { DrawingToolbar, drawingTitle } from "./DrawingToolbar";
 import type { Tool } from "./drawingsStore";
-import { createPriceCanvas, INITIAL_DRAWING_STATE, type PriceCanvas } from "./priceCanvas";
+import { createPriceCanvas, formatChartTime, INITIAL_DRAWING_STATE, type PriceCanvas } from "./priceCanvas";
+import { TIMEFRAME_ORDER, TIMEFRAMES, type Timeframe } from "./timeframes";
 
 const volumeFormat = new Intl.NumberFormat("en-US");
 const price = (value: number | null | undefined) => value?.toFixed(2) ?? "—";
 
-const ChartReadout = memo(function ChartReadout({ chart, host, data }: {
+const ChartReadout = memo(function ChartReadout({ chart, host, data, timespan }: {
   chart: Chart | undefined;
   host: HTMLElement | null;
   data: ChartBar[];
+  timespan: Timeframe;
 }) {
   const [hover, setHover] = useState<{ index: number; data: ChartBar[] } | null>(null);
 
@@ -44,7 +46,7 @@ const ChartReadout = memo(function ChartReadout({ chart, host, data }: {
 
   return (
     <div className="pc-readout" aria-label="ราคาประจำแท่งที่เลือก">
-      <time dateTime={bar?.raw.time}>{bar?.raw.time.slice(0, 10)}</time>
+      <time dateTime={bar?.raw.time}>{bar && formatChartTime(bar.timestamp, TIMEFRAMES[timespan].period)}</time>
       <span>เปิด <b>{price(bar?.raw.open)}</b></span>
       <span>สูง <b>{price(bar?.raw.high)}</b></span>
       <span>ต่ำ <b>{price(bar?.raw.low)}</b></span>
@@ -59,7 +61,12 @@ const ChartReadout = memo(function ChartReadout({ chart, host, data }: {
   );
 });
 
-export default function ChartSurface({ symbol, data }: { symbol: string; data: ChartBar[] }) {
+export default function ChartSurface({ symbol, data, timespan, onTimeframe }: {
+  symbol: string;
+  data: ChartBar[];
+  timespan: Timeframe;
+  onTimeframe: (timespan: Timeframe) => void;
+}) {
   const host = useRef<HTMLDivElement>(null);
   const controller = useRef<PriceCanvas | null>(null);
   const [chart, setChart] = useState<Chart>();
@@ -83,10 +90,10 @@ export default function ChartSurface({ symbol, data }: { symbol: string; data: C
       setChart(controller.current?.chart);
       setFailed(!controller.current);
     }
-    controller.current?.setData(symbol, data);
+    controller.current?.setData(symbol, data, timespan);
     setDraft(null);
     setConfirm(false);
-  }, [symbol, data, ready]);
+  }, [symbol, data, ready, timespan]);
 
   useEffect(() => {
     if (!expanded) return;
@@ -114,6 +121,12 @@ export default function ChartSurface({ symbol, data }: { symbol: string; data: C
   }
 
   function canvasKey(event: KeyboardEvent<HTMLDivElement>) {
+    if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && /^[1-8]$/.test(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+      onTimeframe(TIMEFRAME_ORDER[Number(event.key) - 1]);
+      return;
+    }
     if (event.shiftKey && (event.key === "ArrowUp" || event.key === "ArrowDown")
       && controller.current?.selectDrawing(event.key === "ArrowDown" ? 1 : -1)) {
       event.preventDefault();
@@ -136,7 +149,7 @@ export default function ChartSurface({ symbol, data }: { symbol: string; data: C
       {failed && ready && <div className="pc-status err" role="status">ไม่สามารถเปิดกราฟราคาได้</div>}
       <div className={`pc-content${expanded ? " expanded" : ""}`} hidden={!ready || failed}>
         <div className="pc-chart-head">
-          <ChartReadout chart={chart} host={host.current} data={data} />
+          <ChartReadout chart={chart} host={host.current} data={data} timespan={timespan} />
           <div className="pc-chart-actions">
             <button type="button" className="pc-range" title="แสดงข้อมูลทั้งหมดในช่วง"
               aria-label="แสดงข้อมูลทั้งหมดในช่วง" onClick={() => controller.current?.fit()}>⤢ Fit</button>
@@ -178,9 +191,10 @@ export default function ChartSurface({ symbol, data }: { symbol: string; data: C
             onClear={() => { selectTool("cursor"); setConfirm(true); }} />
           <div className="pc-viewport">
             <div className="pc-canvas" ref={host} tabIndex={0} role="region" aria-label="กราฟราคาและปริมาณซื้อขาย"
-              title="Shift + ↑/↓ เพื่อเลือกเส้นหรือข้อความ · Delete เพื่อลบ"
-              aria-keyshortcuts="Shift+ArrowUp Shift+ArrowDown Delete Backspace"
+              title="กด 1–8 เพื่อเลือกกรอบเวลา · Shift + ↑/↓ เพื่อเลือกเส้นหรือข้อความ · Delete เพื่อลบ"
+              aria-keyshortcuts="1 2 3 4 5 6 7 8 Shift+ArrowUp Shift+ArrowDown Delete Backspace"
               onPointerDownCapture={() => { controller.current?.clearKeyboardSelection(); focusChart(); }}
+              onDoubleClickCapture={() => controller.current?.fit()}
               onKeyDownCapture={canvasKey} />
             {drawing.tool !== "cursor" && <div className="pc-draw-shield" aria-hidden="true" />}
           </div>

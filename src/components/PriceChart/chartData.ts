@@ -21,7 +21,7 @@ export interface History {
     low: number | null;
     change_pct: number | null;
   };
-  range: string;
+  timespan: string;
   note: string;
 }
 

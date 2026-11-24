@@ -1,14 +1,25 @@
-import { dispose, getOverlayClass, init, registerOverlay, type Overlay, type OverlayCreate } from "klinecharts";
+import { dispose, getOverlayClass, init, registerOverlay, utils, type Overlay, type OverlayCreate, type Period } from "klinecharts";
 import type { ChartBar } from "./chartData";
 import { chartTheme } from "./chartTheme";
 import { isDrawingName, POINT_COUNTS, readDrawings, writeDrawings, type Drawing, type DrawingTool, type Tool } from "./drawingsStore";
+import { CHART_TIMEZONE, DEFAULT_TIMEFRAME, TIMEFRAMES, type Timeframe } from "./timeframes";
 
 const PRICE = "candle_pane";
 const VOLUME = "pc_volume_pane";
 const GROUP = "price-chart-drawings";
 const ANNOTATION = "pcTextAnnotation";
-const MIN_BAR_SPACE = 0.1;
+const MIN_BAR_SPACE = 0.02;
 const MAX_BAR_SPACE = 50;
+const RECENT_BAR_COUNT = 120;
+const dateTimeFormat = new Intl.DateTimeFormat("en", {
+  timeZone: CHART_TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
+
+export function formatChartTime(timestamp: number, { type }: Period) {
+  const template = type === "minute" || type === "hour" ? "YYYY-MM-DD HH:mm" : "YYYY-MM-DD";
+  return utils.formatDate(dateTimeFormat, timestamp, template);
+}
 
 // The built-in annotation ignores all pointer events. Use its one-point
 // placement with a selectable label and an anchor that stays at the price.
@@ -43,9 +54,11 @@ export const INITIAL_DRAWING_STATE: DrawingState = {
 };
 
 export function createPriceCanvas(element: HTMLElement, onDrawingChange: (state: DrawingState) => void) {
+  let period: Period = TIMEFRAMES[DEFAULT_TIMEFRAME].period;
   const instance = init(element, {
     styles: chartTheme(element),
-    timezone: "UTC",
+    timezone: CHART_TIMEZONE,
+    formatter: { formatDate: ({ timestamp }) => formatChartTime(timestamp, period) },
     zoomAnchor: "cursor",
     layout: { barSpaceLimit: { min: MIN_BAR_SPACE, max: MAX_BAR_SPACE } },
   });
@@ -63,12 +76,11 @@ export function createPriceCanvas(element: HTMLElement, onDrawingChange: (state:
   let tool: Tool = "cursor";
   let locked = false;
   let magnet = false;
-  let autoFit = true;
+  let fitBarCount: number | null = RECENT_BAR_COUNT;
   const bySymbol = new Map<string, Drawing[]>();
   const drawings = new Map<string, Drawing>();
 
   chart.setDataLoader({ getBars: ({ type, callback }) => callback(type === "init" ? bars : [], false) });
-  chart.setPeriod({ span: 1, type: "day" });
   chart.createIndicator({
     name: "MA",
     paneId: PRICE,
@@ -83,21 +95,22 @@ export function createPriceCanvas(element: HTMLElement, onDrawingChange: (state:
   });
   chart.setPaneOptions({ id: VOLUME, height: 52, minHeight: 44, dragEnabled: false });
 
-  function fit() {
+  function fitVisibleBars(limit: number) {
+    fitBarCount = limit;
     if (bars.length <= 1) return;
+    const count = Math.min(limit, bars.length);
     // The first layout can resize the price scale. Use the measured plot
     // width again so its tick labels don't push the earliest bar offscreen.
     for (let pass = 0; pass < 2; pass++) {
       const width = chart.getSize(PRICE, "main")?.width ?? 0;
       if (width <= 0) return;
-      const space = Math.min(MAX_BAR_SPACE, Math.max(MIN_BAR_SPACE, width / (bars.length + 1)));
+      const space = Math.min(MAX_BAR_SPACE, Math.max(MIN_BAR_SPACE, width / (count + 1)));
       chart.setBarSpace(space);
       chart.setOffsetRightDistance(Math.min(space, 12));
     }
-    autoFit = true;
   }
 
-  function leaveFit() { autoFit = false; }
+  function leaveFit() { fitBarCount = null; }
   chart.subscribeAction("onZoom", leaveFit);
   chart.subscribeAction("onScroll", leaveFit);
 
@@ -107,7 +120,7 @@ export function createPriceCanvas(element: HTMLElement, onDrawingChange: (state:
     resizeFrame = requestAnimationFrame(() => {
       if (element.clientWidth === 0 || element.clientHeight === 0) return;
       chart.resize();
-      if (autoFit) fit();
+      if (fitBarCount !== null) fitVisibleBars(fitBarCount);
     });
   });
   observer.observe(element);
@@ -120,7 +133,7 @@ export function createPriceCanvas(element: HTMLElement, onDrawingChange: (state:
           name: drawing.name,
           position: [...drawings.keys()].indexOf(selectedId) + 1,
           total: drawings.size,
-          detail: drawing.text ?? `${new Date(point.timestamp).toLocaleDateString("en-CA", { timeZone: "UTC" })} · ${point.value.toFixed(2)}`,
+          detail: drawing.text ?? `${formatChartTime(point.timestamp, period)} · ${point.value.toFixed(2)}`,
         }
       : null;
     onDrawingChange({ tool, locked, magnet, selected, hasDrawings: drawings.size > 0 });
@@ -234,11 +247,12 @@ export function createPriceCanvas(element: HTMLElement, onDrawingChange: (state:
 
   return {
     chart,
-    fit,
-    setData(symbol: string, data: ChartBar[]) {
+    fit() { fitVisibleBars(Infinity); },
+    setData(symbol: string, data: ChartBar[], timespan: Timeframe) {
       cancelTool();
       clearKeyboardSelection();
-      if (ticker !== symbol) {
+      const symbolChanged = ticker !== symbol;
+      if (symbolChanged) {
         drawingSymbol = null;
         selectedId = null;
         chart.removeOverlay({ groupId: GROUP });
@@ -246,14 +260,19 @@ export function createPriceCanvas(element: HTMLElement, onDrawingChange: (state:
       }
       bars = data.length > 1 ? data : [];
       if (bars.length) chart.resize();
-      if (ticker !== symbol) {
+      period = TIMEFRAMES[timespan].period;
+      if (symbolChanged) {
         ticker = symbol;
         chart.setSymbol({ ticker: symbol });
-      } else {
+      }
+      // A new period requests the loader's current bars itself.
+      if (chart.getPeriod() !== period) {
+        chart.setPeriod(period);
+      } else if (!symbolChanged) {
         chart.resetData();
       }
       if (bars.length) {
-        fit();
+        fitVisibleBars(RECENT_BAR_COUNT);
         if (drawingSymbol === null) activate(symbol);
       }
       publish();
