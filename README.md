@@ -1,129 +1,104 @@
-# PREMIUM RADAR
+<p align="center">
+  <img src="docs/assets/banner.png" alt="PREMIUM RADAR — CSP / Covered Call screener for US stocks" width="100%">
+</p>
 
-CSP / Covered Call screener สำหรับหุ้น US ผ่าน Webull Thailand API — desktop app (Tauri 2) · by THPForge
+<p align="center">
+  <a href="https://github.com/b9b4ymiN/premium-radar/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/b9b4ymiN/premium-radar?label=release&color=e8b84a"></a>
+  <a href="https://github.com/b9b4ymiN/premium-radar/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/b9b4ymiN/premium-radar/ci.yml?branch=main&label=CI"></a>
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0a1426">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-4b8cf7"></a>
+</p>
 
-> ⚠️ **ไม่ใช่คำแนะนำการลงทุน** — แอปนี้เป็นเครื่องมือคัดกรองและคำนวณเพื่อการศึกษา ผลลัพธ์ เกรด และคำตอบของ AI อาจผิดพลาดได้ การขาย option มีความเสี่ยงสูง ตัดสินใจและรับผิดชอบเองทุกครั้ง
-
-## ดาวน์โหลดและติดตั้ง (Windows 10/11)
-
-1. เปิดหน้า **[Releases ล่าสุด](https://github.com/b9b4ymiN/premium-radar/releases/latest)** แล้วดาวน์โหลด `PREMIUM.RADAR_x.y.z_x64-setup.exe`
-2. ดับเบิลคลิกเพื่อติดตั้ง — ถ้า Windows ขึ้นหน้าจอสีน้ำเงิน **"Windows protected your PC"** (เพราะแอปยังไม่ได้ซื้อใบรับรอง code signing) ให้กด **More info → Run anyway**
-3. ถ้าเครื่องยังไม่มี Microsoft Edge WebView2 ตัวติดตั้งจะดาวน์โหลดให้เอง (ต้องต่ออินเทอร์เน็ต)
-4. แอปจะเช็กเวอร์ชันใหม่ทุกครั้งที่เปิด และอัปเดตให้ได้ในคลิกเดียว
-
-## เริ่มใช้งานครั้งแรก
-
-1. เปิดแอป → หน้า **Setup** จะขึ้นมา
-2. ใส่ **Webull App Key + App Secret ของคุณเอง** (ขอได้จาก Webull Thailand OpenAPI / Developer Portal ด้วยบัญชี Webull ของคุณ) — key เก็บใน Windows Credential Manager ของเครื่องคุณเท่านั้น แอปไม่ส่ง key ไปที่อื่นนอกจาก `api.webull.co.th`
-3. ถ้าบัญชีต้องใช้ Access Token: กด **สร้าง token** → ยืนยัน SMS ในแอป Webull ภายใน 5 นาที → กด **ทดสอบการเชื่อมต่อ**
-4. (ไม่บังคับ) ใส่ AI provider (Z.ai / OpenAI / Ollama) สำหรับ Radar Assistant
-5. กด **บันทึกและเริ่มใช้งาน** — คู่มือการใช้งานภาษาไทย: [`USAGE-TH.md`](USAGE-TH.md)
-
-แอปเรียก API ของ Webull แบบอ่านอย่างเดียว ไม่มีคำสั่งซื้อขายหรือแก้ไขบัญชี
-
-## License
-
-[Apache-2.0](LICENSE)
+<p align="center">
+  <b>English</b> · <a href="README.th.md">ภาษาไทย</a>
+</p>
 
 ---
 
-### สำหรับ developer
+**PREMIUM RADAR** is a Windows desktop app for option sellers. It scans the US option chain of any stock through the **Webull Thailand OpenAPI**, grades every cash-secured put and covered call by premium, risk and liquidity, and explains each setup in plain language — with live quotes, Black-Scholes greeks, an interactive chart and an AI copilot grounded in the data on screen.
+
+> [!WARNING]
+> **Not financial advice.** PREMIUM RADAR is a screening and calculation tool for education. Grades, probabilities and AI answers can be wrong, and selling options carries substantial risk. You make — and own — every trading decision.
+
+## Features
+
+| | |
+|---|---|
+| **Strategy scanner** | Finds CSP and covered-call candidates by delta, DTE, spread, premium and your cash budget; grades each A / B / C with the reason in words. |
+| **Live data** | Webull real-time push (MQTT) with REST fallback, after-hours and overnight sessions, quotes, open interest and the broker's own greeks. |
+| **Quant engine** | Black-Scholes pricing, implied volatility, greeks, expected move, put/call skew and assignment probability — in Rust, verified against golden fixtures. |
+| **Contract analysis** | Premium, annualised return, collateral, break-even, payoff at expiry, earnings and ex-dividend risk notes per contract. |
+| **TradingView-style chart** | 5m to monthly timeframes, wheel zoom and pan, MA(5/20), volume, and drawing tools (trend line, ray, channel, Fibonacci, text) saved per symbol. |
+| **Market & watchlists** | Gainers, losers, most active (re-sortable by traded value or market cap), 52-week highs/lows, sectors, local and broker watchlists. |
+| **Option Lab** | Payoff and probability lab, scenario tables, frozen predictions and an accuracy journal. |
+| **Radar Assistant** | Floating AI copilot (Z.ai GLM, OpenAI or a local Ollama model) that answers from the scanner's live data only. |
+| **Auto-update** | The app checks for a new release at start and updates in one click. |
+
+## Download & install
+
+1. Download **`PREMIUM.RADAR_x.y.z_x64-setup.exe`** from the [latest release](https://github.com/b9b4ymiN/premium-radar/releases/latest) (an `.msi` is also available).
+2. Run it. Because the installer is not yet code-signed, Windows SmartScreen may show **"Windows protected your PC"** — choose **More info → Run anyway**.
+3. If Microsoft Edge WebView2 is missing, the installer downloads it (internet required).
+
+Requirements: Windows 10 or 11 (x64) and your own **Webull Thailand** account with OpenAPI access.
+
+## Getting started
+
+1. Open the app — the **Setup** screen appears on first run.
+2. Enter **your own Webull App Key and App Secret** (from the Webull Thailand OpenAPI developer portal).
+3. If your key needs an access token, press **Create token** (สร้าง token), confirm the SMS in the Webull app within 5 minutes, then **Test connection** (ทดสอบการเชื่อมต่อ).
+4. Optionally add an AI provider for the Radar Assistant.
+5. Press **Save & start** (บันทึกและเริ่มใช้งาน). A Thai user guide is in [`USAGE-TH.md`](USAGE-TH.md).
+
+## Privacy & security
+
+- **Read-only.** The app only reads market and account data. It has no order placement, transfer or account-changing call.
+- **Your keys stay on your machine.** Credentials live in the Windows Credential Manager (service `premium-radar`); they never reach the UI layer and are sent only to `https://api.webull.co.th`. Redirects are never followed with credential headers.
+- **Quota-aware.** One shared request coordinator paces every call at 85 % of the documented Webull Thailand limits, with per-family windows and retry on rate limits.
+- Found a security issue? Please open a private security advisory on this repository.
+
+## Build from source
+
+Prerequisites: Rust (stable, MSVC toolchain), Node.js LTS, and the Visual Studio C++ Build Tools.
 
 ```bash
-# Clone + install
-git clone <repo>
-cd option2
+git clone https://github.com/b9b4ymiN/premium-radar.git
+cd premium-radar
 npm install
 
-# Browser preview (mock data, no keys, no desktop shell)
-npm run dev
+npm run dev          # browser preview with mock data (no keys, no desktop shell)
+npm run tauri dev    # the desktop app in dev mode
+npm run tauri build  # NSIS + MSI installers
 
-# The real app in dev mode (keys entered once in the Setup screen)
-npm run tauri dev
-
-# Gates — run from the repo root
-npm run check                                                    # TypeScript + ESLint
-npm run build                                                    # Vite build
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace                                           # unit, golden, wiremock
-
-# Build the Tauri app (requires MSVC + Rust)
-cargo tauri build
+npm run verify       # all gates: typecheck + lint, build, fmt, clippy, tests
 ```
 
-ตารางว่า API ไหนของ Webull ไทยใช้ได้จริงด้วย key นี้: [`docs/WEBULL_TH_CAPABILITY_MATRIX.md`](docs/WEBULL_TH_CAPABILITY_MATRIX.md) · คู่มือใช้งานภาษาไทย: [`USAGE-TH.md`](USAGE-TH.md)
+`RADAR_TIMING=1 npm run tauri dev` prints per-phase load timings of a scan.
 
-## API Keys
-
-คีย์กรอกในหน้า **Setup** ของแอปและเก็บใน OS keyring ของเครื่อง (service `premium-radar`) — ไม่เก็บเป็นข้อความธรรมดา และถ้า keyring ใช้ไม่ได้แอปจะแจ้ง error แทนที่จะ fallback
-
-ตัวแปร environment ยังใช้เป็นทางเลือกได้ (ดู `.env.example`)
-
-| Variable | จำเป็น | คำอธิบาย |
-|----------|--------|----------|
-| `WEBULL_APP_KEY` | ✓ | Webull OpenAPI App Key |
-| `WEBULL_APP_SECRET` | ✓ | Webull OpenAPI App Secret |
-| `LLM_BASE_URL` | — | LLM endpoint (เช่น `https://api.z.ai`) |
-| `LLM_API_KEY` | — | LLM API key |
-| `LLM_MODEL` | — | ชื่อโมเดล (เช่น `glm-5.3`, `gpt-4o`, `llama3.2`) |
-
-หรือใช้ shorthand: `GLM_API_KEY` หรือ `OPENAI_API_KEY`
-
-## โครงสร้างโปรเจ็ค
+## Architecture
 
 ```
-crates/radar-core/     — Rust domain logic (framework-free)
-  ├── quant.rs         — Black-Scholes / IV / Greeks
-  ├── screener.rs      — Enrichment / Grading / Filters
-  ├── engine.rs        — Coalescing state store
-  ├── copilot.rs       — LLM function calling
-  ├── lab/             — Option Lab: payoff, probability, storage, replay, calibration
-  └── webull/
-      ├── contracts.rs — OCC symbol parser
-      ├── sign.rs      — Request signing (V3 HMAC-SHA256 by default, V2 selectable)
-      ├── transport.rs — HTTP client + one shared request coordinator
-      ├── rest.rs      — Fetcher trait, error classification
-      ├── auth.rs      — Access token create / check
-      ├── stocks.rs    — Stock snapshots, bars, instrument profiles
-      ├── options.rs   — Option quotes (greeks) and trades
-      ├── fundamentals.rs — Company profile, earnings window, dividends, analysts
-      ├── screeners.rs — Gainers / losers / most active / 52-week / dividend / sectors
-      ├── watchlists.rs — Broker watchlists, read only
-      ├── trading.rs   — Accounts, balances, positions, open orders (read only)
-      ├── discovery.rs — Contract discovery pipeline
-      ├── stream.rs    — MQTT streaming (rumqttc)
-      └── pb/          — Protobuf decode (prost)
-
-src/                   — React frontend (TypeScript)
-src-tauri/             — Tauri bridge (commands + settings + scan worker)
-design/                — Design baseline (DESIGN.md + prototype)
-docs/                  — Webull Thailand capability matrix
-docs/dev/              — Plans, product brief and the progress ledger (developer notes)
-tools/                 — Fixture dump + API probe scripts (developer only)
-tests/fixtures/        — Golden test fixtures (deterministic)
+crates/radar-core/   Rust domain logic, framework-free
+  quant.rs           Black-Scholes, IV, greeks
+  screener.rs        enrichment, grading, filters
+  engine.rs          coalescing state store
+  copilot.rs         LLM function calling
+  lab/               Option Lab: payoff, probability, replay, calibration
+  webull/            signing (V3 HMAC-SHA256), shared request coordinator,
+                     REST clients, contract discovery, MQTT stream, protobuf
+src-tauri/           Tauri 2 shell: commands, settings + keyring, scan worker
+src/                 React 19 + TypeScript UI (KLineChart for the price chart)
+docs/                Webull Thailand capability matrix; docs/dev/ developer notes
+design/              design system and visual baseline
+tests/fixtures/      golden fixtures for the quant, screener and signing tests
 ```
 
-## Design System
+The Webull endpoints the app uses, and what the Thailand host actually returns, are documented in [`docs/WEBULL_TH_CAPABILITY_MATRIX.md`](docs/WEBULL_TH_CAPABILITY_MATRIX.md).
 
-อ้างอิงจาก `design/DESIGN.md` + `design/REFINEMENT-V2-1.md`
+## Contributing
 
-- โทนสี: Charcoal dark (#0b0d11), 1px borders
-- ฟอนต์: Inter + IBM Plex Sans Thai, tabular numerals
-- โครง: 4-column shell (icon rail / sidebar / main / right panel) — icon rail เป็นเมนูเดียวของแอป
-- Gradient เฉพาะ chrome (แถบหัวแอป หัว panel แถบราคา หัวตาราง) แบบ 2 สีเพื่อนกัน — พื้นที่ข้อมูลเป็นสีเรียบ ไม่มี gloss หรือเงาหนัก
-- เขียว/แดง = บวก/ลบ (ค่าการเงิน และสัดส่วนความเห็นซื้อ/ขาย) · ฟ้า = การเลือกและการเน้น · เหลือง = คำเตือน
+Issues and pull requests are welcome. Please run `npm run verify` before opening a pull request, and keep changes read-only towards the broker.
 
-## Testing
+## License
 
-```bash
-# Rust: unit, golden (quant / screener / signing) and wiremock tests — 234 passed, 1 ignored
-cargo test --workspace
-
-# Frontend
-npm run check   # TypeScript + ESLint
-npm run build   # Vite build
-
-# Read-only probe of the Thailand host with the saved key (needs the app set up once)
-cd src-tauri && cargo run --example probe_capabilities
-```
+[Apache-2.0](LICENSE) © 2026 THPForge
