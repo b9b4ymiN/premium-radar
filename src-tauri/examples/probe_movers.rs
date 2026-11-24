@@ -102,13 +102,7 @@ fn row_line(row: &Value, rank: usize) -> String {
     )
 }
 
-fn print_call(
-    id: &str,
-    path: &str,
-    params: &[(&str, &str)],
-    status: u16,
-    body: &Value,
-) {
+fn print_call(id: &str, path: &str, params: &[(&str, &str)], status: u16, body: &Value) {
     let query = params
         .iter()
         .map(|(k, v)| format!("{k}={v}"))
@@ -145,7 +139,11 @@ fn print_call(
     let top5: Vec<String> = rows
         .iter()
         .take(5)
-        .filter_map(|row| row.get("symbol").and_then(Value::as_str).map(str::to_string))
+        .filter_map(|row| {
+            row.get("symbol")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .collect();
     println!("top5: {}", top5.join(","));
 }
