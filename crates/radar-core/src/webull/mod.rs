@@ -18,3 +18,4 @@ pub mod stream;
 pub mod trading;
 #[cfg(feature = "client")]
 pub mod transport;
+pub mod watchlists;

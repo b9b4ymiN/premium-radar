@@ -306,6 +306,9 @@ pub enum FetchError {
     /// Dropped before it was sent because the caller went stale (symbol
     /// changed, scan stopped) — an obsolete request, not an API failure.
     Cancelled,
+    /// HTTP 200 with a body the reader does not recognise. Reported, never
+    /// shown as "no data": an empty list would look like the truth.
+    Unexpected(String),
 }
 
 impl std::fmt::Display for FetchError {
@@ -318,6 +321,7 @@ impl std::fmt::Display for FetchError {
                 write!(f, "Webull {status}: {clipped}")
             }
             FetchError::Cancelled => write!(f, "request cancelled (superseded)"),
+            FetchError::Unexpected(what) => write!(f, "unexpected response: {what}"),
         }
     }
 }
@@ -356,6 +360,8 @@ pub enum FailureKind {
     NotFound,
     /// The broker's side failed.
     Server,
+    /// 200 with a body the reader does not recognise.
+    Schema,
     Other,
 }
 
@@ -404,6 +410,7 @@ impl FetchError {
             FetchError::Network(_) => FailureKind::Network,
             FetchError::Cancelled => FailureKind::Cancelled,
             FetchError::NonZero(status, body) => classify(*status, body),
+            FetchError::Unexpected(_) => FailureKind::Schema,
         }
     }
 
@@ -425,6 +432,8 @@ impl FetchError {
                 Some(code) => format!("HTTP {status} · {code}"),
                 None => format!("HTTP {status}"),
             },
+            // the reader's own words about the shape — never the body itself
+            FetchError::Unexpected(what) => format!("HTTP 200 · SCHEMA_MISMATCH ({what})"),
         }
     }
 
@@ -446,6 +455,9 @@ impl FetchError {
             }
             FailureKind::NotFound => "ไม่มี endpoint นี้บน Webull host ที่ตั้งไว้",
             FailureKind::Server => "Webull ตอบกลับผิดพลาดชั่วคราว — ลองใหม่อีกครั้ง",
+            FailureKind::Schema => {
+                "Webull ตอบกลับมา 200 แต่รูปแบบข้อมูลไม่ตรงกับที่แอปอ่านอยู่ — ไม่แสดงข้อมูลชุดนี้ เพื่อไม่ให้เข้าใจผิดว่าไม่มีข้อมูล"
+            }
             FailureKind::Other => "Webull ตอบกลับด้วยสถานะที่ไม่คาดคิด",
         };
         format!("{reason} ({})", self.summary())

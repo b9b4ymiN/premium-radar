@@ -1150,6 +1150,58 @@ async fn get_sector_detail(
     Ok(value)
 }
 
+/// The watchlists the broker holds — read only, reused for a minute. The
+/// app's own lists are local; nothing here writes to the broker.
+#[tauri::command]
+async fn get_broker_watchlists(
+    state: tauri::State<'_, AppState>,
+    refresh: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    use radar_core::webull::watchlists::fetch_watchlists;
+    let key = "broker-watchlists";
+    if !refresh.unwrap_or(false)
+        && let Some(cached) = MOVERS_CACHE.lock().unwrap().get(key)
+    {
+        return Ok(cached);
+    }
+    let value = with_client(&state, move |client| {
+        let lists = fetch_watchlists(client).map_err(|e| e.user_message())?;
+        Ok(serde_json::json!({
+            "lists": lists, "fetched_at": chrono::Utc::now().to_rfc3339(), "source": "REST",
+        }))
+    })
+    .await?;
+    MOVERS_CACHE.lock().unwrap().put(key, value.clone());
+    Ok(value)
+}
+
+/// The symbols of one broker watchlist — read only.
+#[tauri::command]
+async fn get_broker_watchlist(
+    state: tauri::State<'_, AppState>,
+    watchlist_id: String,
+    refresh: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    use radar_core::webull::watchlists::fetch_watchlist_instruments;
+    let key = format!("broker-watchlist:{watchlist_id}");
+    if !refresh.unwrap_or(false)
+        && let Some(cached) = MOVERS_CACHE.lock().unwrap().get(&key)
+    {
+        return Ok(cached);
+    }
+    let value = with_client(&state, move |client| {
+        let instruments =
+            fetch_watchlist_instruments(client, &watchlist_id).map_err(|e| e.user_message())?;
+        Ok(serde_json::json!({
+            "watchlist_id": watchlist_id, "instruments": instruments,
+            "fetched_at": chrono::Utc::now().to_rfc3339(), "source": "REST",
+        }))
+    })
+    .await?;
+    MOVERS_CACHE.lock().unwrap().put(&key, value.clone());
+    Ok(value)
+}
+
 /// What the broker itself quotes for one contract: sizes, open interest,
 /// greeks, implied volatility and the quote's own timestamps.
 #[tauri::command]
@@ -1579,6 +1631,8 @@ pub fn run() {
             get_movers,
             get_sectors,
             get_sector_detail,
+            get_broker_watchlists,
+            get_broker_watchlist,
             lab_analyze,
             lab_freeze_prediction,
             lab_predictions,
