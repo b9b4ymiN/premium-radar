@@ -1,6 +1,4 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { SetupScreen } from "./components/SetupScreen";
 import OptionLab from "./components/OptionLab/OptionLab";
 import PriceChart from "./components/PriceChart/PriceChart";
@@ -16,6 +14,7 @@ import { fmt, thaiDate } from "./lib/format";
 import type { EnrichedRow, StockUpdate, ChainStats, EngineSnapshot } from "./types/screener";
 import "./App.css";
 import brandMark from "./assets/thpforge-mark.svg";
+import { RadarAssistant } from "./components/RadarAssistant/RadarAssistant";
 
 /** The pages of the icon rail — the app's single menu. */
 type MainTab = "home" | "market" | "monitor" | "lab" | "portfolio" | "watchlist";
@@ -960,81 +959,21 @@ export default function App() {
             </div>
           </section>
 
-          {/* Radar Assistant — real LLM chat, status independent of the feed */}
-          <section className="copilot">
-            <div className="panel-heading" style={{ minHeight: "34px" }}>
-              <span style={{ color: "#94beff" }}>✦</span> Radar Assistant
-              <span
-                style={{
-                  marginLeft: "auto",
-                  fontSize: 9,
-                  fontWeight: 400,
-                  color: llmInfo ? "#3ddc97" : "#e0b15f",
-                }}
-              >
-                {llmInfo ? `AI · ${llmInfo.model}` : "AI ยังไม่ตั้งค่า"}
-              </span>
-            </div>
-            {!llmInfo ? (
-              <div className="chatlog" style={{ display: "block", padding: "10px 12px" }}>
-                <p style={{ fontSize: 10.5, color: "#9bacc7", lineHeight: 1.6, marginBottom: 10 }}>
-                  ยังไม่ได้ตั้งค่า AI assistant — ใส่ LLM API key (Z.ai / OpenAI / Ollama)
-                  ในหน้า Setup ได้เลย ไม่เกี่ยวกับสถานะ feed ข้อมูล
-                </p>
-                <button
-                  onClick={() => { setSetupMode("edit"); setShowSetup(true); }}
-                  style={{
-                    background: "#2b4a75", color: "#dfe9f7", border: "1px solid #4a91fa",
-                    borderRadius: 6, padding: "6px 14px", fontSize: 10.5, fontWeight: 650, cursor: "pointer",
-                  }}
-                >
-                  เปิดหน้า Setup
-                </button>
-              </div>
-            ) : (
-              <>
-                {!isLive && (
-                  <div style={{ fontSize: 9.5, color: "#e0b15f", padding: "6px 12px 0" }}>
-                    ⚠ feed ข้อมูลยังไม่ live — AI จะบอกว่าไม่มีข้อมูลจนกว่า scan สำเร็จ
-                  </div>
-                )}
-                <div className="chatlog">
-                  {chat.length === 0 && (
-                    <div className="bubble assistant">
-                      <Markdown remarkPlugins={[remarkGfm]}>
-                        {`ถามเกี่ยวกับสัญญาในตารางได้เลย เช่น "มีเงิน $18,000 ตัวไหนน่าทำ?"
-                        หรือ "NVDA 175P มีความเสี่ยงยังไง" — คำตอบอ้างอิงข้อมูลจริงเท่านั้น`}
-                      </Markdown>
-                    </div>
-                  )}
-                  {chat.map((m, i) => (
-                    <div key={i} className={`bubble ${m.role}`}>
-                      {m.role === "assistant"
-                        ? <Markdown remarkPlugins={[remarkGfm]}>{m.content}</Markdown>
-                        : m.content}
-                    </div>
-                  ))}
-                  {chatBusy && (
-                    <div className="bubble assistant">AI กำลังดึงข้อมูลและวิเคราะห์ ...</div>
-                  )}
-                  {chatError && (
-                    <div className="bubble assistant" style={{ color: "#f4788c" }}>⚠ {chatError}</div>
-                  )}
-                </div>
-                <div className="chatinput">
-                  <input
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") sendChat(); }}
-                    placeholder={isLive ? "ถามเกี่ยวกับสัญญาในตาราง..." : "ถามได้เลย (จะตอบเมื่อมีข้อมูล)..."}
-                  />
-                  <button aria-label="Send" onClick={sendChat} disabled={chatBusy}>➤</button>
-                </div>
-              </>
-            )}
-          </section>
         </aside>
       </div>
+
+      {/* Radar Assistant — floating button + chat that keeps the conversation while closed */}
+      <RadarAssistant
+        llmInfo={llmInfo}
+        isLive={isLive}
+        chat={chat}
+        chatBusy={chatBusy}
+        chatError={chatError}
+        chatInput={chatInput}
+        setChatInput={setChatInput}
+        sendChat={sendChat}
+        openSetup={() => { setSetupMode("edit"); setShowSetup(true); }}
+      />
 
       {/* ============ STATUS BAR ============ */}
       <footer className="statusbar">
