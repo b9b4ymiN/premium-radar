@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ForgeBird } from "./ForgeBird";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -106,7 +107,7 @@ export function RadarAssistant(p: Props) {
         aria-label="Radar Assistant"
         title="Radar Assistant — ถาม AI เกี่ยวกับสัญญาในตาราง (Esc ปิด)"
       >
-        <span aria-hidden="true">✦</span>
+        <ForgeBird size={24} />
         {(unread || p.chatBusy) && <i className={p.chatBusy ? "busy" : ""} aria-hidden="true" />}
       </button>
 
@@ -118,7 +119,7 @@ export function RadarAssistant(p: Props) {
           style={{ right: pos.right, bottom: pos.bottom }}
         >
           <div className="ra-head" onPointerDown={startDrag}>
-            <span className="ra-spark" aria-hidden="true">✦</span>
+            <span className="ra-spark"><ForgeBird size={16} /></span>
             <b>Radar Assistant</b>
             <span className={`ra-model ${p.llmInfo ? "ok" : "warn"}`}>
               {p.llmInfo ? `AI · ${p.llmInfo.model}` : "AI ยังไม่ตั้งค่า"}
