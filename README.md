@@ -99,6 +99,8 @@ src/                   — React frontend (TypeScript)
 src-tauri/             — Tauri bridge (commands + settings + scan worker)
 design/                — Design baseline (DESIGN.md + prototype)
 docs/                  — Webull Thailand capability matrix
+docs/dev/              — Plans, product brief and the progress ledger (developer notes)
+tools/                 — Fixture dump + API probe scripts (developer only)
 tests/fixtures/        — Golden test fixtures (deterministic)
 ```
 

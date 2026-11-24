@@ -41,3 +41,16 @@ AGENTS.override.md
 # codegraph index
 .codegraph/
 /target-release/
+
+# personal agent / tool config (kept locally, not part of the product)
+CLAUDE.md
+AGENTS.override.md
+.claude/
+.codex/
+.codegraph/
+.cx/
+.impeccable/
+.agents/
+
+# the example env file is documentation, not secrets
+!.env.example
