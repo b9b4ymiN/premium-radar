@@ -6,7 +6,7 @@ CSP / Covered Call screener สำหรับหุ้น US ผ่าน Webul
 
 ## ดาวน์โหลดและติดตั้ง (Windows 10/11)
 
-1. เปิดหน้า **[Releases ล่าสุด](https://github.com/b9b4ymiN/option2/releases/latest)** แล้วดาวน์โหลด `PREMIUM.RADAR_x.y.z_x64-setup.exe`
+1. เปิดหน้า **[Releases ล่าสุด](https://github.com/b9b4ymiN/premium-radar/releases/latest)** แล้วดาวน์โหลด `PREMIUM.RADAR_x.y.z_x64-setup.exe`
 2. ดับเบิลคลิกเพื่อติดตั้ง — ถ้า Windows ขึ้นหน้าจอสีน้ำเงิน **"Windows protected your PC"** (เพราะแอปยังไม่ได้ซื้อใบรับรอง code signing) ให้กด **More info → Run anyway**
 3. ถ้าเครื่องยังไม่มี Microsoft Edge WebView2 ตัวติดตั้งจะดาวน์โหลดให้เอง (ต้องต่ออินเทอร์เน็ต)
 4. แอปจะเช็กเวอร์ชันใหม่ทุกครั้งที่เปิด และอัปเดตให้ได้ในคลิกเดียว
