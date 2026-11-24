@@ -90,13 +90,14 @@ export const signOf = (n: number | null | undefined): Sign =>
   n == null || !Number.isFinite(n) || n === 0 ? "" : n > 0 ? "pos" : "neg";
 
 /** What the broker's session tag means for the quote header. The tags seen
- *  live from the Thailand host are PRE and ATH; the other spellings are the
- *  ones the reference docs use. */
-export type SessionKind = "regular" | "extended" | "closed" | "other";
+ *  live from the Thailand host are PRE, ATH and OVN; the other spellings are
+ *  the ones the reference docs use. */
+export type SessionKind = "regular" | "extended" | "overnight" | "closed" | "other";
 
 export const sessionKind = (status: string | null | undefined): SessionKind => {
   const code = (status ?? "").toUpperCase();
   if (["PRE", "ATH", "POST", "AFTER", "AFTER_HOURS", "AH"].includes(code)) return "extended";
+  if (["OVN", "OVERNIGHT", "ONS"].includes(code)) return "overnight";
   if (["RTH", "REGULAR", "REG", "OPEN", "TRADING"].includes(code)) return "regular";
   if (["CLOSED", "CLOSE"].includes(code)) return "closed";
   return "other";
@@ -107,6 +108,7 @@ export const sessionLabel = (status: string | null | undefined): string => {
   const code = (status ?? "").toUpperCase();
   if (code === "PRE") return "Pre-market";
   if (code === "ATH" || code === "POST" || code === "AFTER" || code === "AFTER_HOURS" || code === "AH") return "After-hours";
+  if (code === "OVN" || code === "OVERNIGHT" || code === "ONS") return "Overnight";
   if (code === "RTH" || code === "REGULAR" || code === "REG" || code === "OPEN" || code === "TRADING") return "Regular session";
   if (code === "CLOSED" || code === "CLOSE") return "Closed";
   return code || "--";

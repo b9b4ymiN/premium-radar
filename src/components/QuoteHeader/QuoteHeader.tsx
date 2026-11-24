@@ -111,7 +111,9 @@ export default function QuoteHeader({
           ? `${sessionLabel(status)} · ${num(extended.last_price)} ${signedPct(extended.change_ratio)} · ${timeEt(extended.last_trade_time_ms)}`
           : kind === "extended"
             ? `${sessionLabel(status)} · ยังไม่มีราคา · ล่าสุด ${timeEt(quote.last_trade_time_ms)}`
-            : `${sessionLabel(status)} · ล่าสุด ${timeEt(quote.last_trade_time_ms)}`
+            : kind === "overnight"
+              ? `${sessionLabel(status)} · แพ็กเกจนี้ไม่มีราคาช่วงนี้ · ล่าสุด ${timeEt(quote.last_trade_time_ms)}`
+              : `${sessionLabel(status)} · ล่าสุด ${timeEt(quote.last_trade_time_ms)}`
         : "กำลังดึงสถานะตลาด …";
   const dot = quoteError ? "err" : extended ? "ext" : kind === "regular" ? "rth" : "off";
 

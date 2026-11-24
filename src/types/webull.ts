@@ -195,6 +195,20 @@ export interface OpenOrder {
   option_strategy: string | null;
 }
 
+/** A watchlist as the broker holds it (shown read only). */
+export interface BrokerWatchlist {
+  id: string;
+  name: string;
+  update_time: string | null;
+}
+
+/** One symbol of a broker watchlist. */
+export interface BrokerInstrument {
+  symbol: string;
+  name: string | null;
+  exchange_code: string | null;
+}
+
 export type MoverList =
   | "gainers"
   | "losers"

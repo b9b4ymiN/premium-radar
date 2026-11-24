@@ -436,7 +436,7 @@ button:focus-visible, input:focus-visible {
 .pc-range.on { border-color: var(--accent, #4b8cf7); color: var(--text); background: rgba(75, 140, 247, 0.12); }
 .pc-status { color: var(--muted); font-size: 11px; padding: 14px 0; text-align: center; }
 .pc-status.err { color: #f4788c; }
-.pc-note { color: var(--muted); font-size: 8.5px; }
+.pc-note { color: var(--muted); font-size: 10px; line-height: 1.5; }
 
 /* ============ PORTFOLIO (P18) ============ */
 .portfolio { display: flex; flex-direction: column; gap: 10px; }
@@ -715,6 +715,24 @@ button:focus-visible, input:focus-visible {
 .hp-mover-rank { color: var(--muted); width: 12px; text-align: right; }
 .hp-mover-row b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hp-mover-note { font-size: 10.5px; color: var(--muted); padding: 8px 10px; }
+
+/* Watchlists: what the broker holds, read only */
+.brokerwl {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-top: 6px; padding-top: 12px; border-top: 1px solid var(--divider);
+}
+.bwl-head { display: flex; align-items: center; gap: 10px; }
+.bwl-head .section-title { flex: 1; margin: 0; }
+.bwl-head button:disabled { opacity: 0.6; cursor: default; }
+.bwl-lists { display: flex; flex-wrap: wrap; gap: 6px; }
+.bwl-chip {
+  padding: 5px 11px; font-size: 11px; cursor: pointer;
+  color: var(--text); background: var(--surface2); border: 1px solid var(--border-strong); border-radius: 4px;
+}
+.bwl-chip:hover { border-color: var(--blue); }
+.bwl-chip.on { background: var(--blue-soft); border-color: var(--blue); color: #dbe9ff; }
+.bwl-body { display: flex; flex-direction: column; gap: 6px; }
+.bwl-copied { font-size: 10.5px; color: var(--muted); }
 
 @media (max-width: 1420px) {
   .qh-row { gap: 14px; }
