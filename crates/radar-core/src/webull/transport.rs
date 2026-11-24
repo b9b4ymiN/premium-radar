@@ -24,19 +24,38 @@ const RETRIES: u32 = 2;
 const RETRY_DELAY_SEC: f64 = 1.2;
 const BASE_URL: &str = "https://api.webull.co.th";
 
-/// Documented Thailand ceilings per endpoint (calls, window), with one call of
-/// margin. The Data API pool is 300/60 s; account, order and instrument
-/// endpoints are far tighter and a refresh button can reach them.
+/// Documented Thailand ceilings per endpoint family, taken at 85% of the
+/// documented maximum (owner's decision: 80–90%), floored: the Data API pool
+/// is 300/60 s → 255/60 s (≈ 4.25 req/s); instrument profiles 60/60 s →
+/// 51/60 s; order queries 40/2 s → 34/2 s; accounts/balance/positions are
+/// 10/30 s EACH → 8/30 s per path.
 fn endpoint_budget(path: &str) -> (usize, Duration) {
-    let ceiling = |max: usize, secs: u64| (max - 1, Duration::from_secs(secs));
+    let at_85 = |max: usize, secs: u64| ((max * 85) / 100, Duration::from_secs(secs));
     if path.starts_with("/trading/assets/") || path.ends_with("/accounts/list") {
-        ceiling(10, 30)
+        at_85(10, 30)
     } else if path.starts_with("/trading/orders/") {
-        ceiling(40, 2)
+        at_85(40, 2)
     } else if path.starts_with("/trading/instruments/") {
-        ceiling(60, 60)
+        at_85(60, 60)
     } else {
-        ceiling(300, 60)
+        at_85(300, 60)
+    }
+}
+
+/// The quota-window key a path is paced under. The Data API, instrument
+/// profiles and order queries are SHARED pools in the Thailand documentation,
+/// so every path of one family draws one window; accounts/balance/positions
+/// are limited "each", so those keep a window per exact path. Unknown paths
+/// default to the Data API family.
+fn family(path: &str) -> &str {
+    if path.starts_with("/trading/assets/") || path.ends_with("/accounts/list") {
+        path
+    } else if path.starts_with("/trading/orders/") {
+        "trading/orders"
+    } else if path.starts_with("/trading/instruments/") {
+        "trading/instruments"
+    } else {
+        "data-api"
     }
 }
 
@@ -65,7 +84,8 @@ fn window_wait(
 struct Coordinator {
     throttle: Throttle,
     cache: SnapCache,
-    /// Send timestamps per endpoint path, oldest first.
+    /// Send timestamps per quota window (family key, or the exact path for the
+    /// each-limited endpoints), oldest first.
     sent: HashMap<String, VecDeque<Instant>>,
 }
 
@@ -79,15 +99,15 @@ impl Coordinator {
     }
 
     /// Block until `path` may be sent: at least `MIN_INTERVAL_SEC` after the
-    /// previous request of this origin finished, and inside the endpoint's
-    /// documented ceiling.
+    /// previous request of this origin finished, and inside the endpoint
+    /// family's 85% ceiling (shared pools count every path of the family).
     fn wait_turn(&mut self, path: &str) {
         let wait = self.throttle.wait_duration(self.throttle.last());
         if !wait.is_zero() {
             std::thread::sleep(wait);
         }
         let (max, window) = endpoint_budget(path);
-        let stamps = self.sent.entry(path.to_owned()).or_default();
+        let stamps = self.sent.entry(family(path).to_owned()).or_default();
         while let Some(wait) = window_wait(stamps, max, window, Instant::now()) {
             std::thread::sleep(wait);
         }
@@ -96,7 +116,7 @@ impl Coordinator {
     fn record(&mut self, path: &str) {
         self.throttle.mark();
         self.sent
-            .entry(path.to_owned())
+            .entry(family(path).to_owned())
             .or_default()
             .push_back(Instant::now());
     }
@@ -450,26 +470,67 @@ mod tests {
     use super::*;
 
     #[test]
-    fn endpoint_budgets_sit_one_call_below_the_documented_ceiling() {
+    fn endpoint_budgets_sit_at_85_percent_of_the_documented_ceiling() {
         let budget = |path: &str| {
             let (max, window) = endpoint_budget(path);
             (max, window.as_secs())
         };
-        assert_eq!(budget("/trading/accounts/list"), (9, 30));
-        assert_eq!(budget("/trading/assets/balances/get"), (9, 30));
-        assert_eq!(budget("/trading/assets/positions/list"), (9, 30));
-        assert_eq!(budget("/trading/orders/open-orders/list"), (39, 2));
+        assert_eq!(budget("/trading/accounts/list"), (8, 30));
+        assert_eq!(budget("/trading/assets/balances/get"), (8, 30));
+        assert_eq!(budget("/trading/assets/positions/list"), (8, 30));
+        assert_eq!(budget("/trading/orders/open-orders/list"), (34, 2));
         assert_eq!(
             budget("/trading/instruments/stocks/profiles/list"),
-            (59, 60)
+            (51, 60)
         );
         // everything else sits in the Data API pool, legacy /openapi paths included
-        assert_eq!(budget("/openapi/market-data/stock/snapshot"), (299, 60));
-        assert_eq!(budget("/market-data/stocks/bars/list"), (299, 60));
+        assert_eq!(budget("/openapi/market-data/stock/snapshot"), (255, 60));
+        assert_eq!(budget("/market-data/stocks/bars/list"), (255, 60));
         assert_eq!(
             budget("/market-data/fundamentals/company-profiles/get"),
-            (299, 60)
+            (255, 60)
         );
+    }
+
+    #[test]
+    fn shared_families_pace_one_window_across_paths() {
+        // stock snapshot, option contracts and fundamentals share the Data API family
+        assert_eq!(
+            family("/openapi/market-data/stock/snapshot"),
+            family("/openapi/instrument/option/contracts")
+        );
+        assert_eq!(
+            family("/openapi/market-data/stock/snapshot"),
+            family("/market-data/fundamentals/company-profiles/get")
+        );
+        // instrument profiles and order queries are shared families too
+        assert_eq!(
+            family("/trading/instruments/stocks/profiles/list"),
+            family("/trading/instruments/options/contracts/list")
+        );
+        assert_eq!(
+            family("/trading/orders/open-orders/list"),
+            family("/trading/orders/activitiy/list")
+        );
+        // accounts/balance/positions are limited EACH: a window per path
+        assert_ne!(
+            family("/trading/accounts/list"),
+            family("/trading/assets/positions/list")
+        );
+        assert_ne!(
+            family("/trading/assets/positions/list"),
+            family("/trading/assets/balances/get")
+        );
+
+        // 255 sends recorded on one path of the Data family fill the shared
+        // window, so a send on a DIFFERENT path of the same family waits
+        // (synthetic instants — no sleeping).
+        let now = Instant::now();
+        let mut stamps: VecDeque<Instant> = (0..255).map(|_| now).collect();
+        let (max, window) = endpoint_budget("/market-data/stocks/bars/list");
+        assert_eq!(max, 255);
+        let wait = window_wait(&mut stamps, max, window, now).expect("same family must wait");
+        assert_eq!(wait, window);
     }
 
     #[test]

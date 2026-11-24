@@ -17,8 +17,12 @@ use sha1::Sha1;
 use sha2::{Digest as _, Sha256};
 
 pub const HOST: &str = "api.webull.co.th";
-/// Shared REST throttle (seconds between calls), mirrors `MIN_INTERVAL_SEC`.
-pub const MIN_INTERVAL_SEC: f64 = 1.1;
+/// Shared REST throttle (seconds between calls): `60 / (300 × 0.85) ≈ 0.235`
+/// — one call at most every 0.235 s per origin, i.e. 85% of the Data API
+/// quota of 300/60 s (owner's decision: 80–90%), which every other documented
+/// family's window also stays under. Defined once here; `rest.rs` re-exports
+/// it and the cross-process pacing file uses the same value.
+pub const MIN_INTERVAL_SEC: f64 = 0.235;
 /// Snapshot cache TTL, mirrors `CACHE_TTL_SEC`.
 pub const CACHE_TTL_SEC: f64 = 3.0;
 

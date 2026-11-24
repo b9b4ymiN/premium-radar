@@ -19,8 +19,9 @@ pub const PATH_AUTH_TOKEN_CHECK: &str = "/openapi/auth/token/check";
 pub const PATH_STREAMING_SUBSCRIBE: &str = "/openapi/market-data/streaming/subscribe";
 pub const PATH_STREAMING_UNSUBSCRIBE: &str = "/openapi/market-data/streaming/unsubscribe";
 
-/// Shared REST throttle (1 call / 1.1s across all tasks).
-pub const MIN_INTERVAL_SEC: f64 = 1.1;
+/// Shared REST throttle (seconds between calls) — one constant, defined with
+/// its derivation in [`super::sign::MIN_INTERVAL_SEC`].
+pub use super::sign::MIN_INTERVAL_SEC;
 /// Snapshot cache TTL.
 pub const CACHE_TTL_SEC: f64 = 3.0;
 /// Contracts analyzed through REST snapshots (no WebSocket limit).

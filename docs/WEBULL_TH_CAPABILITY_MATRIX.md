@@ -192,16 +192,21 @@ Published for the Thailand host, per app key:
 
 | Family | Limit | The coordinator allows |
 |---|---|---|
-| Data API (quotes, bars, screeners, fundamentals) | 300 requests / 60 s | 299 |
-| Instrument profiles | 60 / 60 s | 59 |
-| Accounts, balance, positions | 10 / 30 s each | 9 |
-| Order queries | 40 / 2 s | 39 |
+| Data API (quotes, bars, screeners, fundamentals) | 300 requests / 60 s | 255 |
+| Instrument profiles | 60 / 60 s | 51 |
+| Accounts, balance, positions | 10 / 30 s each | 8 each |
+| Order queries | 40 / 2 s | 34 |
 | Streaming subscribe | unlimited | — |
 
 One process-wide `Coordinator` owns every request (`transport.rs`): at least
-1.1 s between two requests, a 3 s response cache, and a sliding window per
-family. On the production host a lock file in the app-data folder paces
-several app processes against the same quota. No probe step returned 429.
+0.235 s between two requests — `60 / (300 × 0.85)`, i.e. 85% of the Data API
+quota (the owner's chosen 80–90% band) — a 3 s response cache, and a sliding
+window per family taken at 85% of each documented ceiling: shared pools (Data
+API, instrument profiles, order queries) count every path in one family
+window, while the "each"-limited account/balance/position endpoints keep a
+window per path. On the production host a lock file in the app-data folder
+paces several app processes against the same quota, using the same interval.
+No probe step returned 429.
 
 ## What the payloads actually look like
 

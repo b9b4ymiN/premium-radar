@@ -140,6 +140,29 @@ fn run(
         return finish(&running);
     };
 
+    let timing_on = std::env::var("RADAR_TIMING").ok().as_deref() == Some("1");
+    let t0 = std::time::Instant::now();
+    // RADAR_TIMING=1 → one stderr line per phase, milliseconds since scan
+    // start. Only the root symbol and counts — never credentials or data.
+    let timing = |phase: &str, detail: &str| {
+        if timing_on {
+            eprintln!(
+                "[timing] {root} {phase} +{}ms{detail}",
+                t0.elapsed().as_millis()
+            );
+        }
+    };
+
+    // ---- Phase 0: stock quote before discovery ----
+    // The header price must not wait for the whole discovery pass; the loop
+    // below still refreshes it on every pass.
+    if let Ok(Some(mut stk)) = quotes::fetch_stock_update(&mut client, &root) {
+        stk.symbol = root.clone();
+        lock(&engine).push_stock(stk);
+        emit_snapshot(&app, &engine);
+        timing("quote-shown", "");
+    }
+
     // ---- Phase 1: discovery ----
     progress(
         &app,
@@ -174,6 +197,7 @@ fn run(
         return finish(&running);
     }
     lock(&engine).set_symbols(symbols.clone(), Some(spot));
+    timing("discovery-done", &format!(" contracts={}", symbols.len()));
     progress(
         &app,
         "seed",
@@ -222,6 +246,10 @@ fn run(
                         ),
                     );
                     emit_snapshot(&app, &engine);
+                    timing(
+                        "seed-batch",
+                        &format!(" {}/{}", ((i + 1) * OI_BATCH).min(total), total),
+                    );
                 }
                 Err(_) => empty.extend_from_slice(batch),
             }
@@ -248,6 +276,7 @@ fn run(
         }
 
         emit_snapshot(&app, &engine);
+        timing("seed-done", &format!(" contracts={total}"));
 
         // after the first seed pass, layer real-time MQTT push on top
         // (WS quotes win over REST seeds in the engine; REST keeps polling
