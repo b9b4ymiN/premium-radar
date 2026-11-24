@@ -221,6 +221,8 @@ fn save_credentials(
 fn clear_bridge_caches(base_url: &str) {
     lock(&OVERVIEW_CACHE).clear();
     lock(&MOVERS_CACHE).clear();
+    lock(&BARS_INTRADAY_CACHE).clear();
+    lock(&BARS_DAILY_CACHE).clear();
     radar_core::webull::transport::clear_shared_cache(base_url);
 }
 
@@ -823,37 +825,120 @@ static MOVERS_CACHE: std::sync::LazyLock<std::sync::Mutex<TtlCache<serde_json::V
         std::sync::Mutex::new(TtlCache::new(std::time::Duration::from_secs(60)))
     });
 
-/// APP v2 — ประวัติราคาหุ้น (PLAN-APP2 P15): bars + MA + summary จาก Rust
+/// Price history per (symbol, timespan): an intraday answer moves by the
+/// minute, daily and up only by the day.
+static BARS_INTRADAY_CACHE: std::sync::LazyLock<std::sync::Mutex<TtlCache<serde_json::Value>>> =
+    std::sync::LazyLock::new(|| {
+        std::sync::Mutex::new(TtlCache::new(std::time::Duration::from_secs(30)))
+    });
+static BARS_DAILY_CACHE: std::sync::LazyLock<std::sync::Mutex<TtlCache<serde_json::Value>>> =
+    std::sync::LazyLock::new(|| {
+        std::sync::Mutex::new(TtlCache::new(std::time::Duration::from_secs(600)))
+    });
+
+/// One timespan `get_stock_history` serves: how many bars to ask the host for
+/// and what to tell the user about the answer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BarsPlan {
+    count: u32,
+    /// M5–M240 bar timestamps carry the time of day and refresh fast; D/W/M
+    /// change once per period.
+    intraday: bool,
+    note: &'static str,
+}
+
+/// The eight timespans the chart offers. `count` is 1200 for every one of
+/// them because the live audit (tmp/bars-audit.txt, 2026-11-24) proved the
+/// Thailand host accepts it: M5/M15/M30/D/W return exactly 1200, while M60
+/// (874), M240 (250) and M (552) return all the history the host keeps —
+/// asking for the cap serves whatever exists and never truncates a growing
+/// intraday window. No intraday answer contained a bar outside the regular
+/// session, so the notes promise 09:30–16:00 ET only.
+fn bars_plan(timespan: &str) -> Option<BarsPlan> {
+    let plan = |intraday: bool, note: &'static str| BarsPlan {
+        count: 1200,
+        intraday,
+        note,
+    };
+    Some(match timespan {
+        "M5" => plan(
+            true,
+            "แท่งราคาอินทราเดย์ 5 นาที · เฉพาะช่วงเวลาซื้อขายปกติ 09:30–16:00 ET (ไม่รวม extended hours)",
+        ),
+        "M15" => plan(
+            true,
+            "แท่งราคาอินทราเดย์ 15 นาที · เฉพาะช่วงเวลาซื้อขายปกติ 09:30–16:00 ET (ไม่รวม extended hours)",
+        ),
+        "M30" => plan(
+            true,
+            "แท่งราคาอินทราเดย์ 30 นาที · เฉพาะช่วงเวลาซื้อขายปกติ 09:30–16:00 ET (ไม่รวม extended hours)",
+        ),
+        "M60" => plan(
+            true,
+            "แท่งราคาอินทราเดย์ 1 ชั่วโมง · เฉพาะช่วงเวลาซื้อขายปกติ 09:30–16:00 ET (ไม่รวม extended hours)",
+        ),
+        "M240" => plan(
+            true,
+            "แท่งราคาอินทราเดย์ 4 ชั่วโมง · เฉพาะช่วงเวลาซื้อขายปกติ 09:30–16:00 ET (ไม่รวม extended hours)",
+        ),
+        "D" => plan(
+            false,
+            "ราคาปิดรายวัน · ฐานปรับราคาตามที่ API ส่ง (ยังไม่ยืนยัน adjusted/crude)",
+        ),
+        "W" => plan(
+            false,
+            "ราคาปิดรายสัปดาห์ · ฐานปรับราคาตามที่ API ส่ง (ยังไม่ยืนยัน adjusted/crude)",
+        ),
+        "M" => plan(
+            false,
+            "ราคาปิดรายเดือน · ฐานปรับราคาตามที่ API ส่ง (ยังไม่ยืนยัน adjusted/crude)",
+        ),
+        _ => return None,
+    })
+}
+
+/// APP v2 — ประวัติราคาตาม timeframe (W16a): bars + MA + summary จาก Rust
+/// เฉพาะ 8 timespan ที่ audit กับ host จริงแล้ว (M5 M15 M30 M60 M240 D W M)
 #[tauri::command]
 async fn get_stock_history(
     state: tauri::State<'_, AppState>,
     symbol: String,
-    range: String,
+    timespan: String,
 ) -> Result<serde_json::Value, String> {
     use radar_core::market_history::{moving_average, range_summary};
-    use radar_core::webull::stocks::{fetch_stock_bars, timespan_valid};
-    with_client(&state, move |client| {
-        let (timespan, count) = match range.as_str() {
-            "1M" => ("D", 30u32),
-            "3M" => ("D", 90),
-            "6M" => ("D", 180),
-            "1Y" => ("D", 365),
-            "5Y" => ("D", 1200),
-            _ => ("D", 180),
-        };
-        assert!(timespan_valid(timespan));
-        let bars = fetch_stock_bars(client, &[symbol], timespan, count)
+    use radar_core::webull::stocks::fetch_stock_bars;
+    let Some(plan) = bars_plan(&timespan) else {
+        return Err(format!(
+            "ไม่รองรับ timeframe '{timespan}' — ใช้ได้: M5 M15 M30 M60 M240 D W M"
+        ));
+    };
+    let symbol = symbol.trim().to_uppercase();
+    let cache_key = format!("{symbol}:{timespan}");
+    let cache = if plan.intraday {
+        &BARS_INTRADAY_CACHE
+    } else {
+        &BARS_DAILY_CACHE
+    };
+    if let Some(cached) = lock(cache).get(&cache_key) {
+        return Ok(cached);
+    }
+    let value = with_client(&state, move |client| {
+        let bars = fetch_stock_bars(client, &[symbol], &timespan, plan.count)
             .map_err(|e| format!("ดึงข้อมูลราคาไม่สำเร็จ: {}", e.user_message()))?;
         let ma5 = moving_average(&bars, 5);
         let ma20 = moving_average(&bars, 20);
         let summary = range_summary(&bars);
         Ok(serde_json::json!({
             "bars": bars, "ma5": ma5, "ma20": ma20,
-            "summary": summary, "range": range,
-            "note": "ราคาปิดรายวัน · ฐานปรับราคาตามที่ API ส่ง (ยังไม่ยืนยัน adjusted/crude)",
+            "summary": summary, "timespan": timespan, "note": plan.note,
         }))
     })
-    .await
+    .await?;
+    // an empty answer (unknown or delisted symbol) is not worth a cache slot
+    if value["bars"].as_array().is_some_and(|a| !a.is_empty()) {
+        lock(cache).put(&cache_key, value.clone());
+    }
+    Ok(value)
 }
 
 /// APP v2 — ข้อมูลหลักทรัพย์ (เฉพาะ fields ที่ API ให้จริง)
@@ -1547,6 +1632,38 @@ mod tests {
     fn account_number_is_masked() {
         assert_eq!(mask_account("1234567890"), "1234…890");
         assert_eq!(mask_account("12"), "12…12");
+    }
+
+    /// Every timespan the chart may ask for maps to a plan whose count matches
+    /// the live audit (tmp/bars-audit.txt, 2026-11-24: count=1200 accepted on
+    /// all eight, no extended-hours bar), and nothing else is served — the old
+    /// `range` values and lowercase/unlisted timespans included.
+    #[test]
+    fn bars_plan_serves_exactly_the_eight_audited_timespans() {
+        use radar_core::webull::stocks::timespan_valid;
+        let served = [
+            ("M5", true),
+            ("M15", true),
+            ("M30", true),
+            ("M60", true),
+            ("M240", true),
+            ("D", false),
+            ("W", false),
+            ("M", false),
+        ];
+        for (ts, intraday) in served {
+            let plan = bars_plan(ts).unwrap_or_else(|| panic!("{ts} must be served"));
+            assert_eq!(plan.intraday, intraday, "{ts}");
+            assert_eq!(plan.count, 1200, "{ts} — count from the 2026-11-24 audit");
+            assert!(!plan.note.is_empty(), "{ts}");
+            assert!(timespan_valid(ts), "{ts} must stay in the provider enum");
+        }
+        for rejected in ["1M", "3M", "6M", "1Y", "5Y", "m5", "M120", "Y", ""] {
+            assert!(
+                bars_plan(rejected).is_none(),
+                "{rejected:?} must be rejected"
+            );
+        }
     }
 
     /// A watchlist row states its own availability; numbers only when priced.
