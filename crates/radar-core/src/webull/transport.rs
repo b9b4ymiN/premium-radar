@@ -105,14 +105,35 @@ impl Coordinator {
 static COORDINATORS: LazyLock<Mutex<HashMap<String, Arc<Mutex<Coordinator>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn coordinator(base_url: &str) -> Arc<Mutex<Coordinator>> {
-    let origin = reqwest::Url::parse(base_url)
+/// The cache/pacing key a base URL maps to (scheme + host + port).
+fn origin_of(base_url: &str) -> String {
+    reqwest::Url::parse(base_url)
         .map(|url| url.origin().ascii_serialization())
-        .unwrap_or_else(|_| base_url.trim_end_matches('/').to_owned());
+        .unwrap_or_else(|_| base_url.trim_end_matches('/').to_owned())
+}
+
+fn coordinator(base_url: &str) -> Arc<Mutex<Coordinator>> {
+    let origin = origin_of(base_url);
     let mut all = COORDINATORS.lock().unwrap_or_else(|e| e.into_inner());
     all.entry(origin)
         .or_insert_with(|| Arc::new(Mutex::new(Coordinator::new())))
         .clone()
+}
+
+/// Drop the shared response cache of `base_url`'s origin (credential change):
+/// answers fetched with the previous keys must never be served again. Only
+/// the cache is emptied, in place: the coordinator itself (pacing windows,
+/// throttle) stays the one every client of the origin shares, including a
+/// scan that still holds it.
+pub fn clear_shared_cache(base_url: &str) {
+    let existing = COORDINATORS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&origin_of(base_url))
+        .cloned();
+    if let Some(coord) = existing {
+        coord.lock().unwrap_or_else(|e| e.into_inner()).cache = SnapCache::from_constants();
+    }
 }
 
 /// Same directory the Tauri shell keeps `radar_settings.json` in; `None` where
@@ -471,6 +492,33 @@ mod tests {
                 .signature_scheme(),
             SignatureScheme::V2
         );
+    }
+
+    #[test]
+    fn clear_shared_cache_empties_the_cache_but_keeps_the_coordinator() {
+        let url = "https://cache-clear-test.local";
+        let shared = coordinator(url);
+        let key = SnapCache::key("/p", &[]);
+        shared
+            .lock()
+            .unwrap()
+            .cache
+            .put(key.clone(), (200, serde_json::json!({"old": true})));
+        clear_shared_cache(url);
+        assert!(
+            Arc::ptr_eq(&shared, &coordinator(url)),
+            "pacing must stay on the one shared coordinator"
+        );
+        assert!(
+            shared
+                .lock()
+                .unwrap()
+                .cache
+                .get(&key, Instant::now())
+                .is_none(),
+            "the previous credentials' answers are gone"
+        );
+        clear_shared_cache("https://never-seen.local"); // unknown origin: no panic
     }
 
     #[test]

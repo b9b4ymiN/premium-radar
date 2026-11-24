@@ -70,7 +70,95 @@ fn default_risk() -> String {
     "BALANCED".into()
 }
 fn default_webull_url() -> String {
-    "https://api.webull.co.th".into()
+    WEBULL_PRODUCTION_BASE_URL.into()
+}
+
+/// The only Webull REST host credentials may ever be sent to (owner
+/// decision: production only — the UAT host is gone from the product).
+pub const WEBULL_PRODUCTION_BASE_URL: &str = "https://api.webull.co.th";
+
+/// Normalise `url` (trim, drop trailing `/`) and accept ONLY the production
+/// host. Empty means the default. `None` = some other host — the caller must
+/// reject it (typed) or fall back to the default (stored).
+pub fn normalise_webull_base_url(url: &str) -> Option<String> {
+    let trimmed = url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Some(default_webull_url());
+    }
+    (trimmed == WEBULL_PRODUCTION_BASE_URL).then(|| trimmed.to_string())
+}
+
+/// Credential merge for the setup screen: an EMPTY incoming secret keeps the
+/// saved value (the field is left blank when one is stored), a non-empty one
+/// replaces it.
+pub(crate) fn merge_secret(incoming: &str, saved: &str) -> String {
+    let incoming = incoming.trim();
+    if incoming.is_empty() {
+        saved.to_string()
+    } else {
+        incoming.to_string()
+    }
+}
+
+/// Access-token precedence for a save/probe: typed > pending (just issued,
+/// not yet saved) > saved. All inputs trimmed.
+pub(crate) fn resolve_access_token(typed: &str, pending: Option<&str>, saved: &str) -> String {
+    let typed = typed.trim();
+    if !typed.is_empty() {
+        return typed.to_string();
+    }
+    if let Some(pending) = pending.map(str::trim).filter(|p| !p.is_empty()) {
+        return pending.to_string();
+    }
+    saved.trim().to_string()
+}
+
+/// The LLM block of [`super::save_credentials`]: typed fields win, blanks
+/// fall back to the saved config, and the block only exists once a base URL
+/// and model are set (the key may still be blank — `LlmConfig::is_ready`
+/// and the `has_api_key` flag keep that honest).
+pub(crate) fn merge_llm(
+    saved: Option<&LlmConfig>,
+    label: Option<String>,
+    base_url: Option<String>,
+    model: Option<String>,
+    api_key: Option<String>,
+) -> Option<LlmConfig> {
+    let saved = saved.cloned().unwrap_or_else(|| {
+        LlmConfig::new(String::new(), String::new(), String::new(), String::new())
+    });
+    let label = merge_secret(label.as_deref().unwrap_or(""), &saved.label);
+    let base_url = merge_secret(base_url.as_deref().unwrap_or(""), &saved.base_url);
+    let model = merge_secret(model.as_deref().unwrap_or(""), &saved.model);
+    let api_key = merge_secret(api_key.as_deref().unwrap_or(""), &saved.api_key);
+    if base_url.is_empty() || model.is_empty() {
+        return None;
+    }
+    Some(LlmConfig {
+        label,
+        base_url,
+        model,
+        api_key,
+        ..saved
+    })
+}
+
+/// [`super::save_settings`] guard: the incoming struct may come from JS, so
+/// every secret field is overwritten with the current in-memory (keyring)
+/// values before anything is persisted — a settings push can never inject or
+/// exfiltrate credentials.
+pub(crate) fn copy_saved_secrets(current: &AppSettings, mut incoming: AppSettings) -> AppSettings {
+    incoming.webull_app_key = current.webull_app_key.clone();
+    incoming.webull_app_secret = current.webull_app_secret.clone();
+    incoming.webull_access_token = current.webull_access_token.clone();
+    if let Some(llm) = incoming.llm.as_mut() {
+        llm.api_key = current
+            .llm
+            .as_ref()
+            .map(|c| c.api_key.clone())
+            .unwrap_or_default();
+    }
+    incoming
 }
 
 /// Manual Default so `AppSettings::default()` matches the serde field
@@ -95,15 +183,63 @@ impl Default for AppSettings {
     }
 }
 
+/// What crosses the Tauri IPC boundary: every preference plus the non-secret
+/// Webull app key, with each secret reduced to a `has_*` boolean. No command
+/// may return the app secret, access token or LLM api_key values.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LlmView {
+    pub label: String,
+    pub base_url: String,
+    pub model: String,
+    pub has_api_key: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SettingsView {
+    pub font_size_adjust: i32,
+    pub show_math: bool,
+    pub last_symbol: String,
+    pub last_strategy: String,
+    pub last_risk: String,
+    pub last_budget: f64,
+    pub webull_app_key: String,
+    pub webull_base_url: String,
+    pub webull_signature_scheme: SignatureScheme,
+    pub has_webull_secret: bool,
+    pub has_access_token: bool,
+    pub llm: Option<LlmView>,
+}
+
 impl AppSettings {
-    /// The REST base URL in effect: the saved one, else production.
-    pub fn webull_base_url_or_default(&self) -> String {
-        let url = self.webull_base_url.trim();
-        if url.is_empty() {
-            default_webull_url()
-        } else {
-            url.to_string()
+    /// Secret-free projection for the frontend (`get_settings` and friends).
+    pub fn view(&self) -> SettingsView {
+        SettingsView {
+            font_size_adjust: self.font_size_adjust,
+            show_math: self.show_math,
+            last_symbol: self.last_symbol.clone(),
+            last_strategy: self.last_strategy.clone(),
+            last_risk: self.last_risk.clone(),
+            last_budget: self.last_budget,
+            webull_app_key: self.webull_app_key.clone(),
+            webull_base_url: self.webull_base_url_or_default(),
+            webull_signature_scheme: self.webull_signature_scheme,
+            has_webull_secret: !self.webull_app_secret.trim().is_empty(),
+            has_access_token: !self.webull_access_token.trim().is_empty(),
+            llm: self.llm.as_ref().map(|llm| LlmView {
+                label: llm.label.clone(),
+                base_url: llm.base_url.clone(),
+                model: llm.model.clone(),
+                has_api_key: !llm.api_key.trim().is_empty(),
+            }),
         }
+    }
+
+    /// The REST base URL in effect: the saved one when it is the allowed
+    /// production host (empty or trailing-slash variants normalised), else
+    /// production — a legacy file pointing somewhere else must never receive
+    /// credentials.
+    pub fn webull_base_url_or_default(&self) -> String {
+        normalise_webull_base_url(&self.webull_base_url).unwrap_or_else(default_webull_url)
     }
 
     /// A REST client configured exactly like every other call of the app —
@@ -413,6 +549,137 @@ mod tests {
         let s = AppSettings::default();
         let summary = s.status_summary();
         assert!(summary.contains("✗"));
+    }
+
+    // ---------- W2: secrets stay native ----------
+
+    /// The IPC view carries none of the saved secret values, only `has_*`.
+    #[test]
+    fn settings_view_never_carries_secret_values() {
+        let mut s = fake_secrets(AppSettings::default());
+        s.llm = Some(LlmConfig::new(
+            "L",
+            "https://api.z.ai",
+            "m",
+            "LLM-SECRET-KEY",
+        ));
+        let view = s.view();
+        assert_eq!(
+            view.webull_app_key, "FAKE_TEST_KEY",
+            "app key is shown, not hidden"
+        );
+        assert!(view.has_webull_secret);
+        assert!(view.has_access_token);
+        assert_eq!(
+            view.llm.as_ref().map(|l| l.has_api_key),
+            Some(true),
+            "llm view flags the key without carrying it"
+        );
+        let json = serde_json::to_string(&view).expect("view serialises");
+        assert!(!json.contains("FAKE_TEST_SECRET"));
+        assert!(!json.contains("FAKE_TEST_TOKEN"));
+        assert!(!json.contains("LLM-SECRET-KEY"));
+
+        let empty = AppSettings::default().view();
+        assert!(!empty.has_webull_secret);
+        assert!(!empty.has_access_token);
+        assert_eq!(empty.llm.map(|l| l.has_api_key), None);
+    }
+
+    #[test]
+    fn only_the_production_host_is_allowed() {
+        let ok = |url: &str| normalise_webull_base_url(url);
+        assert_eq!(
+            ok("https://api.webull.co.th").as_deref(),
+            Some("https://api.webull.co.th")
+        );
+        assert_eq!(
+            ok("https://api.webull.co.th/").as_deref(),
+            Some("https://api.webull.co.th")
+        );
+        assert_eq!(
+            ok("  https://api.webull.co.th  ").as_deref(),
+            Some("https://api.webull.co.th")
+        );
+        assert_eq!(
+            ok("").as_deref(),
+            Some("https://api.webull.co.th"),
+            "empty means the default"
+        );
+        assert_eq!(ok("http://api.webull.co.th"), None, "not https");
+        assert_eq!(ok("https://th-api.uat.webullbroker.com"), None);
+        assert_eq!(ok("https://api.webull.co.th.evil.com"), None);
+        assert_eq!(ok("https://evil.com/https://api.webull.co.th"), None);
+    }
+
+    #[test]
+    fn disallowed_stored_host_falls_back_to_production() {
+        let mut s = AppSettings {
+            webull_base_url: "https://th-api.uat.webullbroker.com".into(),
+            ..AppSettings::default()
+        };
+        assert_eq!(s.webull_base_url_or_default(), WEBULL_PRODUCTION_BASE_URL);
+        // allowed variants are normalised, not replaced
+        s.webull_base_url = "https://api.webull.co.th/".into();
+        assert_eq!(s.webull_base_url_or_default(), "https://api.webull.co.th");
+    }
+
+    /// Empty incoming keeps the saved secret; non-empty replaces it; the
+    /// access token resolves typed > pending > saved.
+    #[test]
+    fn credential_merge_empty_keeps_saved_and_token_prefers_typed() {
+        assert_eq!(merge_secret("", "SAVED"), "SAVED");
+        assert_eq!(merge_secret("   ", "SAVED"), "SAVED");
+        assert_eq!(merge_secret("  NEW  ", "SAVED"), "NEW");
+        assert_eq!(
+            resolve_access_token("TYPED", Some("PENDING"), "SAVED"),
+            "TYPED"
+        );
+        assert_eq!(
+            resolve_access_token("", Some("PENDING"), "SAVED"),
+            "PENDING"
+        );
+        assert_eq!(resolve_access_token("", None, "SAVED"), "SAVED");
+        assert_eq!(resolve_access_token("", Some("  "), "SAVED"), "SAVED");
+        assert_eq!(resolve_access_token("", None, " SAVED "), "SAVED");
+
+        // the LLM block still saves when only the api key is left blank
+        let saved = LlmConfig::new("Old", "https://old", "old-model", "OLD-KEY");
+        let merged = merge_llm(
+            Some(&saved),
+            Some("New".into()),
+            Some("https://new".into()),
+            Some("new-model".into()),
+            None,
+        )
+        .expect("block survives a blank key");
+        assert_eq!(merged.api_key, "OLD-KEY");
+        assert_eq!(merged.base_url, "https://new");
+        assert!(merge_llm(None, None, None, None, None).is_none());
+        assert!(merge_llm(None, Some("l".into()), None, None, None).is_none());
+    }
+
+    /// save_settings may take a full struct from JS — the secrets on it must
+    /// be overwritten with the current in-memory values before persisting.
+    #[test]
+    fn save_settings_never_persists_secrets_from_js() {
+        let current = fake_secrets(AppSettings::default());
+        let incoming = AppSettings {
+            webull_app_key: "JS-KEY".into(),
+            webull_app_secret: "JS-SECRET".into(),
+            webull_access_token: "JS-TOKEN".into(),
+            llm: Some(LlmConfig::new("j", "https://js", "m", "JS-LLM-KEY")),
+            ..AppSettings::default()
+        };
+        let guarded = copy_saved_secrets(&current, incoming);
+        assert_eq!(guarded.webull_app_key, "FAKE_TEST_KEY");
+        assert_eq!(guarded.webull_app_secret, "FAKE_TEST_SECRET");
+        assert_eq!(guarded.webull_access_token, "FAKE_TEST_TOKEN");
+        assert_eq!(
+            guarded.llm.as_ref().map(|c| c.api_key.as_str()),
+            Some(""),
+            "no saved llm → empty key, never the JS one"
+        );
     }
 
     // ---------- keyring migration regression (fake credentials only) ----------

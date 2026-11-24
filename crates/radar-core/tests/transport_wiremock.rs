@@ -159,6 +159,29 @@ async fn clients_on_one_origin_share_the_cache() {
     drop(mock);
 }
 
+/// A credential change must never serve previously cached answers: clearing
+/// the shared cache makes the next identical GET (from a fresh client, like
+/// the commands built after a save) hit the server again.
+#[tokio::test]
+async fn cleared_shared_cache_refetches() {
+    let server = MockServer::start().await;
+    let mock = Mock::given(method("GET"))
+        .and(path("/after-clear"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"v": 1})))
+        .expect(2)
+        .mount_as_scoped(&server)
+        .await;
+    let uri = server.uri();
+    call_on_thread(uri.clone(), None, |c| {
+        c.get("/after-clear", &[]).unwrap();
+    });
+    radar_core::webull::transport::clear_shared_cache(&uri);
+    call_on_thread(uri, None, |c| {
+        c.get("/after-clear", &[]).unwrap();
+    });
+    drop(mock);
+}
+
 #[tokio::test]
 async fn different_params_miss_cache() {
     let server = MockServer::start().await;

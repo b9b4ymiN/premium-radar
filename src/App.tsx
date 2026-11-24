@@ -251,10 +251,12 @@ export default function App() {
     tauriInvoke<Record<string, unknown>>("get_settings")
       .then((st) => {
         const llm = st?.llm as Record<string, unknown> | null | undefined;
+        // get_settings returns a redacted SettingsView: the LLM key arrives
+        // only as has_api_key, never as a value
         const ready = !!llm
           && typeof llm.base_url === "string" && llm.base_url
           && typeof llm.model === "string" && llm.model
-          && typeof llm.api_key === "string" && llm.api_key;
+          && llm.has_api_key === true;
         setLlmInfo(ready
           ? { label: (typeof llm!.label === "string" && llm!.label) || "AI", model: llm!.model as string }
           : null);

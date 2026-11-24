@@ -12,7 +12,7 @@ use radar_core::screener::{Filters, Mode};
 use radar_core::webull::sign::SignatureScheme;
 use radar_core::webull::transport::WebullClient;
 use scan::ScanControl;
-use settings::AppSettings;
+use settings::{AppSettings, SettingsView};
 
 /// Shared app state managed by Tauri. The engine lives behind an Arc so the
 /// scan worker thread can push quotes into the same store the commands read.
@@ -21,6 +21,10 @@ pub struct AppState {
     pub settings: Mutex<AppSettings>,
     pub scan: ScanControl,
     pub app_data_dir: String,
+    /// Access token just issued by [`create_access_token`] — the value stays
+    /// native; `save_credentials` picks it up (typed > pending > saved) and
+    /// clears it once the save commits.
+    pub pending_token: Mutex<Option<String>>,
 }
 
 // ---------- Tauri commands ----------
@@ -117,16 +121,26 @@ fn get_status(state: tauri::State<'_, AppState>) -> String {
 }
 
 #[tauri::command]
-fn get_settings(state: tauri::State<'_, AppState>) -> AppSettings {
-    state.settings.lock().unwrap().clone()
+fn get_settings(state: tauri::State<'_, AppState>) -> SettingsView {
+    settings_of(&state).view()
 }
 
 #[tauri::command]
 fn save_settings(
     state: tauri::State<'_, AppState>,
-    mut new_settings: AppSettings,
+    new_settings: AppSettings,
 ) -> Result<(), String> {
     let dir = state.app_data_dir.clone();
+    // never take secrets from JS: every secret field on the incoming struct
+    // is overwritten with the current in-memory (keyring) values — a prefs
+    // push can neither inject nor move credentials
+    let mut new_settings = {
+        let current = state
+            .settings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        settings::copy_saved_secrets(&current, new_settings)
+    };
     new_settings.save_with_keyring(&dir)?;
     *state.settings.lock().unwrap() = new_settings;
     Ok(())
@@ -137,7 +151,10 @@ fn save_settings(
 /// under the settings mutex and swapped into the shared state only after the
 /// save fully succeeds: a keyring failure aborts with an error, leaving both
 /// the running credentials and the previous settings file untouched (nothing
-/// is ever written to disk as plaintext).
+/// is ever written to disk as plaintext). An EMPTY secret/token/LLM key keeps
+/// the saved value (the setup screen leaves the field blank when one is
+/// stored); the token resolves typed > pending (just issued) > saved. The
+/// returned view carries no secret values.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 fn save_credentials(
@@ -151,39 +168,72 @@ fn save_credentials(
     llm_model: Option<String>,
     llm_api_key: Option<String>,
     webull_signature_scheme: Option<SignatureScheme>,
-) -> Result<AppSettings, String> {
+) -> Result<SettingsView, String> {
+    const URL_ERROR: &str = "Base URL ต้องเป็น https://api.webull.co.th เท่านั้น";
+    let typed_url = webull_base_url
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty());
+    let base_url = match typed_url.as_deref() {
+        Some(typed) => settings::normalise_webull_base_url(typed).ok_or(URL_ERROR)?,
+        None => settings::WEBULL_PRODUCTION_BASE_URL.to_string(),
+    };
+    let pending = state
+        .pending_token
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+
     let dir = state.app_data_dir.clone();
-    let mut s = state.settings.lock().unwrap();
+    let mut s = state
+        .settings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     // stage on a copy — the shared state must keep the previously saved
     // (and still working) credentials until this save is fully committed
     let mut candidate = s.clone();
     candidate.webull_app_key = webull_key.trim().to_string();
-    candidate.webull_app_secret = webull_secret.trim().to_string();
-    candidate.webull_access_token = webull_access_token.unwrap_or_default().trim().to_string();
+    candidate.webull_app_secret = settings::merge_secret(&webull_secret, &s.webull_app_secret);
+    candidate.webull_access_token = settings::resolve_access_token(
+        webull_access_token.as_deref().unwrap_or(""),
+        pending.as_deref(),
+        &s.webull_access_token,
+    );
     if let Some(scheme) = webull_signature_scheme {
         candidate.webull_signature_scheme = scheme;
     }
-    if let Some(url) = webull_base_url
-        && !url.trim().is_empty()
-    {
-        candidate.webull_base_url = url.trim().to_string();
-    }
-
-    if let (Some(label), Some(base_url), Some(model), Some(key)) =
-        (llm_label, llm_base_url, llm_model, llm_api_key)
-        && !base_url.is_empty()
-        && !model.is_empty()
-        && !key.is_empty()
-    {
-        candidate.llm = Some(radar_core::copilot::LlmConfig::new(
-            label, base_url, model, key,
-        ));
-    }
+    candidate.webull_base_url = base_url;
+    candidate.llm = settings::merge_llm(
+        s.llm.as_ref(),
+        llm_label,
+        llm_base_url,
+        llm_model,
+        llm_api_key,
+    );
 
     candidate.save_with_keyring(&dir)?;
     *s = candidate;
-    Ok(s.clone())
+    // answers fetched with the previous credentials must never be served again
+    clear_bridge_caches(&s.webull_base_url_or_default());
+    *state
+        .pending_token
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    Ok(s.view())
+}
+
+/// Credential-scoped caches: after a successful save, every layer that may
+/// hold broker answers from the previous keys is dropped — the Home overview
+/// and movers TTL caches here, plus the transport's shared response cache
+/// for the origin.
+fn clear_bridge_caches(base_url: &str) {
+    if let Ok(mut cache) = OVERVIEW_CACHE.lock() {
+        cache.clear();
+    }
+    if let Ok(mut cache) = MOVERS_CACHE.lock() {
+        cache.clear();
+    }
+    radar_core::webull::transport::clear_shared_cache(base_url);
 }
 
 /// Result of a real Webull REST probe (used by the setup screen).
@@ -225,7 +275,10 @@ fn streaming_verdict(creds: &radar_core::webull::rest::Credentials, base_url: &s
 
 /// Probe the Webull API with either the given keys (setup screen, unsaved) or
 /// the stored settings — one cheap stock-snapshot call, so 401/403/timeout
-/// surface before the user starts a full scan.
+/// surface before the user starts a full scan. A typed base URL that is not
+/// the allowed production host is rejected up front with the same message
+/// `save_credentials` uses; the probe clients run with caching disabled so a
+/// connection test can never be answered from a cached copy.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn test_connection(
@@ -236,10 +289,16 @@ async fn test_connection(
     webull_base_url: Option<String>,
 ) -> Result<ConnectionTestResult, String> {
     let settings = settings_of(&state);
+    let pending = state
+        .pending_token
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     // several paced calls plus an MQTT probe — off the UI thread
     let result = off_ui_thread(move || {
         Ok(test_connection_with(
             settings,
+            pending,
             webull_key,
             webull_secret,
             webull_access_token,
@@ -260,6 +319,7 @@ async fn test_connection(
 #[allow(clippy::too_many_arguments)]
 fn test_connection_with(
     s: AppSettings,
+    pending_token: Option<String>,
     webull_key: Option<String>,
     webull_secret: Option<String>,
     webull_access_token: Option<String>,
@@ -274,23 +334,29 @@ fn test_connection_with(
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
         .unwrap_or(s.webull_app_secret.trim().to_string());
-    let token = webull_access_token
+    let resolved_token = settings::resolve_access_token(
+        webull_access_token.as_deref().unwrap_or(""),
+        pending_token.as_deref(),
+        &s.webull_access_token,
+    );
+    let token = (!resolved_token.is_empty()).then_some(resolved_token);
+    let base_url = match webull_base_url
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-        .or_else(|| {
-            let t = s.webull_access_token.trim();
-            (!t.is_empty()).then(|| t.to_string())
-        });
-    let base_url = webull_base_url
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| {
-            if s.webull_base_url.is_empty() {
-                "https://api.webull.co.th".to_string()
-            } else {
-                s.webull_base_url.clone()
+    {
+        Some(typed) => match settings::normalise_webull_base_url(&typed) {
+            Some(url) => url,
+            None => {
+                return ConnectionTestResult {
+                    webull_ok: false,
+                    detail: "Base URL ต้องเป็น https://api.webull.co.th เท่านั้น".into(),
+                    streaming: None,
+                    signature_scheme: None,
+                };
             }
-        });
+        },
+        None => s.webull_base_url_or_default(),
+    };
 
     if key.is_empty() || secret.is_empty() {
         return ConnectionTestResult {
@@ -309,6 +375,8 @@ fn test_connection_with(
         })
         .with_base_url(base_url.clone())
         .with_signature_scheme(scheme)
+        // a connection test observes the wire, never a cached answer
+        .without_cache()
     };
     let probe = |client: &mut radar_core::webull::transport::WebullClient| {
         radar_core::webull::quotes::fetch_stock_update(client, "AAPL")
@@ -401,7 +469,7 @@ fn test_connection_with(
     {
         " — Key/Secret ถูกแต่ไม่ผ่าน: สร้าง Access Token ใหม่ด้วยปุ่ม \
          \"สร้าง Access Token ใหม่ (SMS)\" (ยืนยัน SMS ในแอป Webull) \
-         หรือลอง Base URL ของ UAT (https://th-api.uat.webullbroker.com) ถ้า key เป็นคู่ทดสอบ"
+         แล้วกด บันทึก ตามด้วย ทดสอบการเชื่อมต่อ"
     } else if d.contains("403") {
         " — key ถูกต้องแต่ไม่มีสิทธิ์เรียก endpoint นี้"
     } else {
@@ -415,12 +483,14 @@ fn test_connection_with(
     }
 }
 
-/// Result of the in-app token creation flow.
+/// Result of the in-app token creation flow. The token VALUE never crosses
+/// the IPC boundary — `token_issued` says one is waiting (PENDING) in
+/// `AppState::pending_token` for the next save/probe to pick up.
 #[derive(serde::Serialize)]
 pub struct CreateTokenResult {
     pub ok: bool,
     pub status: String,
-    pub token: Option<String>,
+    pub token_issued: bool,
     pub expires_ms: Option<u64>,
     pub detail: String,
 }
@@ -428,8 +498,8 @@ pub struct CreateTokenResult {
 /// Start access-token creation (production needs one for data endpoints):
 /// POSTs `/openapi/auth/token/create` — the token VALUE arrives immediately
 /// as PENDING and the broker SMSes a code to the account's bound phone. The
-/// user confirms in the Webull app within 5 minutes; `test_connection` then
-/// reports NORMAL.
+/// value stays native (`AppState::pending_token`); the user confirms in the
+/// Webull app within 5 minutes and `test_connection` then reports NORMAL.
 #[tauri::command]
 async fn create_access_token(
     state: tauri::State<'_, AppState>,
@@ -438,7 +508,7 @@ async fn create_access_token(
     webull_base_url: Option<String>,
 ) -> Result<CreateTokenResult, String> {
     let settings = settings_of(&state);
-    let result = off_ui_thread(move || {
+    let (result, issued_token) = off_ui_thread(move || {
         Ok(create_access_token_with(
             settings,
             webull_key,
@@ -447,23 +517,36 @@ async fn create_access_token(
         ))
     })
     .await
-    .unwrap_or_else(|e| CreateTokenResult {
-        ok: false,
-        status: "NONE".into(),
-        token: None,
-        expires_ms: None,
-        detail: e,
+    .unwrap_or_else(|e| {
+        (
+            CreateTokenResult {
+                ok: false,
+                status: "NONE".into(),
+                token_issued: false,
+                expires_ms: None,
+                detail: e,
+            },
+            None,
+        )
     });
+    if let Some(token) = issued_token {
+        *state
+            .pending_token
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(token);
+    }
     Ok(result)
 }
 
-/// The request itself; `s` is what typed values fall back to.
+/// The request itself; `s` is what typed values fall back to. Returns the
+/// result plus the raw issued token for the caller to keep native — it never
+/// reaches the IPC result.
 fn create_access_token_with(
     s: AppSettings,
     webull_key: Option<String>,
     webull_secret: Option<String>,
     webull_base_url: Option<String>,
-) -> CreateTokenResult {
+) -> (CreateTokenResult, Option<String>) {
     let key = webull_key
         .map(|k| k.trim().to_string())
         .filter(|k| !k.is_empty())
@@ -472,24 +555,38 @@ fn create_access_token_with(
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| s.webull_app_secret.trim().to_string());
-    let base_url = webull_base_url
+    let base_url = match webull_base_url
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| {
-            if s.webull_base_url.is_empty() {
-                "https://api.webull.co.th".to_string()
-            } else {
-                s.webull_base_url.clone()
+    {
+        Some(typed) => match settings::normalise_webull_base_url(&typed) {
+            Some(url) => url,
+            None => {
+                return (
+                    CreateTokenResult {
+                        ok: false,
+                        status: "NONE".into(),
+                        token_issued: false,
+                        expires_ms: None,
+                        detail: "Base URL ต้องเป็น https://api.webull.co.th เท่านั้น".into(),
+                    },
+                    None,
+                );
             }
-        });
+        },
+        None => s.webull_base_url_or_default(),
+    };
     if key.is_empty() || secret.is_empty() {
-        return CreateTokenResult {
-            ok: false,
-            status: "NONE".into(),
-            token: None,
-            expires_ms: None,
-            detail: "ยังไม่ได้ใส่ App Key / Secret".into(),
-        };
+        return (
+            CreateTokenResult {
+                ok: false,
+                status: "NONE".into(),
+                token_issued: false,
+                expires_ms: None,
+                detail: "ยังไม่ได้ใส่ App Key / Secret".into(),
+            },
+            None,
+        );
     }
     let creds = radar_core::webull::rest::Credentials {
         app_key: key,
@@ -500,22 +597,31 @@ fn create_access_token_with(
         .with_base_url(base_url)
         .with_signature_scheme(s.webull_signature_scheme);
     match radar_core::webull::auth::create_token(&mut client) {
-        Ok(c) => CreateTokenResult {
-            ok: true,
-            status: c.status.as_str().into(),
-            token: c.token,
-            expires_ms: c.expires_ms,
-            detail: "สร้างแล้ว (PENDING) — SMS ส่งไปเบอร์ที่ผูกบัญชีแล้ว \
-                     ยืนยันในแอป Webull ภายใน 5 นาที แล้วกด ทดสอบการเชื่อมต่อ"
-                .into(),
-        },
-        Err(e) => CreateTokenResult {
-            ok: false,
-            status: "NONE".into(),
-            token: None,
-            expires_ms: None,
-            detail: format!("{e}"),
-        },
+        Ok(c) => {
+            let token_issued = c.token.is_some();
+            (
+                CreateTokenResult {
+                    ok: true,
+                    status: c.status.as_str().into(),
+                    token_issued,
+                    expires_ms: c.expires_ms,
+                    detail: "สร้างแล้ว (PENDING) — SMS ส่งไปเบอร์ที่ผูกบัญชีแล้ว \
+                             ยืนยันในแอป Webull ภายใน 5 นาที แล้วกด บันทึก ตามด้วย ทดสอบการเชื่อมต่อ"
+                        .into(),
+                },
+                c.token,
+            )
+        }
+        Err(e) => (
+            CreateTokenResult {
+                ok: false,
+                status: "NONE".into(),
+                token_issued: false,
+                expires_ms: None,
+                detail: format!("{e}"),
+            },
+            None,
+        ),
     }
 }
 
@@ -711,6 +817,12 @@ impl<T: Clone> TtlCache<T> {
         }
         self.entries
             .insert(key.to_string(), (std::time::Instant::now(), value));
+    }
+
+    /// Drop everything (credential change — a hit must never outlive the keys
+    /// that fetched it).
+    fn clear(&mut self) {
+        self.entries.clear();
     }
 }
 
@@ -1542,6 +1654,7 @@ mod tests {
             settings: Mutex::new(AppSettings::default()),
             scan: ScanControl::default(),
             app_data_dir: String::new(),
+            pending_token: Mutex::new(None),
         };
         let lock = &state.settings;
         std::thread::scope(|scope| {
@@ -1605,6 +1718,7 @@ pub fn run() {
             settings: Mutex::new(app_settings),
             scan: ScanControl::default(),
             app_data_dir,
+            pending_token: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             get_snapshot,

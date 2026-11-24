@@ -30,14 +30,16 @@ interface StoredLlm {
   label?: string;
   base_url?: string;
   model?: string;
-  api_key?: string;
+  has_api_key?: boolean;
 }
 
+/** get_settings now returns a redacted SettingsView — secrets arrive only
+ *  as has_* booleans, never as values. */
 interface StoredSettings {
   webull_app_key?: string;
-  webull_app_secret?: string;
-  webull_access_token?: string;
   webull_base_url?: string;
+  has_webull_secret?: boolean;
+  has_access_token?: boolean;
   llm?: StoredLlm | null;
 }
 
@@ -58,33 +60,40 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
   const [detectedScheme, setDetectedScheme] = useState<"v3" | "v2" | null>(null);
   const [creatingToken, setCreatingToken] = useState(false);
   const [tokenNotice, setTokenNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [tokenIssued, setTokenIssued] = useState(false);
   const [testingLlm, setTestingLlm] = useState(false);
   const [llmResult, setLlmResult] = useState<ConnectionTestResult | null>(null);
   const [error, setError] = useState("");
+  // has_* flags from the redacted SettingsView: an empty secret input then
+  // means "keep the saved value" instead of "no value"
+  const [hasSecret, setHasSecret] = useState(false);
+  const [hasToken, setHasToken] = useState(false);
+  const [hasLlmKey, setHasLlmKey] = useState(false);
 
   const isEdit = mode === "edit";
 
-  // Load SAVED settings into the fields so reopening ⚙ shows what's stored
-  // (previously every field started blank, which looked like everything was wiped).
-  // The Base URL prefill shows the EFFECTIVE default explicitly — an empty
-  // looking field made users think the URL was still configured when the app
-  // was actually falling back to production.
+  // Load the SAVED settings so reopening ⚙ shows what's stored. Secrets never
+  // arrive from the backend — their fields start empty and show a "saved —
+  // leave blank to keep" placeholder when one exists. The Base URL prefill
+  // shows the EFFECTIVE default explicitly.
   useEffect(() => {
     if (!hasTauri) return;
     import("@tauri-apps/api/core")
       .then(({ invoke }) => invoke<StoredSettings>("get_settings"))
       .then((st) => {
         setWebullKey(st?.webull_app_key ?? "");
-        setWebullSecret(st?.webull_app_secret ?? "");
-        setWebullToken(st?.webull_access_token ?? "");
         setWebullUrl(st?.webull_base_url?.trim() || "https://api.webull.co.th");
         setLlmLabel(st?.llm?.label ?? "");
         setLlmUrl(st?.llm?.base_url ?? "");
         setLlmModel(st?.llm?.model ?? "");
-        setLlmKey(st?.llm?.api_key ?? "");
+        setHasSecret(!!st?.has_webull_secret);
+        setHasToken(!!st?.has_access_token);
+        setHasLlmKey(!!st?.llm?.has_api_key);
       })
       .catch(() => {});
   }, []);
+
+  const keptHint = "บันทึกไว้แล้ว — เว้นว่างเพื่อใช้ค่าเดิม";
 
   const llmPresets = [
     { label: "Z.ai GLM-5.3", url: "https://api.z.ai/api/paas/v4", model: "glm-5.3" },
@@ -99,7 +108,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
   };
 
   const handleTest = async () => {
-    if (!webullKey.trim() || !webullSecret.trim()) {
+    if (!webullKey.trim() || (!webullSecret.trim() && !hasSecret)) {
       setError("กรุณาใส่ Webull App Key และ Secret ก่อนทดสอบ");
       return;
     }
@@ -111,7 +120,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
       const { invoke } = await import("@tauri-apps/api/core");
       const r = await invoke<ConnectionTestResult>("test_connection", {
         webullKey: webullKey.trim(),
-        webullSecret: webullSecret.trim(),
+        webullSecret: webullSecret.trim() || null,
         webullAccessToken: webullToken.trim() || null,
         webullBaseUrl: webullUrl.trim() || null,
       });
@@ -128,12 +137,15 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
     setCreatingToken(true);
     setError("");
     setTokenNotice(null);
+    setTokenIssued(false);
     try {
       const { invoke } = await import("@tauri-apps/api/core");
+      // the token value stays native — only token_issued crosses IPC; the
+      // pending token is picked up by the next save
       const r = await invoke<{
         ok: boolean;
         status: string;
-        token?: string | null;
+        token_issued: boolean;
         expires_ms?: number | null;
         detail: string;
       }>("create_access_token", {
@@ -141,11 +153,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
         webullSecret: webullSecret.trim() || null,
         webullBaseUrl: webullUrl.trim() || null,
       });
-      if (r.ok && r.token) {
-        // the token value exists immediately (PENDING) — fill it in so the
-        // user only has to confirm the SMS and press test
-        setWebullToken(r.token);
-      }
+      setTokenIssued(r.ok && r.token_issued);
       setTokenNotice({ ok: r.ok, text: r.detail });
     } catch (e) {
       setTokenNotice({ ok: false, text: `สร้าง token ไม่สำเร็จ: ${e}` });
@@ -155,7 +163,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
   };
 
   const handleLlmTest = async () => {
-    if (!llmUrl.trim() || !llmModel.trim() || !llmKey.trim()) {
+    if (!llmUrl.trim() || !llmModel.trim() || (!llmKey.trim() && !hasLlmKey)) {
       setError("กรุณาใส่ Base URL / Model / API Key ของ AI ก่อนทดสอบ");
       return;
     }
@@ -168,7 +176,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
         llmLabel: llmLabel.trim() || null,
         llmBaseUrl: llmUrl.trim(),
         llmModel: llmModel.trim(),
-        llmApiKey: llmKey.trim(),
+        llmApiKey: llmKey.trim() || null,
       });
       setLlmResult(r);
     } catch (e) {
@@ -179,7 +187,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
   };
 
   const handleSave = async () => {
-    if (!webullKey.trim() || !webullSecret.trim()) {
+    if (!webullKey.trim() || (!webullSecret.trim() && !hasSecret)) {
       setError("กรุณาใส่ Webull App Key และ Secret");
       return;
     }
@@ -274,7 +282,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
             autoComplete="off"
           />
           <input
-            placeholder="App Secret"
+            placeholder={hasSecret ? `App Secret (${keptHint})` : "App Secret"}
             value={webullSecret}
             onChange={(e) => setWebullSecret(e.target.value)}
             style={inputStyle}
@@ -282,7 +290,13 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
             autoComplete="off"
           />
           <input
-            placeholder="Access Token (จำเป็นบน production — สร้างด้วย node tools/probe-webull.mjs --token-create แล้วยืนยัน SMS ในแอป Webull)"
+            placeholder={
+              tokenIssued
+                ? "token ออกแล้ว (รอยืนยัน SMS) — กด บันทึก เพื่อใช้ token นี้"
+                : hasToken
+                  ? `Access Token (${keptHint})`
+                  : "Access Token (จำเป็นบน production — สร้างด้วยปุ่มด้านล่างแล้วยืนยัน SMS ในแอป Webull)"
+            }
             value={webullToken}
             onChange={(e) => setWebullToken(e.target.value)}
             style={inputStyle}
@@ -314,6 +328,18 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
             >
               {creatingToken ? "กำลังสร้าง..." : "สร้าง Access Token ใหม่ (SMS)"}
             </button>
+            {tokenIssued && (
+              <span
+                style={{
+                  fontSize: 11,
+                  lineHeight: 1.5,
+                  color: "#e8c170",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                ⏳ token ออกแล้ว (รอยืนยัน SMS)
+              </span>
+            )}
             {tokenNotice && (
               <span
                 style={{
@@ -430,7 +456,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
             autoComplete="off"
           />
           <input
-            placeholder="API Key"
+            placeholder={hasLlmKey ? `API Key (${keptHint})` : "API Key"}
             value={llmKey}
             onChange={(e) => setLlmKey(e.target.value)}
             style={inputStyle}
