@@ -98,7 +98,9 @@ impl StreamConfig {
     /// websocket upgrade is refused).
     pub fn rumqttc_transport(&self) -> rumqttc::Transport {
         if self.use_tls {
-            rumqttc::Transport::Tls(rumqttc::TlsConfiguration::default())
+            // OS TLS (SChannel on Windows): platform CA roots, patched by the OS;
+            // avoids rumqttc's pinned rustls-webpki 0.102 (RUSTSEC advisories)
+            rumqttc::Transport::Tls(rumqttc::TlsConfiguration::Native)
         } else {
             rumqttc::Transport::Tcp
         }

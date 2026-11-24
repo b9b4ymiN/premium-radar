@@ -11,7 +11,7 @@
 //!   `tests/fixtures/webull_sign.json`.
 
 use base64::Engine as _;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use md5::Md5;
 use sha1::Sha1;
 use sha2::{Digest as _, Sha256};
