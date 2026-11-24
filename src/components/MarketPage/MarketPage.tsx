@@ -2,9 +2,11 @@
 //! the scanner; nothing here trades. Every number comes from Rust as Webull
 //! reported it; the page only lays the rows out.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MoverList, MoverRow, SectorRow } from "../../types/webull";
 import { compact, count, fmt, pct, signedPct, signOf, timeEt } from "../../lib/format";
+import { SortHeader, type SortSpec } from "../shared/SortHeader";
+import { US_SESSION_TEXT, usSession } from "../shared/usSession";
 
 const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -23,10 +25,25 @@ interface SectorsAnswer {
   fetched_at: string;
 }
 
+// Webull's own "Most Active" ranks by SHARE COUNT (rank_type=VOLUME), not by
+// money — the labels below say so instead of implying a turnover ranking.
 const LISTS: Array<{ id: MoverList; label: string; basis: string }> = [
-  { id: "gainers", label: "ขึ้นแรงวันนี้", basis: "เรียงจาก % เปลี่ยนแปลงของ session ล่าสุด มากสุดก่อน" },
-  { id: "losers", label: "ลงแรงวันนี้", basis: "เรียงจาก % เปลี่ยนแปลงของ session ล่าสุด ลดมากสุดก่อน" },
-  { id: "most_active", label: "ซื้อขายหนาแน่น", basis: "เรียงจากวอลุ่มสูงสุดก่อน" },
+  {
+    id: "gainers",
+    label: "ขึ้นแรงวันนี้",
+    basis: "เรียงจาก % เปลี่ยนแปลงของ session ล่าสุด มากสุดก่อน · 200 อันดับแรกจาก Webull",
+  },
+  {
+    id: "losers",
+    label: "ลงแรงวันนี้",
+    basis: "เรียงจาก % เปลี่ยนแปลงของ session ล่าสุด ลดมากสุดก่อน · 200 อันดับแรกจาก Webull",
+  },
+  {
+    id: "most_active",
+    label: "ปริมาณหุ้นสูงสุด",
+    basis:
+      'เรียงตามจำนวนหุ้นที่ซื้อขาย (ไม่ใช่มูลค่าเงิน) · 200 อันดับแรกจาก Webull — หุ้นราคาต่ำมักอยู่บนสุด กดหัวคอลัมน์ "มูลค่าซื้อขาย" เพื่อดูตามมูลค่าเงิน',
+  },
   { id: "week52_high", label: "จุดสูงสุด 52 สัปดาห์", basis: "หุ้นที่ทำราคาสูงสุดในรอบ 52 สัปดาห์" },
   { id: "week52_low", label: "จุดต่ำสุด 52 สัปดาห์", basis: "หุ้นที่ทำราคาต่ำสุดในรอบ 52 สัปดาห์" },
   {
@@ -35,6 +52,52 @@ const LISTS: Array<{ id: MoverList; label: string; basis: string }> = [
     basis: "เรียงจาก dividend yield สูงสุดก่อน — yield สูงผิดปกติมักมาจากราคาที่ลดฮวย อ่านก่อนเชื่อ",
   },
 ];
+
+// ---------- client-side re-sorting of a mover list (ordering only) ----------
+
+type MoverSortKey =
+  | "price" | "change_ratio" | "volume" | "turnover"
+  | "relative_volume_10d" | "market_value" | "dividend_yield";
+
+/** price × volume — the money that actually changed hands. Webull's
+ *  share-count ranking ignores it, so the table computes it for sorting. */
+const turnoverOf = (row: MoverRow): number | null =>
+  row.price != null && row.volume != null ? row.price * row.volume : null;
+
+function moverSortValue(row: MoverRow, key: MoverSortKey): number | null {
+  switch (key) {
+    case "price": return row.price;
+    case "change_ratio": return row.change_ratio;
+    case "volume": return row.volume;
+    case "turnover": return turnoverOf(row);
+    case "relative_volume_10d": return row.relative_volume_10d;
+    case "market_value": return row.market_value;
+    case "dividend_yield": return row.dividend_yield;
+  }
+}
+
+/** A row carrying Webull's own rank, so "#" keeps telling the broker's
+ *  ranking no matter which column the table is re-sorted by. */
+interface RankedMover {
+  row: MoverRow;
+  rank: number;
+}
+
+/** Orders the entries by the chosen column; rows without a value always
+ *  sink to the bottom, ties keep Webull's order. */
+function sortMovers(entries: RankedMover[], sort: SortSpec<MoverSortKey> | null): RankedMover[] {
+  if (!sort) return entries;
+  return [...entries].sort((a, b) => {
+    const left = moverSortValue(a.row, sort.key);
+    const right = moverSortValue(b.row, sort.key);
+    if (left == null && right == null) return 0;
+    if (left == null) return 1;
+    if (right == null) return -1;
+    if (left < right) return sort.dir === 1 ? -1 : 1;
+    if (left > right) return sort.dir === 1 ? 1 : -1;
+    return 0;
+  });
+}
 
 export default function MarketPage({ onOpenRadar }: { onOpenRadar: (symbol: string) => void }) {
   const [tab, setTab] = useState<MoverList | "sectors">("gainers");
@@ -50,6 +113,14 @@ export default function MarketPage({ onOpenRadar }: { onOpenRadar: (symbol: stri
   // the refresh button asks Webull again instead of taking the cached rank
   const bypassCache = useRef(false);
   const [nonce, setNonce] = useState(0);
+  // a custom column sort of the mover table; Webull's order is the default
+  const [sort, setSort] = useState<SortSpec<MoverSortKey> | null>(null);
+
+  // each list (or sector drill-down) is a different ranking — Webull's own
+  // order starts over whenever the view changes
+  useEffect(() => {
+    setSort(null);
+  }, [tab, sector]);
 
   const run = useCallback(<T,>(start: () => Promise<T>, apply: (value: T) => void) => {
     if (!hasTauri) {
@@ -118,7 +189,12 @@ export default function MarketPage({ onOpenRadar }: { onOpenRadar: (symbol: stri
     : showSectors
       ? "Sector ตามมูลค่าตลาด · กดแถวเพื่อดูหุ้นใน sector"
       : (current?.basis ?? "");
-  const columns = tab === "high_dividend" ? 10 : 9;
+  const columns = tab === "high_dividend" ? 11 : 10;
+  // which US session the numbers cover, read off the New York clock
+  const sessionNote = US_SESSION_TEXT[usSession()];
+  // click: descending first, click again: ascending
+  const toggleMoverSort = (key: MoverSortKey) =>
+    setSort(current => (current?.key !== key ? { key, dir: -1 } : { key, dir: current.dir === -1 ? 1 : -1 }));
 
   return (
     <div className="marketpage">
@@ -134,6 +210,11 @@ export default function MarketPage({ onOpenRadar }: { onOpenRadar: (symbol: stri
           {sector && (
             <button className="pf-refresh" onClick={() => setSector(null)}>
               ‹ กลับไป sector
+            </button>
+          )}
+          {sort && (
+            <button className="pf-refresh" onClick={() => setSort(null)}>
+              ↺ ลำดับของ Webull
             </button>
           )}
           <button className="pf-refresh" onClick={reload} disabled={loading}>
@@ -163,6 +244,12 @@ export default function MarketPage({ onOpenRadar }: { onOpenRadar: (symbol: stri
           Sectors
         </button>
       </div>
+
+      {tab !== "sectors" && (
+        <div className="mk-session">
+          ข้อมูลช่วง{sessionNote} · ลิสต์มีเฉพาะหุ้นที่ Webull จัดอยู่ใน 200 อันดับ — การเรียงใหม่ไม่ดึงหุ้นนอกลิสต์มาเพิ่ม
+        </div>
+      )}
 
       {error && (
         <div className="pf-err" role="alert">
@@ -233,6 +320,8 @@ export default function MarketPage({ onOpenRadar }: { onOpenRadar: (symbol: stri
           loading={loading && movers.length === 0}
           showDividend={tab === "high_dividend"}
           columns={columns}
+          sort={sort}
+          onSortKey={toggleMoverSort}
           onOpen={onOpenRadar}
         />
       )}
@@ -250,42 +339,62 @@ function MoversTable({
   loading,
   showDividend,
   columns,
+  sort,
+  onSortKey,
   onOpen,
 }: {
   rows: MoverRow[];
   loading: boolean;
   showDividend: boolean;
   columns: number;
+  sort: SortSpec<MoverSortKey> | null;
+  onSortKey: (key: MoverSortKey) => void;
   onOpen: (symbol: string) => void;
 }) {
+  // Webull's own rank is pinned to each row before any re-sort, so "#" keeps
+  // telling the broker's ranking while the visible order changes
+  const entries = useMemo(
+    () => sortMovers(rows.map((row, index) => ({ row, rank: index + 1 })), sort),
+    [rows, sort],
+  );
   return (
     <div className="hp-tablewrap">
       <table className="screener-table mk-table">
         <thead>
           <tr>
-            <th>#</th>
+            <th title="อันดับของ Webull สำหรับแถวนี้ — คงเดิมแม้เรียงคอลัมน์ใหม่">#</th>
             <th>สัญลักษณ์</th>
             <th>ชื่อ</th>
-            <th className="num">ราคาล่าสุด</th>
-            <th className="num">เปลี่ยน %</th>
-            <th className="num">วอลุ่ม</th>
-            <th className="num">Vol. เท่ากับ 10 วัน</th>
-            <th className="num">มูลค่าตลาด</th>
+            <SortHeader className="num" label="ราคาล่าสุด" sortKey="price" sort={sort} onSort={onSortKey} />
+            <SortHeader className="num" label="เปลี่ยน %" sortKey="change_ratio" sort={sort} onSort={onSortKey} />
+            <SortHeader className="num" label="วอลุ่ม" sortKey="volume" sort={sort} onSort={onSortKey} />
+            <SortHeader
+              className="num"
+              label="มูลค่าซื้อขาย ($)"
+              sortKey="turnover"
+              sort={sort}
+              onSort={onSortKey}
+              title="ราคา × วอลุ่ม — มูลค่าเงินที่หมุนวันนี้ (คำนวณในแอป ไม่ใช่การเรียงของ Webull)"
+            />
+            <SortHeader className="num" label="Vol. เท่ากับ 10 วัน" sortKey="relative_volume_10d" sort={sort} onSort={onSortKey} />
+            <SortHeader className="num" label="มูลค่าตลาด" sortKey="market_value" sort={sort} onSort={onSortKey} />
             <th className="num">P/E</th>
-            {showDividend && <th className="num">Dividend yield</th>}
+            {showDividend && (
+              <SortHeader className="num" label="ปันผล %" sortKey="dividend_yield" sort={sort} onSort={onSortKey} />
+            )}
           </tr>
         </thead>
         <tbody>
-          {rows.length === 0 ? (
+          {entries.length === 0 ? (
             <tr className="empty-row">
               <td colSpan={columns} className="pf-empty">
                 {loading ? "กำลังดึงข้อมูลจาก Webull …" : "Webull ไม่มีข้อมูลสำหรับลิสต์นี้"}
               </td>
             </tr>
           ) : (
-            rows.map((row, index) => (
+            entries.map(({ row, rank }) => (
               <tr key={row.symbol} className="hp-row" onClick={() => onOpen(row.symbol)}>
-                <td>{index + 1}</td>
+                <td>{rank}</td>
                 <td>
                   <button
                     type="button"
@@ -302,6 +411,7 @@ function MoversTable({
                 <td className="num">{row.price == null ? "--" : fmt(row.price)}</td>
                 <td className={`num ${signOf(row.change_ratio)}`}>{signedPct(row.change_ratio)}</td>
                 <td className="num">{compact(row.volume)}</td>
+                <td className="num">{compact(turnoverOf(row))}</td>
                 <td className="num">{row.relative_volume_10d == null ? "--" : `${fmt(row.relative_volume_10d, 2)}×`}</td>
                 <td className="num">{compact(row.market_value)}</td>
                 <td className="num">{row.pe_ttm == null ? "--" : fmt(row.pe_ttm, 1)}</td>

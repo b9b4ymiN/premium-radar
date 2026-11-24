@@ -24,10 +24,15 @@ const quoteStatusText = {
   setup_required: "ยังไม่ได้ตั้งค่า Webull",
 };
 
-const MOVER_LISTS: Array<{ list: MoverList; title: string }> = [
+const MOVER_LISTS: Array<{ list: MoverList; title: string; hint?: string }> = [
   { list: "gainers", title: "ขึ้นแรงวันนี้" },
   { list: "losers", title: "ลงแรงวันนี้" },
-  { list: "most_active", title: "ซื้อขายหนาแน่น" },
+  {
+    list: "most_active",
+    title: "ปริมาณหุ้นสูงสุด",
+    // Webull ranks this list by share count, not money — the tooltip says so
+    hint: "เรียงตามจำนวนหุ้นที่ซื้อขาย ไม่ใช่มูลค่าเงิน — หุ้นราคาต่ำมักอยู่บนสุด (200 อันดับแรกจาก Webull)",
+  },
 ];
 
 /** Top five of three screener lists; a row opens the stock in the scanner. */
@@ -51,11 +56,11 @@ function Movers({ onOpenRadar }: { onOpenRadar: (symbol: string) => void }) {
 
   return (
     <div className="hp-movers">
-      {MOVER_LISTS.map(({ list, title }) => {
+      {MOVER_LISTS.map(({ list, title, hint }) => {
         const state = lists[list];
         return (
           <div key={list} className="hp-mover">
-            <div className="hp-mover-head">{title}</div>
+            <div className="hp-mover-head" title={hint}>{title}</div>
             {state == null ? (
               <div className="hp-mover-note">
                 {hasTauri ? "กำลังดึงจาก Webull …" : "เปิดผ่านแอปเดสก์ท็อป"}

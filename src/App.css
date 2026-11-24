@@ -696,6 +696,7 @@ button:focus-visible, input:focus-visible {
 }
 .mk-tabs .t-tab { padding: 9px 13px; white-space: nowrap; border-bottom-width: 3px; }
 .mk-table td.mk-name { font-family: var(--sans); }
+.mk-session { color: var(--muted); font-size: 9.5px; line-height: 1.5; }
 .mk-sectors tr > :nth-child(1), .mk-sectors tr > :nth-child(6) { text-align: left; }
 .mk-sectors tr > :nth-child(2), .mk-sectors tr > :nth-child(3) { text-align: right; }
 
