@@ -10,6 +10,7 @@ import HomePage from "./components/HomePage/HomePage";
 import MarketPage from "./components/MarketPage/MarketPage";
 import QuoteHeader from "./components/QuoteHeader/QuoteHeader";
 import ContractQuote from "./components/ContractQuote/ContractQuote";
+import { LoadBar, Skel, SkelPanel, SkelRows } from "./components/shared/Skeleton";
 import { useStockOverview } from "./lib/useStockOverview";
 import { fmt, thaiDate } from "./lib/format";
 import type { EnrichedRow, StockUpdate, ChainStats, EngineSnapshot } from "./types/screener";
@@ -449,6 +450,12 @@ export default function App() {
   const scanSettled = scanPhase === "live" || scanPhase === "realtime";
 
   const isError = scanPhase === "error";
+  // The symbol's data is on its way: a scan phase that is still filling the
+  // chain, or no snapshot yet without an error. Desktop app only — the browser
+  // preview always shows mock data and never skeletons.
+  const loading =
+    hasTauri &&
+    (["discovery", "seed", "bars"].includes(scanPhase) || (snap == null && !isError));
   const badge = !hasTauri
     ? { text: "● BROWSER PREVIEW", cls: "" }
     : isLive ? { text: "● LIVE DATA", cls: "live" }
@@ -621,7 +628,8 @@ export default function App() {
         <main className="main">
 
           {/* Quote Header — scanner price/change + broker session, extended hours and key facts */}
-          <QuoteHeader symbol={symbol} stock={stock} overview={overview} />
+          <QuoteHeader symbol={symbol} stock={stock} overview={overview} loading={loading} />
+          {loading && <LoadBar symbol={symbol} message={scanMsg} />}
 
           {mainTab === "home" ? (
             <section className="labmodule">
@@ -644,7 +652,7 @@ export default function App() {
             </section>
           ) : mainTab === "lab" ? (
             <section className="labmodule">
-              <OptionLab row={selectedRow} symbol={symbol} spot={snap?.spot ?? 0} />
+              <OptionLab row={selectedRow} symbol={symbol} spot={snap?.spot ?? 0} loading={loading} />
             </section>
           ) : (
           <>
@@ -655,17 +663,19 @@ export default function App() {
           {/* 6 Metric Cards */}
           <section className="summary">
             {[
-              { label: "IV (ATM)", value: stats?.atm_iv != null ? `${(stats.atm_iv * 100).toFixed(1)}%` : "--", suffix: isLive ? "ATM IV" : "รอข้อมูล" },
-              { label: "Expected move ±1σ", value: stats?.em != null ? `±$${fmt(stats.em)}` : "--", suffix: "to expiry", cls: "warn" },
-              { label: "Put/Call skew", value: stats?.skew != null ? `${stats.skew >= 0 ? "+" : ""}${stats.skew.toFixed(1)} pts` : "--", suffix: isLive ? "OTM strikes" : "รอข้อมูล", cls: stats?.skew != null && stats.skew < 0 ? "neg" : "" },
-              { label: "Put/Call OI", value: pcOi != null ? pcOi.toFixed(2) : "--", suffix: isLive ? "open interest" : "รอข้อมูล" },
-              { label: "Closest expiry", value: closest ? closest.q.expiry.slice(5).replace("-", "/") : "--", suffix: closest ? `${Math.round(closest.dte)}d` : "", cls: "pos" },
-              { label: "Contracts loaded", value: String(rows.length), suffix: isLive ? "live feed" : hasTauri ? "รอข้อมูล" : "model-generated" },
+              { label: "IV (ATM)", value: stats?.atm_iv != null ? `${(stats.atm_iv * 100).toFixed(1)}%` : "--", missing: stats?.atm_iv == null, suffix: isLive ? "ATM IV" : "รอข้อมูล" },
+              { label: "Expected move ±1σ", value: stats?.em != null ? `±$${fmt(stats.em)}` : "--", missing: stats?.em == null, suffix: "to expiry", cls: "warn" },
+              { label: "Put/Call skew", value: stats?.skew != null ? `${stats.skew >= 0 ? "+" : ""}${stats.skew.toFixed(1)} pts` : "--", missing: stats?.skew == null, suffix: isLive ? "OTM strikes" : "รอข้อมูล", cls: stats?.skew != null && stats.skew < 0 ? "neg" : "" },
+              { label: "Put/Call OI", value: pcOi != null ? pcOi.toFixed(2) : "--", missing: pcOi == null, suffix: isLive ? "open interest" : "รอข้อมูล" },
+              { label: "Closest expiry", value: closest ? closest.q.expiry.slice(5).replace("-", "/") : "--", missing: closest == null, suffix: closest ? `${Math.round(closest.dte)}d` : "", cls: "pos" },
+              { label: "Contracts loaded", value: String(rows.length), missing: rows.length === 0, suffix: isLive ? "live feed" : hasTauri ? "รอข้อมูล" : "model-generated" },
             ].map(m => (
               <div key={m.label} className="metric">
                 <div className="metric-label">{m.label}</div>
                 <div className={`metric-value ${m.cls ?? ""}`}>
-                  {m.value} <span className="metric-suffix">{m.suffix}</span>
+                  {loading && m.missing
+                    ? <Skel w="3.5em" />
+                    : <>{m.value} <span className="metric-suffix">{m.suffix}</span></>}
                 </div>
               </div>
             ))}
@@ -673,7 +683,15 @@ export default function App() {
 
           {/* 3 Opportunity Cards */}
           <div className="opportunities">
-            {oppCards.map((o, i) => (
+            {loading && !opps
+              ? [0, 1, 2].map(i => (
+                  <div key={i} className={`opportunity ${i === 1 ? "on" : ""}`} aria-hidden="true">
+                    <div className="otop"><Skel w="55%" /></div>
+                    <div className="ocontract"><Skel w="72%" /></div>
+                    <div className="ometas"><Skel w="88%" /></div>
+                  </div>
+                ))
+              : oppCards.map((o, i) => (
               <button key={o.label} className={`opportunity ${i === 1 ? "on" : ""} ${opps ? "" : "muted-card"}`} onClick={() => { const hit = rows.find(r => r.q.symbol === (o as { contract?: string }).contract); if (hit) setSelected(hit.q.symbol); }}>
                 <div className="otop"><span>{o.label}</span><span style={{ color: "#9caec3" }}>{o.tag}</span></div>
                 <div className="ocontract">{o.contract}</div>
@@ -723,6 +741,10 @@ export default function App() {
                       rows.filter(r => tab === "all" || (tab === "put" ? r.q.option_type === "P" : r.q.option_type === "C")),
                       sort,
                     );
+                    // the chain is still arriving — placeholder rows stand in for it
+                    if (loading && rows.length === 0) {
+                      return <SkelRows rows={8} cols={13} />;
+                    }
                     if (visible.length === 0 && hasTauri) {
                       return (
                         <tr className="empty-row">
@@ -927,6 +949,8 @@ export default function App() {
                       : `กันชน ${selectedRow.cushion?.toFixed(1)}% จากราคาปัจจุบัน`}
                   </div>
                 </>
+              ) : loading ? (
+                <SkelPanel lines={6} />
               ) : (
                 <div style={{ color: "#8797aa", fontSize: 11.5, padding: "20px 4px" }}>
                   {isError ? "ไม่มีข้อมูล — แก้ไข API keys ในหน้า Setup ก่อน" : "รอข้อมูลจาก feed ..."}
@@ -1014,7 +1038,7 @@ export default function App() {
       {/* ============ STATUS BAR ============ */}
       <footer className="statusbar">
         <span><b>{tauriReady ? (isLive ? "LIVE · WEBULL TH FEED" : scanMsg) : "OFFLINE · BROWSER PREVIEW"}</b></span>
-        <span>{symbol} {stock ? fmt(stock.price) : "--"} <b className={chgCls}>{chg != null && chgPct != null ? `${chg >= 0 ? "+" : ""}${chgPct.toFixed(2)}%` : "--"}</b></span>
+        <span>{symbol} {stock ? fmt(stock.price) : loading ? <Skel w="3.5em" /> : "--"} <b className={chgCls}>{chg != null && chgPct != null ? `${chg >= 0 ? "+" : ""}${chgPct.toFixed(2)}%` : loading ? <Skel w="2.5em" /> : "--"}</b></span>
         <span>{isLive ? (wsLive ? "📡 real-time push" : "REST snapshot · รอบถัดไป 3 นาที") : "REST snapshot feed"}</span>
         <span className="statusright">
           <span>Contracts: {rows.length}</span>

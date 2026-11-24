@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import type { EnrichedRow } from "../../types/screener";
+import { SkelPanel } from "../shared/Skeleton";
 
 async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
@@ -33,8 +34,8 @@ const pct = (v: number | null | undefined, digits = 1) =>
   v == null ? "--" : `${(v * 100).toFixed(digits)}%`;
 
 export default function OptionLab({
-  row, symbol, spot,
-}: { row: EnrichedRow | null; symbol: string; spot: number }) {
+  row, symbol, spot, loading = false,
+}: { row: EnrichedRow | null; symbol: string; spot: number; loading?: boolean }) {
   const [a, setA] = useState<LabAnalysis | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [covered, setCovered] = useState(false);
@@ -60,6 +61,8 @@ export default function OptionLab({
   }, [row?.q.symbol, spot, iv, covered, symbol, isCall, dteYears, row]);
 
   if (!row) {
+    // สัญญายังไม่มีเพราะ chain กำลังโหลด = แผง skeleton; โหลดเสร็จแล้วแต่ไม่ได้เลือก = ข้อความเดิม
+    if (loading) return <SkelPanel lines={6} />;
     return <div className="lab-empty">ยังไม่ได้เลือกสัญญา — กดแถวในตาราง Monitor ก่อน แล้วกลับมาที่แท็บนี้</div>;
   }
 

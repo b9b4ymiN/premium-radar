@@ -21,6 +21,7 @@ import {
   timeEt,
 } from "../../lib/format";
 import type { OverviewState } from "../../lib/useStockOverview";
+import { Skel } from "../shared/Skeleton";
 
 const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -41,10 +42,12 @@ export default function QuoteHeader({
   symbol,
   stock,
   overview,
+  loading = false,
 }: {
   symbol: string;
   stock: StockUpdate | null;
   overview: OverviewState;
+  loading?: boolean;
 }) {
   const [quote, setQuote] = useState<StockSnapshot | null>(null);
   const [quoteAt, setQuoteAt] = useState<string | null>(null);
@@ -93,6 +96,8 @@ export default function QuoteHeader({
   // a change the broker never sent shows as `--` (signOf(null) is neutral)
   const changeText = change == null ? "--" : `${change >= 0 ? "+" : "-"}${fmt(Math.abs(change))}`;
   const ratioText = ratio == null ? "--" : signedPct(ratio);
+  // while the symbol loads, a missing number is a skeleton; after that, `--`
+  const numLoad = (n: number | null) => (loading && n == null ? <Skel w="3.5em" /> : num(n));
   const profile = overview.overview?.profile ?? null;
   const facts = overview.overview;
   const subtitle = profile
@@ -153,7 +158,9 @@ export default function QuoteHeader({
 
         <div className="qh-price">
           <div className={`bigprice num ${changeClass}`}>
-            {price == null ? "--" : fmt(price)}
+            {price == null
+              ? loading ? <Skel w="5.5em" lg /> : "--"
+              : fmt(price)}
             {price != null && <small className={changeClass}>{ratioText}</small>}
           </div>
           <div className="quotefoot num">
@@ -170,15 +177,15 @@ export default function QuoteHeader({
 
         <div className="head-quote-stats">
           <div className="qh-row">
-            <QStat label="Open" value={num(open)} />
-            <QStat label="High" value={num(high)} />
-            <QStat label="Low" value={num(low)} />
-            <QStat label="Prev close" value={num(preClose)} />
+            <QStat label="Open" value={numLoad(open)} />
+            <QStat label="High" value={numLoad(high)} />
+            <QStat label="Low" value={numLoad(low)} />
+            <QStat label="Prev close" value={numLoad(preClose)} />
           </div>
           <div className="qh-row">
             <QStat
               label="Earnings"
-              value={earnings ? thaiDate(earnings.start_date) : overview.loading ? "…" : "--"}
+              value={earnings ? thaiDate(earnings.start_date) : overview.loading ? "…" : loading ? <Skel w="3.5em" /> : "--"}
               title={
                 earnings
                   ? `ช่วงประกาศผลที่ Webull คาด ${thaiDate(earnings.start_date)}${earnings.end_date !== earnings.start_date ? ` ถึง ${thaiDate(earnings.end_date)}` : ""} · ใน ${earningsDays ?? "--"} วัน`
@@ -187,7 +194,7 @@ export default function QuoteHeader({
             />
             <QStat
               label="Ex-dividend"
-              value={nextDividend?.ex_div_date ? thaiDate(nextDividend.ex_div_date) : "--"}
+              value={nextDividend?.ex_div_date ? thaiDate(nextDividend.ex_div_date) : loading ? <Skel w="3.5em" /> : "--"}
               title={
                 nextDividend
                   ? `เข้าเทรดแบบไม่ได้รับปันผล (ex) วันที่ ${thaiDate(nextDividend.ex_div_date)}${nextDividend.amount != null ? ` · $${fmt(nextDividend.amount, 2)}/หุ้น` : ""}${nextDividend.pay_date ? ` · จ่าย ${thaiDate(nextDividend.pay_date)}` : ""}`
@@ -199,13 +206,13 @@ export default function QuoteHeader({
               value={
                 quote?.fifty_two_wk_high != null && quote.fifty_two_wk_low != null
                   ? `${fmt(quote.fifty_two_wk_low)}–${fmt(quote.fifty_two_wk_high)}`
-                  : "--"
+                  : loading ? <Skel w="3.5em" /> : "--"
               }
               title="ช่วงราคา 52 สัปดาห์"
             />
             <QStat
               label="Mkt cap"
-              value={compact(quote?.market_value)}
+              value={quote?.market_value == null && loading ? <Skel w="3.5em" /> : compact(quote?.market_value)}
               title="มูลค่าตลาดตาม Webull"
             />
           </div>

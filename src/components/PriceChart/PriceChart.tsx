@@ -2,6 +2,7 @@
 //! component เรนเดอร์อย่างเดียว: candles (≤300 แท่ง) หรือเส้น close (ยาวกว่านั้น)
 
 import { useEffect, useRef, useState } from "react";
+import { SkelPanel } from "../shared/Skeleton";
 const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -63,7 +64,9 @@ export default function PriceChart({ symbol }: { symbol: string }) {
           ))}
         </div>
       </div>
-      {loading && <div className="pc-status">กำลังโหลด…</div>}
+      {/* ยังไม่มีกราฟของช่วงนี้ระหว่างโหลด = แผง skeleton; มีกราฟเก่าอยู่แล้ว (เปลี่ยน range) = ถือไว้ + สถานะโหลด */}
+      {loading && !h && <SkelPanel lines={4} />}
+      {loading && h && <div className="pc-status">กำลังโหลด…</div>}
       {err && <div className="pc-status err">{err}</div>}
       {h && h.bars.length > 1 && <ChartSvg h={h} />}
       {h && h.bars.length <= 1 && <div className="pc-status">ข้อมูลช่วงนี้ยังไม่พอ (ได้ {h.bars.length} แท่ง)</div>}
