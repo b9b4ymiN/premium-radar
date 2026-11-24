@@ -13,20 +13,23 @@ jobs:
     name: Build Windows release (draft)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: lts/*
+          node-version: 24
+          cache: npm
 
       # rust-toolchain.toml pins stable-x86_64-pc-windows-msvc for cargo runs
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install frontend dependencies
         run: npm ci
 
       - name: Build and draft the release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -48,4 +51,4 @@ jobs:
             English: download the installer below — the NSIS file ending in -setup.exe is recommended, or use the .msi. If Windows SmartScreen appears, choose "More info" then "Run anyway" (the app is not yet signed by a CA certificate). See the README for full install steps: https://github.com/b9b4ymiN/premium-radar#readme
           releaseDraft: true
           prerelease: false
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
