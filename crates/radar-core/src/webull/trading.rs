@@ -7,6 +7,7 @@
 use serde_json::Value;
 
 use super::rest::{FetchError, HttpFetch, extract_list, opt_f64, opt_str, to_f64};
+use super::watchlists::rows_of;
 
 pub const PATH_ACCOUNTS: &str = "/trading/accounts/list";
 pub const PATH_POSITIONS: &str = "/trading/assets/positions/list";
@@ -235,23 +236,39 @@ fn parse_order_leg(leg: &Value, combo_type: Option<&str>) -> Option<OpenOrder> {
 }
 
 /// Flatten `{data: [{client_order_id, combo_type, orders: [...]}]}`: every leg
-/// of every (possibly multi-leg) order becomes one row.
-pub fn parse_open_orders(data: &Value) -> Vec<OpenOrder> {
-    extract_list(data)
-        .iter()
-        .flat_map(|entry| {
-            let combo = opt_str(entry.get("combo_type"));
-            entry
-                .get("orders")
-                .and_then(Value::as_array)
-                .map(|legs| {
-                    legs.iter()
-                        .filter_map(|leg| parse_order_leg(leg, combo.as_deref()))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
-        })
-        .collect()
+/// of every (possibly multi-leg) order becomes one row. The envelope is read
+/// strictly like the watchlists (a bare array or `{"data": [...]}`); any
+/// other 200 shape is a schema mismatch, never "no open orders". A leg
+/// without an id is still skipped — but a non-empty array that loses every
+/// row is a schema mismatch naming the missing field.
+pub fn parse_open_orders(data: &Value) -> Result<Vec<OpenOrder>, FetchError> {
+    let entries = rows_of(data, "data", "open orders")?;
+    let mut orders = Vec::new();
+    let mut missing: Option<&str> = None;
+    for entry in entries {
+        let combo = opt_str(entry.get("combo_type"));
+        let Some(legs) = entry.get("orders").and_then(Value::as_array) else {
+            missing = missing.or(Some("orders"));
+            continue;
+        };
+        let before = orders.len();
+        orders.extend(
+            legs.iter()
+                .filter_map(|leg| parse_order_leg(leg, combo.as_deref())),
+        );
+        if orders.len() == before && !legs.is_empty() {
+            missing = missing.or(Some("client_order_id"));
+        }
+    }
+    if !entries.is_empty()
+        && orders.is_empty()
+        && let Some(field) = missing
+    {
+        return Err(FetchError::Unexpected(format!(
+            "open orders: every row is missing {field}"
+        )));
+    }
+    Ok(orders)
 }
 
 /// Orders still working at the broker (first page).
@@ -266,7 +283,7 @@ pub fn fetch_open_orders<F: HttpFetch>(
     if status != 200 {
         return Err(FetchError::NonZero(status, data.to_string()));
     }
-    Ok(parse_open_orders(&data))
+    parse_open_orders(&data)
 }
 
 fn opt(v: Option<&Value>) -> Option<f64> {
@@ -355,7 +372,7 @@ mod tests {
                 {"side": "BUY"}
             ]}
         ], "pagination_key": ""});
-        let orders = parse_open_orders(&data);
+        let orders = parse_open_orders(&data).unwrap();
         assert_eq!(orders.len(), 3, "a leg without an id is dropped");
         assert_eq!(orders[0].combo_type.as_deref(), Some("NORMAL"));
         assert_eq!(orders[0].limit_price, Some(4.15));
@@ -363,8 +380,46 @@ mod tests {
         assert_eq!(orders[1].combo_type.as_deref(), Some("VERTICAL"));
         assert_eq!(orders[1].client_order_id, "ord-2-1");
         assert_eq!(orders[1].symbol, None);
-        assert!(parse_open_orders(&json!({"data": []})).is_empty());
-        assert!(parse_open_orders(&json!([])).is_empty());
+        assert!(parse_open_orders(&json!({"data": []})).unwrap().is_empty());
+        assert!(parse_open_orders(&json!([])).unwrap().is_empty());
+    }
+
+    /// An envelope the reader does not know used to parse as 0 orders — in
+    /// the UI that reads as "no open orders". It is a schema mismatch.
+    #[test]
+    fn an_unknown_open_orders_envelope_is_a_schema_mismatch() {
+        let error = parse_open_orders(&json!({"items": [
+            {"client_order_id": "ord-1", "combo_type": "NORMAL", "orders": [
+                {"client_order_id": "ord-1", "side": "BUY"}]}
+        ]}))
+        .unwrap_err();
+        assert!(
+            matches!(&error, FetchError::Unexpected(what) if what.contains("items")),
+            "names the fields it met: {error}"
+        );
+        assert_eq!(error.kind(), crate::webull::rest::FailureKind::Schema);
+        assert!(!error.is_retriable());
+    }
+
+    /// A non-empty page that loses every row (renamed field) is a schema
+    /// mismatch naming the missing field — never an empty list.
+    #[test]
+    fn every_row_losing_its_required_field_is_a_schema_mismatch() {
+        let error = parse_open_orders(&json!({"data": [
+            {"combo_type": "NORMAL", "orders": [{"side": "BUY"}]}
+        ]}))
+        .unwrap_err();
+        assert!(
+            matches!(&error, FetchError::Unexpected(what) if what.contains("client_order_id")),
+            "names the missing field: {error}"
+        );
+        let error = parse_open_orders(&json!({"data": [{"combo_type": "NORMAL"}]})).unwrap_err();
+        assert!(
+            matches!(&error, FetchError::Unexpected(what) if what.contains("orders")),
+            "names the missing field: {error}"
+        );
+        // a documented empty page stays a valid empty page
+        assert!(parse_open_orders(&json!({"data": []})).unwrap().is_empty());
     }
 
     #[test]

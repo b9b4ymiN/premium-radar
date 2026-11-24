@@ -20,7 +20,11 @@ pub const PATH_WATCHLIST_INSTRUMENTS: &str = "/market-data/watchlists/instrument
 /// The rows of a list body: a bare array, or an object holding them under
 /// `key` (the common `data` envelope is accepted too). Anything else is
 /// reported by shape only — field names, never values.
-fn rows_of<'a>(data: &'a Value, key: &str, what: &str) -> Result<&'a [Value], FetchError> {
+pub(super) fn rows_of<'a>(
+    data: &'a Value,
+    key: &str,
+    what: &str,
+) -> Result<&'a [Value], FetchError> {
     const DATA: &str = "data";
     match data {
         Value::Array(rows) => Ok(rows),
@@ -56,21 +60,30 @@ fn id_of(row: &Value, field: &str) -> Option<String> {
 
 /// Parse the account's watchlists in the broker's order (its `sort` column,
 /// stable for rows without one); a list without an id cannot be read and is
-/// skipped.
+/// skipped. A non-empty array that loses every row is a schema mismatch, not
+/// "no watchlists".
 pub fn parse_watchlists(data: &Value) -> Result<Vec<BrokerWatchlist>, FetchError> {
-    let mut lists: Vec<(Option<f64>, BrokerWatchlist)> = rows_of(data, "watchlists", "watchlists")?
-        .iter()
-        .filter_map(|row| {
-            Some((
+    let rows = rows_of(data, "watchlists", "watchlists")?;
+    let mut lists: Vec<(Option<f64>, BrokerWatchlist)> = Vec::new();
+    let mut skipped = 0usize;
+    for row in rows {
+        match id_of(row, "watchlist_id") {
+            Some(id) => lists.push((
                 opt_f64(row.get("sort")),
                 BrokerWatchlist {
-                    id: id_of(row, "watchlist_id")?,
+                    id,
                     name: opt_str(row.get("name")).unwrap_or_else(|| "ไม่มีชื่อ".to_string()),
                     update_time: opt_str(row.get("update_time")),
                 },
-            ))
-        })
-        .collect();
+            )),
+            None => skipped += 1,
+        }
+    }
+    if !rows.is_empty() && skipped == rows.len() {
+        return Err(FetchError::Unexpected(
+            "watchlists: every row is missing watchlist_id".into(),
+        ));
+    }
     lists.sort_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     Ok(lists.into_iter().map(|(_, list)| list).collect())
 }
@@ -92,18 +105,29 @@ pub struct BrokerInstrument {
     pub exchange_code: Option<String>,
 }
 
-/// Parse the symbols of one list; rows without a symbol are skipped.
+/// Parse the symbols of one list; rows without a symbol are skipped. A
+/// non-empty array that loses every row is a schema mismatch, not an empty
+/// list.
 pub fn parse_instruments(data: &Value) -> Result<Vec<BrokerInstrument>, FetchError> {
-    Ok(rows_of(data, "instruments", "watchlist instruments")?
-        .iter()
-        .filter_map(|row| {
-            Some(BrokerInstrument {
-                symbol: opt_str(row.get("symbol"))?,
+    let rows = rows_of(data, "instruments", "watchlist instruments")?;
+    let mut instruments = Vec::new();
+    let mut skipped = 0usize;
+    for row in rows {
+        match opt_str(row.get("symbol")) {
+            Some(symbol) => instruments.push(BrokerInstrument {
+                symbol,
                 name: opt_str(row.get("name")),
                 exchange_code: opt_str(row.get("exchange_code")),
-            })
-        })
-        .collect())
+            }),
+            None => skipped += 1,
+        }
+    }
+    if !rows.is_empty() && skipped == rows.len() {
+        return Err(FetchError::Unexpected(
+            "watchlist instruments: every row is missing symbol".into(),
+        ));
+    }
+    Ok(instruments)
 }
 
 /// The symbols of one watchlist, in the broker's order.
@@ -216,6 +240,23 @@ mod tests {
         assert!(!error.is_retriable());
         assert!(error.summary().starts_with("HTTP 200 · SCHEMA_MISMATCH"));
         assert!(error.user_message().contains("รูปแบบข้อมูลไม่ตรง"));
+    }
+
+    /// A renamed field used to surface as "empty": when a non-empty array
+    /// loses every row to a missing required field, that is a schema
+    /// mismatch, not a list with nothing in it.
+    #[test]
+    fn every_row_losing_its_required_field_is_a_schema_mismatch() {
+        let error = parse_instruments(&json!({"instruments": [{"ticker": "AAPL"}]})).unwrap_err();
+        assert!(
+            matches!(&error, FetchError::Unexpected(what) if what.contains("symbol")),
+            "names the missing field: {error}"
+        );
+        let error = parse_watchlists(&json!([{"name": "id field renamed"}])).unwrap_err();
+        assert!(
+            matches!(&error, FetchError::Unexpected(what) if what.contains("watchlist_id")),
+            "names the missing field: {error}"
+        );
     }
 
     /// One queued answer: the call has to hit `path` with exactly `params`.

@@ -88,6 +88,34 @@ async fn rate_limit_429_retries_then_succeeds() {
     assert_eq!(body["ok"], json!(true));
 }
 
+/// The broker can report quota exhaustion as a non-429 status carrying a
+/// rate-limit `error_code` — the retry predicate must read the code, not
+/// just the status.
+#[tokio::test]
+async fn rate_limit_error_code_on_a_non_429_status_is_retried() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/quota"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "error_code": "TOO_MANY_REQUESTS"
+        })))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    // takes over once the one-shot failure mock above is exhausted
+    Mock::given(method("GET"))
+        .and(path("/quota"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&server)
+        .await;
+    let uri = server.uri();
+    let (status, body) = call_on_thread(uri, None, |c| c.get("/quota", &[]).unwrap());
+    assert_eq!(status, 200);
+    assert_eq!(body["ok"], json!(true));
+    let reqs = server.received_requests().await.expect("captured requests");
+    assert_eq!(reqs.len(), 2, "the 400 was retried once");
+}
+
 #[tokio::test]
 async fn cache_hit_does_not_refetch() {
     let server = MockServer::start().await;
@@ -227,12 +255,17 @@ async fn wire_headers_match_the_client_scheme() {
         let body = r#"{"token":"abc"}"#;
         let get_params = params.clone();
         let send_body = body.to_string();
-        let statuses = call_on_thread(uri, Some(scheme), move |c| {
-            let get = c.get("/market/snapshot", &get_params).unwrap().0;
-            let post = c.post_json("/auth/tokens/check", &send_body).unwrap().0;
-            (get, post)
-        });
-        assert_eq!(statuses, (200, 200), "{scheme:?}");
+        let ((get_status, get_body), (post_status, post_body)) =
+            call_on_thread(uri, Some(scheme), move |c| {
+                let get = c.get("/market/snapshot", &get_params).unwrap();
+                let post = c.post_json("/auth/tokens/check", &send_body).unwrap();
+                (get, post)
+            });
+        // the parsed response JSON is the mocked body, for both verbs
+        assert_eq!(get_status, 200, "{scheme:?}");
+        assert_eq!(get_body, json!({"ok": true}), "{scheme:?}");
+        assert_eq!(post_status, 200, "{scheme:?}");
+        assert_eq!(post_body, json!({"status": "NORMAL"}), "{scheme:?}");
 
         let reqs = server.received_requests().await.expect("captured requests");
         assert_eq!(reqs.len(), 2, "{scheme:?}");

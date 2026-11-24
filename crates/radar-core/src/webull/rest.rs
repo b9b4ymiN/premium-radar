@@ -198,15 +198,39 @@ pub fn pagination_key(d: &Value) -> Option<String> {
     None
 }
 
-/// Python rate-limit classification: HTTP 429 or a body message containing
-/// "rate".
-pub fn is_rate_limited(status: u16, body: &Value) -> bool {
-    if status == 429 {
-        return true;
-    }
+/// The phrases the broker's messages actually use for quota errors — a phrase
+/// match, not a bare "rate" substring ("generate", "separate", "accurate"
+/// must not read as quota errors).
+fn message_mentions_quota(body: &Value) -> bool {
     body.get("message")
         .and_then(Value::as_str)
-        .is_some_and(|m| m.to_ascii_lowercase().contains("rate"))
+        .is_some_and(|m| {
+            let m = m.to_ascii_lowercase();
+            m.contains("rate limit") || m.contains("too many")
+        })
+}
+
+/// Python rate-limit classification: HTTP 429 or a body message mentioning
+/// rate limiting ("rate limit" / "too many").
+pub fn is_rate_limited(status: u16, body: &Value) -> bool {
+    status == 429 || message_mentions_quota(body)
+}
+
+/// The one retry predicate, shared by the transport and consistent with what
+/// [`FetchError::kind`] calls rate limiting: true for HTTP 429, the broker's
+/// rate-limit `error_code` (RATE / TOO_MANY — the broker can send it on a
+/// non-429 status), a message mentioning "rate limit" / "too many", or a
+/// gateway failure (502–504).
+pub fn is_retriable_response(status: u16, body: &Value) -> bool {
+    if status == 429 || matches!(status, 502..=504) {
+        return true;
+    }
+    let code = body
+        .get("error_code")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    code.contains("RATE") || code.contains("TOO_MANY") || message_mentions_quota(body)
 }
 
 // ---------- throttle (pure time math) ----------
@@ -365,38 +389,51 @@ pub enum FailureKind {
     Other,
 }
 
-/// The broker's own code outranks the HTTP status: a 403 for a missing
-/// subscription and a 401 for a bad token need different next steps, and the
-/// status alone cannot tell them apart (observed codes: 2026-11-23).
+/// Classification order: (1) the broker's machine-readable `error_code`
+/// decides first, in the priority RateLimited → Token → Auth → Permission
+/// codes; (2) then the specific HTTP statuses (429, 401, 403); (3) then the
+/// body-text fallbacks; (4) then the generic buckets (404, other 4xx, 5xx).
+/// A 403 for a missing subscription
+/// and a 401 for a bad token need different next steps, and neither the
+/// status nor the message alone can tell them apart (observed codes:
+/// 2026-11-23).
 fn classify(status: u16, body: &str) -> FailureKind {
     let code = error_code(body).unwrap_or_default().to_ascii_uppercase();
     let text = body.to_ascii_lowercase();
-    if status == 429 || code.contains("RATE") || code.contains("TOO_MANY") {
+    // (1) the broker's own code outranks the HTTP status (an absent code
+    // leaves `code` empty, so every contains() is false)
+    if code.contains("RATE") || code.contains("TOO_MANY") {
         return FailureKind::RateLimited;
     }
     if code.contains("TOKEN") || text.contains("x-access-token") {
         return FailureKind::Token;
-    }
-    if code.contains("SUBSCRIB")
-        || code.contains("PERMISSION")
-        || code.contains("ENTITLE")
-        || code.contains("FORBIDDEN")
-        || status == 403
-    {
-        return FailureKind::Permission;
     }
     if code.contains("UNAUTHORIZED")
         || code.contains("SIGNATURE")
         || code.contains("APP_KEY")
         || code.contains("APPKEY")
         || code.contains("SECRET")
-        || text.contains("signature")
-        || text.contains("correct environment")
-        || status == 401
     {
         return FailureKind::Auth;
     }
+    if code.contains("SUBSCRIB")
+        || code.contains("PERMISSION")
+        || code.contains("ENTITLE")
+        || code.contains("FORBIDDEN")
+    {
+        return FailureKind::Permission;
+    }
+    // (2) HTTP status fallbacks
     match status {
+        429 => FailureKind::RateLimited,
+        401 => FailureKind::Auth,
+        403 => FailureKind::Permission,
+        // (3) body-text fallbacks (messages without a machine-readable code)
+        // outrank the generic status buckets: a 400 "signature mismatch"
+        // means fix the key, not the request
+        _ if text.contains("signature") || text.contains("correct environment") => {
+            FailureKind::Auth
+        }
         404 => FailureKind::NotFound,
         400..=499 => FailureKind::InvalidRequest,
         500..=599 => FailureKind::Server,
@@ -659,6 +696,86 @@ mod tests {
         assert!(is_rate_limited(200, &json!({"message": "too many, RATE?"})));
         assert!(!is_rate_limited(200, &json!({"message": "ok"})));
         assert!(!is_rate_limited(500, &json!({})));
+    }
+
+    /// The broker's `error_code` outranks the HTTP status: 403 +
+    /// INVALID_SIGNATURE is a signing problem (Auth), not a missing
+    /// subscription (Permission).
+    #[test]
+    fn signature_codes_outrank_the_403_status() {
+        let e = FetchError::NonZero(403, r#"{"error_code":"INVALID_SIGNATURE"}"#.into());
+        assert_eq!(e.kind(), FailureKind::Auth);
+        let e = FetchError::NonZero(403, r#"{"error_code":"NO_PERMISSION"}"#.into());
+        assert_eq!(e.kind(), FailureKind::Permission);
+        let e = FetchError::NonZero(401, r#"{"error_code":"INVALID_TOKEN"}"#.into());
+        assert_eq!(e.kind(), FailureKind::Token);
+        // without a code, the message still beats the generic 4xx bucket
+        let e = FetchError::NonZero(400, r#"{"message":"signature mismatch"}"#.into());
+        assert_eq!(e.kind(), FailureKind::Auth);
+    }
+
+    /// A quota complaint is a phrase ("rate limit" / "too many"), not a bare
+    /// "rate" substring: "generate", "separate", "accurate" are not quota
+    /// errors and must not trigger retries.
+    #[test]
+    fn rate_limit_is_a_phrase_not_a_bare_rate_substring() {
+        assert!(!is_rate_limited(
+            200,
+            &json!({"message": "failed to generate report"})
+        ));
+        assert!(!is_rate_limited(
+            200,
+            &json!({"message": "cannot separate the symbols"})
+        ));
+        assert!(!is_rate_limited(200, &json!({"message": "not accurate"})));
+        assert!(is_rate_limited(
+            200,
+            &json!({"message": "Rate limit exceeded"})
+        ));
+        assert!(is_rate_limited(
+            200,
+            &json!({"message": "Too many requests"})
+        ));
+    }
+
+    /// The retry predicate the transport uses: quota signals (status, broker
+    /// code or message phrase) and gateway 5xx are retriable; ordinary
+    /// rejections are not.
+    #[test]
+    fn retriable_response_predicate() {
+        assert!(is_retriable_response(429, &json!({})));
+        assert!(is_retriable_response(
+            400,
+            &json!({"error_code": "TOO_MANY_REQUESTS"})
+        ));
+        assert!(is_retriable_response(
+            200,
+            &json!({"error_code": "RATE_LIMIT_EXCEEDED"})
+        ));
+        assert!(is_retriable_response(
+            200,
+            &json!({"message": "rate limit exceeded"})
+        ));
+        assert!(is_retriable_response(
+            200,
+            &json!({"message": "Too many requests, slow down"})
+        ));
+        assert!(is_retriable_response(502, &json!({})));
+        assert!(is_retriable_response(503, &json!({})));
+        assert!(is_retriable_response(504, &json!({})));
+        assert!(!is_retriable_response(
+            200,
+            &json!({"message": "failed to generate report"})
+        ));
+        assert!(!is_retriable_response(
+            401,
+            &json!({"error_code": "INVALID_TOKEN"})
+        ));
+        assert!(!is_retriable_response(
+            400,
+            &json!({"message": "bad argument"})
+        ));
+        assert!(!is_retriable_response(500, &json!({})));
     }
 
     #[test]

@@ -17,7 +17,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use super::rest::{Credentials, FetchError, HttpFetch, SnapCache, Throttle, is_rate_limited};
+use super::rest::{Credentials, FetchError, HttpFetch, SnapCache, Throttle, is_retriable_response};
 use super::sign::{MIN_INTERVAL_SEC, SignatureScheme};
 
 const RETRIES: u32 = 2;
@@ -338,7 +338,7 @@ impl WebullClient {
         let mut retries = RETRIES;
         loop {
             let (status, body) = self.send_locked(coord, path, params, None)?;
-            let retriable = is_rate_limited(status, &body) || matches!(status, 502..=504);
+            let retriable = is_retriable_response(status, &body);
             if retriable && retries > 0 {
                 std::thread::sleep(Duration::from_secs_f64(RETRY_DELAY_SEC));
                 retries -= 1;
