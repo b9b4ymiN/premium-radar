@@ -3,7 +3,7 @@
 //! pushing `scan://progress` and `scan://snapshot` events to the frontend.
 //! Port of `Dashboard._stream_worker` + `_rest_fetch` (PLAN.md P3.4).
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -35,6 +35,10 @@ const WS_READ_TIMEOUT: Duration = Duration::from_secs(120);
 const WS_RECONNECT_DELAY: Duration = Duration::from_secs(5);
 /// Option subscribe chunk (Python `CHUNK_SIZE = 50`; client throttle paces calls).
 const SUB_CHUNK: usize = 50;
+/// Concurrent seed/bars workers. Each carries its own `WebullClient`, but all
+/// of them share the origin coordinator, so the wire still sees ONE quota:
+/// starts paced one per MIN_INTERVAL, at most `MAX_IN_FLIGHT` requests deep.
+const SCAN_WORKERS: usize = 3;
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -223,36 +227,78 @@ fn run(
 
         let total = symbols.len();
         let mut empty: Vec<String> = Vec::new();
-        for (i, batch) in symbols.chunks(OI_BATCH).enumerate() {
-            if stale() {
-                break 'outer;
-            }
-            match quotes::fetch_option_seeds(&mut client, batch) {
-                Ok((seeds, miss)) => {
-                    {
-                        let mut eng = lock(&engine);
-                        for q in seeds {
-                            eng.seed_quote(q);
-                        }
+        {
+            let batches: Vec<&[String]> = symbols.chunks(OI_BATCH).collect();
+            // batches are pulled off this cursor; `seeded` counts completed
+            // contracts so the n/total progress stays monotonic regardless of
+            // which worker finishes first.
+            let next_batch = AtomicUsize::new(0);
+            let seeded = AtomicUsize::new(0);
+            let misses: Mutex<Vec<String>> = Mutex::new(Vec::new());
+            let mut workers: Vec<_> = (0..SCAN_WORKERS.min(batches.len()))
+                .filter_map(|_| settings.webull_client())
+                .collect();
+            if workers.is_empty() {
+                empty.extend(symbols.iter().cloned());
+            } else {
+                std::thread::scope(|scope| {
+                    for worker in &mut workers {
+                        scope.spawn(|| {
+                            loop {
+                                let i = next_batch.fetch_add(1, Ordering::Relaxed);
+                                let Some(batch) = batches.get(i).copied() else {
+                                    break;
+                                };
+                                if stale() {
+                                    break;
+                                }
+                                let count_done = |len: usize| {
+                                    (seeded.fetch_add(len, Ordering::Relaxed) + len).min(total)
+                                };
+                                let fetched = quotes::fetch_option_seeds(worker, batch);
+                                // a symbol switch while this batch was in flight:
+                                // its quotes must not land in the reset engine
+                                if stale() {
+                                    break;
+                                }
+                                match fetched {
+                                    Ok((seeds, miss)) => {
+                                        {
+                                            let mut eng = lock(&engine);
+                                            for q in seeds {
+                                                eng.seed_quote(q);
+                                            }
+                                        }
+                                        misses
+                                            .lock()
+                                            .unwrap_or_else(|e| e.into_inner())
+                                            .extend(miss);
+                                        let n = count_done(batch.len());
+                                        progress(
+                                            &app,
+                                            "seed",
+                                            format!("ดึงราคา snapshot {n}/{total}"),
+                                        );
+                                        emit_snapshot(&app, &engine);
+                                        timing("seed-batch", &format!(" {n}/{total}"));
+                                    }
+                                    Err(_) => {
+                                        misses
+                                            .lock()
+                                            .unwrap_or_else(|e| e.into_inner())
+                                            .extend_from_slice(batch);
+                                        count_done(batch.len());
+                                    }
+                                }
+                            }
+                        });
                     }
-                    empty.extend(miss);
-                    progress(
-                        &app,
-                        "seed",
-                        format!(
-                            "ดึงราคา snapshot {}/{}",
-                            ((i + 1) * OI_BATCH).min(total),
-                            total
-                        ),
-                    );
-                    emit_snapshot(&app, &engine);
-                    timing(
-                        "seed-batch",
-                        &format!(" {}/{}", ((i + 1) * OI_BATCH).min(total), total),
-                    );
-                }
-                Err(_) => empty.extend_from_slice(batch),
+                });
+                empty = misses.into_inner().unwrap_or_else(|e| e.into_inner());
             }
+        }
+        if stale() {
+            break 'outer;
         }
 
         // bars fallback for contracts the snapshot could not price
@@ -263,15 +309,38 @@ fn run(
                 format!("ดึงราคาปิดย้อนหลัง {} contracts", empty.len()),
             );
         }
-        for batch in empty.chunks(OI_BATCH) {
-            if stale() {
-                break 'outer;
-            }
-            if let Ok(seeds) = quotes::fetch_bars_seeds(&mut client, batch) {
-                let mut eng = lock(&engine);
-                for q in seeds {
-                    eng.seed_quote(q);
-                }
+        {
+            let batches: Vec<&[String]> = empty.chunks(OI_BATCH).collect();
+            let next_batch = AtomicUsize::new(0);
+            let mut workers: Vec<_> = (0..SCAN_WORKERS.min(batches.len()))
+                .filter_map(|_| settings.webull_client())
+                .collect();
+            if !workers.is_empty() {
+                std::thread::scope(|scope| {
+                    for worker in &mut workers {
+                        scope.spawn(|| {
+                            loop {
+                                let i = next_batch.fetch_add(1, Ordering::Relaxed);
+                                let Some(batch) = batches.get(i).copied() else {
+                                    break;
+                                };
+                                if stale() {
+                                    break;
+                                }
+                                let fetched = quotes::fetch_bars_seeds(worker, batch);
+                                if stale() {
+                                    break;
+                                }
+                                if let Ok(seeds) = fetched {
+                                    let mut eng = lock(&engine);
+                                    for q in seeds {
+                                        eng.seed_quote(q);
+                                    }
+                                }
+                            }
+                        });
+                    }
+                });
             }
         }
 

@@ -8,11 +8,11 @@
 //! recorder spend ONE quota instead of one each.
 
 use std::collections::{HashMap, VecDeque};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Condvar, LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
@@ -23,6 +23,11 @@ use super::sign::{MIN_INTERVAL_SEC, SignatureScheme};
 const RETRIES: u32 = 2;
 const RETRY_DELAY_SEC: f64 = 1.2;
 const BASE_URL: &str = "https://api.webull.co.th";
+/// Requests of one origin that may be awaiting a response at the same time.
+/// Starts stay paced one per `MIN_INTERVAL_SEC`, so this only decides how many
+/// slow round-trips may overlap (3 × 0.235 s ≈ 0.7 s of cover before a 4th
+/// start has to queue).
+const MAX_IN_FLIGHT: usize = 3;
 
 /// Documented Thailand ceilings per endpoint family, taken at 85% of the
 /// documented maximum (owner's decision: 80–90%), floored: the Data API pool
@@ -87,6 +92,17 @@ struct Coordinator {
     /// Send timestamps per quota window (family key, or the exact path for the
     /// each-limited endpoints), oldest first.
     sent: HashMap<String, VecDeque<Instant>>,
+    /// Requests of this origin currently between their paced start and their
+    /// body being read; capped at [`MAX_IN_FLIGHT`].
+    in_flight: usize,
+}
+
+/// The origin's coordinator behind its mutex, with the permit-waiting
+/// condvar OUTSIDE the lock — a waiter must be able to hand the guard to
+/// `Condvar::wait`, which cannot borrow it from the state it guards.
+struct CoordinatorHandle {
+    state: Mutex<Coordinator>,
+    wake: Condvar,
 }
 
 impl Coordinator {
@@ -95,12 +111,15 @@ impl Coordinator {
             throttle: Throttle::from_constants(),
             cache: SnapCache::from_constants(),
             sent: HashMap::new(),
+            in_flight: 0,
         }
     }
 
     /// Block until `path` may be sent: at least `MIN_INTERVAL_SEC` after the
-    /// previous request of this origin finished, and inside the endpoint
+    /// previous request of this origin STARTED, and inside the endpoint
     /// family's 85% ceiling (shared pools count every path of the family).
+    /// The caller holds the coordinator lock, so exactly one thread at a time
+    /// computes its start — that is what keeps starts spaced under concurrency.
     fn wait_turn(&mut self, path: &str) {
         let wait = self.throttle.wait_duration(self.throttle.last());
         if !wait.is_zero() {
@@ -113,6 +132,7 @@ impl Coordinator {
         }
     }
 
+    /// Stamp a request START: throttle mark + family window entry.
     fn record(&mut self, path: &str) {
         self.throttle.mark();
         self.sent
@@ -122,7 +142,7 @@ impl Coordinator {
     }
 }
 
-static COORDINATORS: LazyLock<Mutex<HashMap<String, Arc<Mutex<Coordinator>>>>> =
+static COORDINATORS: LazyLock<Mutex<HashMap<String, Arc<CoordinatorHandle>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// The cache/pacing key a base URL maps to (scheme + host + port).
@@ -132,11 +152,16 @@ fn origin_of(base_url: &str) -> String {
         .unwrap_or_else(|_| base_url.trim_end_matches('/').to_owned())
 }
 
-fn coordinator(base_url: &str) -> Arc<Mutex<Coordinator>> {
+fn coordinator(base_url: &str) -> Arc<CoordinatorHandle> {
     let origin = origin_of(base_url);
     let mut all = COORDINATORS.lock().unwrap_or_else(|e| e.into_inner());
     all.entry(origin)
-        .or_insert_with(|| Arc::new(Mutex::new(Coordinator::new())))
+        .or_insert_with(|| {
+            Arc::new(CoordinatorHandle {
+                state: Mutex::new(Coordinator::new()),
+                wake: Condvar::new(),
+            })
+        })
         .clone()
 }
 
@@ -152,7 +177,7 @@ pub fn clear_shared_cache(base_url: &str) {
         .get(&origin_of(base_url))
         .cloned();
     if let Some(coord) = existing {
-        coord.lock().unwrap_or_else(|e| e.into_inner()).cache = SnapCache::from_constants();
+        coord.state.lock().unwrap_or_else(|e| e.into_inner()).cache = SnapCache::from_constants();
     }
 }
 
@@ -176,10 +201,10 @@ fn production_gate_path(base_url: &str) -> Option<PathBuf> {
 }
 
 /// Coordinate request starts across processes. The file holds only the epoch
-/// millis of the last reserved start; the returned guard keeps the OS lock
-/// until the request has been sent, so another process waits instead of
-/// overlapping.
-fn reserve_production_slot(path: &Path) -> io::Result<File> {
+/// millis of the last reserved start; the OS lock is held just for the
+/// read/sleep/write that reserves the next slot, so processes space each
+/// other's STARTS without serialising on anybody's round-trip.
+fn reserve_production_slot(path: &Path) -> io::Result<()> {
     fs::create_dir_all(path.parent().expect("gate file has a parent"))?;
     let mut file = OpenOptions::new()
         .read(true)
@@ -211,7 +236,10 @@ fn reserve_production_slot(path: &Path) -> io::Result<File> {
     let timestamp = u64::try_from(now.as_millis()).unwrap_or(u64::MAX);
     file.rewind()?;
     file.write_all(&timestamp.to_le_bytes())?;
-    Ok(file)
+    // Release before the request is sent (drop unlocks too, but never rely on
+    // the caller for pacing-critical cleanup).
+    file.unlock()?;
+    Ok(())
 }
 
 /// Full Webull REST client: shared coordinator (throttle + cache), signing per
@@ -219,7 +247,7 @@ fn reserve_production_slot(path: &Path) -> io::Result<File> {
 pub struct WebullClient {
     creds: Credentials,
     http: reqwest::blocking::Client,
-    coordinator: Arc<Mutex<Coordinator>>,
+    coordinator: Arc<CoordinatorHandle>,
     base_url: String,
     production_gate: Option<PathBuf>,
     scheme: SignatureScheme,
@@ -293,12 +321,43 @@ impl WebullClient {
             .is_some_and(|flag| flag.load(Ordering::Relaxed))
     }
 
-    fn reserve_shared_slot(&self) -> Result<Option<File>, FetchError> {
-        self.production_gate
-            .as_deref()
-            .map(reserve_production_slot)
-            .transpose()
-            .map_err(|e| FetchError::Network(format!("Webull request pacing unavailable: {e}")))
+    fn reserve_shared_slot(&self) -> Result<(), FetchError> {
+        if let Some(path) = self.production_gate.as_deref() {
+            reserve_production_slot(path).map_err(|e| {
+                FetchError::Network(format!("Webull request pacing unavailable: {e}"))
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Reserve one paced request START and hold its in-flight permit.
+    ///
+    /// Under the coordinator lock: wait for the throttle + family window,
+    /// record the start, take one of the [`MAX_IN_FLIGHT`] permits (a 4th
+    /// caller parks on the condvar — no spinning). The lock is released when
+    /// this returns, so the send and body read run with nothing held; the
+    /// permit itself is returned by the guard on every path (RAII).
+    fn acquire_start(&self, path: &str) -> StartPermit<'_> {
+        let mut coord = self
+            .coordinator
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        loop {
+            if coord.in_flight < MAX_IN_FLIGHT {
+                coord.wait_turn(path);
+                coord.record(path);
+                coord.in_flight += 1;
+                return StartPermit {
+                    coordinator: &self.coordinator,
+                };
+            }
+            coord = self
+                .coordinator
+                .wake
+                .wait(coord)
+                .unwrap_or_else(|e| e.into_inner());
+        }
     }
 
     /// Attach the signing headers. The app secret only ever appears here as the
@@ -338,10 +397,11 @@ impl WebullClient {
         req
     }
 
-    /// One signed, paced request while the caller holds the coordinator lock.
-    fn send_locked(
+    /// One signed request: paced start (permit + throttle + family window +
+    /// cross-process slot), then the send and body read with NO coordinator
+    /// lock held — permits, not the lock, bound the concurrency.
+    fn send_once(
         &self,
-        coord: &mut Coordinator,
         path: &str,
         params: &[(String, String)],
         body: Option<&str>,
@@ -349,8 +409,8 @@ impl WebullClient {
         if self.is_cancelled() {
             return Err(FetchError::Cancelled);
         }
-        coord.wait_turn(path);
-        let process_slot = self.reserve_shared_slot()?;
+        let _permit = self.acquire_start(path);
+        self.reserve_shared_slot()?;
         let url = format!("{}{}", self.base_url, path);
         let req = if let Some(body) = body {
             self.authorize(self.http.post(&url), path, params, body)
@@ -364,10 +424,7 @@ impl WebullClient {
                 req.query(params)
             }
         };
-        let outcome = req.send();
-        coord.record(path);
-        drop(process_slot);
-        let response = outcome.map_err(|e| FetchError::Network(e.to_string()))?;
+        let response = req.send().map_err(|e| FetchError::Network(e.to_string()))?;
         let status = response.status().as_u16();
         let text = response
             .text()
@@ -382,15 +439,11 @@ impl WebullClient {
     /// GET with rate-limited + gateway-error retry. 5xx (502/503/504) happens
     /// on slow environments (UAT) under back-to-back pagination — a short wait
     /// usually clears it, so those get the same retry budget as rate limits.
-    fn do_get_locked(
-        &self,
-        coord: &mut Coordinator,
-        path: &str,
-        params: &[(String, String)],
-    ) -> Result<(u16, Value), FetchError> {
+    /// The retry wait holds no lock; each retry is a fresh paced start.
+    fn do_get(&self, path: &str, params: &[(String, String)]) -> Result<(u16, Value), FetchError> {
         let mut retries = RETRIES;
         loop {
-            let (status, body) = self.send_locked(coord, path, params, None)?;
+            let (status, body) = self.send_once(path, params, None)?;
             let retriable = is_retriable_response(status, &body);
             if retriable && retries > 0 {
                 std::thread::sleep(Duration::from_secs_f64(RETRY_DELAY_SEC));
@@ -401,9 +454,11 @@ impl WebullClient {
         }
     }
 
-    /// GET behind the shared cache. The coordinator lock spans both the cache
-    /// check and the request, so identical calls made together — even from
-    /// different clients — collapse into one request.
+    /// GET behind the shared cache. The cache check and the store each run
+    /// under the coordinator lock, but the request itself runs outside it, so
+    /// identical calls issued TOGETHER can each reach the wire once; a call
+    /// issued after another one's completion still collapses onto the cached
+    /// answer inside the TTL.
     fn get_shared(
         &mut self,
         path: &str,
@@ -412,16 +467,27 @@ impl WebullClient {
         if self.is_cancelled() {
             return Err(FetchError::Cancelled);
         }
-        let mut coord = self.coordinator.lock().unwrap_or_else(|e| e.into_inner());
         if !self.use_cache {
-            return self.do_get_locked(&mut coord, path, params);
+            return self.do_get(path, params);
         }
         let key = SnapCache::key(path, params);
-        if let Some(hit) = coord.cache.get(&key, Instant::now()) {
-            return Ok(hit.clone());
+        {
+            let coord = self
+                .coordinator
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(hit) = coord.cache.get(&key, Instant::now()) {
+                return Ok(hit.clone());
+            }
         }
-        let response = self.do_get_locked(&mut coord, path, params)?;
+        let response = self.do_get(path, params)?;
         if response.0 == 200 {
+            let mut coord = self
+                .coordinator
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             coord.cache.put(key, response.clone());
         }
         Ok(response)
@@ -434,8 +500,25 @@ impl WebullClient {
         if self.is_cancelled() {
             return Err(FetchError::Cancelled);
         }
-        let mut coord = self.coordinator.lock().unwrap_or_else(|e| e.into_inner());
-        self.send_locked(&mut coord, path, &[], Some(body))
+        self.send_once(path, &[], Some(body))
+    }
+}
+
+/// Releases one in-flight permit when the request is fully done (response
+/// body read, or any error path — the guard drops on `?` and panics too).
+struct StartPermit<'a> {
+    coordinator: &'a Arc<CoordinatorHandle>,
+}
+
+impl Drop for StartPermit<'_> {
+    fn drop(&mut self) {
+        let mut coord = self
+            .coordinator
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        coord.in_flight -= 1;
+        self.coordinator.wake.notify_one();
     }
 }
 
@@ -573,6 +656,7 @@ mod tests {
         let shared = coordinator(url);
         let key = SnapCache::key("/p", &[]);
         shared
+            .state
             .lock()
             .unwrap()
             .cache
@@ -584,6 +668,7 @@ mod tests {
         );
         assert!(
             shared
+                .state
                 .lock()
                 .unwrap()
                 .cache
@@ -599,13 +684,27 @@ mod tests {
         let Some(path) = std::env::var_os("RADAR_TEST_GATE_FILE") else {
             return;
         };
-        let _slot = reserve_production_slot(Path::new(&path)).unwrap();
+        reserve_production_slot(Path::new(&path)).unwrap();
     }
 
+    /// The gate file no longer holds the OS lock until the request is sent;
+    /// what must survive is the guarantee it existed for: two processes'
+    /// STARTS are spaced at least `MIN_INTERVAL_SEC` apart. The parent
+    /// reserves a slot, then a child process reserves its own — the child's
+    /// timestamp must land a full interval after the parent's.
     #[test]
-    fn production_gate_serializes_separate_processes() {
+    fn production_gate_spaces_separate_process_starts() {
+        fn gate_timestamp(path: &Path) -> u64 {
+            let mut buf = [0; 8];
+            std::fs::File::open(path)
+                .unwrap()
+                .read_exact(&mut buf)
+                .unwrap();
+            u64::from_le_bytes(buf)
+        }
         let path = std::env::temp_dir().join(format!("radar-gate-{}.lock", uuid::Uuid::new_v4()));
-        let parent_slot = reserve_production_slot(&path).unwrap();
+        reserve_production_slot(&path).unwrap();
+        let parent_start = gate_timestamp(&path);
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -614,13 +713,16 @@ mod tests {
             .env("RADAR_TEST_GATE_FILE", &path)
             .spawn()
             .unwrap();
-        // Outwait the timestamp cooldown so only the OS lock can keep the child blocked.
-        std::thread::sleep(Duration::from_secs_f64(MIN_INTERVAL_SEC + 0.25));
-        let blocked = child.try_wait().unwrap().is_none();
-        drop(parent_slot);
         let status = child.wait().unwrap();
+        let child_start = gate_timestamp(&path);
         fs::remove_file(path).unwrap();
-        assert!(blocked);
         assert!(status.success());
+        let interval_ms = (MIN_INTERVAL_SEC * 1000.0) as u64;
+        assert!(
+            child_start.saturating_sub(parent_start) >= interval_ms - 20,
+            "starts {} and {} are closer than {interval_ms}ms",
+            parent_start,
+            child_start
+        );
     }
 }

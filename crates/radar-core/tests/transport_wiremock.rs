@@ -432,6 +432,186 @@ async fn redirect_never_leaks_credentials_to_another_host() {
     );
 }
 
+// ---------- concurrency: paced starts, capped in-flight ----------
+
+/// Server-side arrival log for the concurrency tests. Wiremock applies a
+/// fixed, known delay to every response, so "requests that arrived within
+/// one delay of each other" were in flight together — computable from
+/// arrivals alone, with no client-side completion race.
+#[derive(Default)]
+struct Arrivals {
+    seen: std::sync::Mutex<Vec<std::time::Instant>>,
+}
+
+impl Arrivals {
+    fn record(&self) {
+        self.seen.lock().unwrap().push(std::time::Instant::now());
+    }
+
+    fn sorted(&self) -> Vec<std::time::Instant> {
+        let mut v = self.seen.lock().unwrap().clone();
+        v.sort();
+        v
+    }
+
+    /// Most arrivals that overlap inside one response-delay window.
+    fn max_in_flight(&self, delay: std::time::Duration) -> usize {
+        let starts = self.sorted();
+        starts
+            .iter()
+            .map(|a| {
+                starts
+                    .iter()
+                    .filter(|b| *b >= a && b.duration_since(*a) < delay)
+                    .count()
+            })
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+/// 6 clients of one origin run 6 delayed GETs concurrently: the round-trips
+/// overlap (wall time far below 6 serial delays), every pair of request
+/// STARTS stays a full MIN_INTERVAL apart, and at most MAX_IN_FLIGHT
+/// requests are ever on the wire. The 900 ms delay is deliberate: with
+/// 0.235 s pacing, a 4th request only stays off the wire if the in-flight
+/// cap actually holds.
+#[tokio::test]
+async fn concurrent_gets_overlap_round_trips_while_pacing_starts() {
+    let server = MockServer::start().await;
+    let arrivals = Arc::new(Arrivals::default());
+    let delay = std::time::Duration::from_millis(900);
+    let responder = {
+        let arrivals = arrivals.clone();
+        move |_req: &Request| {
+            arrivals.record();
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok": true}))
+                .set_delay(delay)
+        }
+    };
+    Mock::given(method("GET"))
+        .and(path("/overlap"))
+        .respond_with(responder)
+        .mount(&server)
+        .await;
+    let uri = server.uri();
+    let started = std::time::Instant::now();
+    std::thread::spawn(move || {
+        let mut threads = Vec::new();
+        for i in 0..6 {
+            let uri = uri.clone();
+            threads.push(std::thread::spawn(move || {
+                // one client per thread: like the scan workers, they share
+                // only the origin coordinator
+                let mut c = WebullClient::new(test_creds()).with_base_url(uri);
+                // distinct params -> distinct cache keys: nothing collapses
+                let (status, _) = c.get("/overlap", &[("i".into(), i.to_string())]).unwrap();
+                assert_eq!(status, 200);
+            }));
+        }
+        for t in threads {
+            t.join().unwrap();
+        }
+    })
+    .join()
+    .expect("driver thread");
+    let elapsed = started.elapsed();
+
+    // overlap: 6 × 900 ms of server work finished far sooner than serially
+    assert!(elapsed < delay * 6, "requests did not overlap: {elapsed:?}");
+    // starts stay paced one MIN_INTERVAL apart (20 ms arrival jitter budget)
+    let min_gap = std::time::Duration::from_secs_f64(radar_core::webull::sign::MIN_INTERVAL_SEC)
+        - std::time::Duration::from_millis(20);
+    let starts = arrivals.sorted();
+    assert_eq!(starts.len(), 6, "every call reached the wire");
+    for pair in starts.windows(2) {
+        assert!(
+            pair[1].duration_since(pair[0]) >= min_gap,
+            "starts too close: {pair:?}"
+        );
+    }
+    // and the in-flight ceiling held (the cap, not the pacing, binds here)
+    assert_eq!(
+        arrivals.max_in_flight(delay),
+        3,
+        "expected exactly MAX_IN_FLIGHT overlapping requests"
+    );
+}
+
+/// A 500 response walks every error path in `send_once`; none of them may
+/// leak an in-flight permit — after several failures, three delayed calls
+/// still run three-wide.
+#[tokio::test]
+async fn failed_requests_release_in_flight_permits() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/fail"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({"boom": true})))
+        .mount(&server)
+        .await;
+    let arrivals = Arc::new(Arrivals::default());
+    // 900 ms so three paced starts (0.235 s apart) genuinely coexist on the
+    // wire — a shorter delay ends request 0 before request 2 begins.
+    let delay = std::time::Duration::from_millis(900);
+    let responder = {
+        let arrivals = arrivals.clone();
+        move |_req: &Request| {
+            arrivals.record();
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok": true}))
+                .set_delay(delay)
+        }
+    };
+    Mock::given(method("GET"))
+        .and(path("/slow"))
+        .respond_with(responder)
+        .mount(&server)
+        .await;
+    let uri = server.uri();
+
+    let fail_uri = uri.clone();
+    std::thread::spawn(move || {
+        let mut c = WebullClient::new(test_creds()).with_base_url(fail_uri);
+        for i in 0..5 {
+            let (status, _) = c.get("/fail", &[("i".into(), i.to_string())]).unwrap();
+            assert_eq!(status, 500);
+        }
+    })
+    .join()
+    .unwrap_or_else(|_| panic!("failure thread"));
+
+    let started = std::time::Instant::now();
+    std::thread::spawn(move || {
+        let mut threads = Vec::new();
+        for i in 0..3 {
+            let uri = uri.clone();
+            threads.push(std::thread::spawn(move || {
+                let mut c = WebullClient::new(test_creds()).with_base_url(uri);
+                let (status, _) = c.get("/slow", &[("i".into(), i.to_string())]).unwrap();
+                assert_eq!(status, 200);
+            }));
+        }
+        for t in threads {
+            t.join().unwrap();
+        }
+    })
+    .join()
+    .expect("driver thread");
+    let elapsed = started.elapsed();
+
+    assert_eq!(arrivals.sorted().len(), 3);
+    assert_eq!(
+        arrivals.max_in_flight(delay),
+        3,
+        "permits leaked: failures narrowed the lanes"
+    );
+    assert!(
+        elapsed < delay * 3,
+        "three calls did not overlap: {elapsed:?}"
+    );
+}
+
 // ---------- live smoke (ignored by default; run with -- --ignored) ----------
 
 #[tokio::test]
