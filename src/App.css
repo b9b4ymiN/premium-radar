@@ -588,6 +588,7 @@ button:focus-visible, input:focus-visible {
 .session-dot.rth { background: var(--green); }
 .session-dot.ext { background: var(--amber); }
 .session-dot.err { background: var(--red); }
+.session-dot.off { background: #8a97a8; }
 .head-quote-stats { flex-direction: column; gap: 6px; }
 .qh-row { display: flex; gap: 22px; }
 .qstat .qk { margin-bottom: 2px; font-size: 9.5px; white-space: nowrap; }
@@ -595,7 +596,7 @@ button:focus-visible, input:focus-visible {
 
 .companypanel {
   display: flex; flex-direction: column; gap: 9px;
-  max-height: 250px; overflow: auto;
+  max-height: 350px; overflow: auto;
   padding: 9px 16px 11px;
   border-bottom: 1px solid var(--border); background: #0f141b;
 }
@@ -607,9 +608,13 @@ button:focus-visible, input:focus-visible {
 .cp-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px 14px; }
 .cp-facts label { display: block; font-size: 9.5px; color: var(--dim); margin-bottom: 1px; }
 .cp-facts span { font-size: 11.5px; color: var(--text); }
+.cp-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.cp-section { min-width: 0; }
 .cp-section .section-title { margin: 4px 0 4px; }
-.cp-line { font-size: 11px; color: var(--secondary); line-height: 1.55; }
-.cp-line b { color: var(--text); font-weight: 650; }
+.cp-line { font-size: 11px; color: var(--secondary); line-height: 1.5; }
+.cp-line b { color: var(--text); font-size: 12px; font-weight: 700; }
+.cp-line label { display: block; font-size: 9.5px; color: var(--dim); }
+.cp-sub { font-size: 10px; color: var(--secondary); margin-top: 3px; line-height: 1.5; }
 .cp-dim { color: var(--dim); font-size: 10px; }
 .cp-profile { font-size: 11px; line-height: 1.6; color: var(--secondary); max-height: 66px; overflow: auto; }
 .cp-unavailable { font-size: 10px; color: var(--amber); opacity: 0.85; }
@@ -655,6 +660,7 @@ button:focus-visible, input:focus-visible {
 .wq-book small { font-size: 9.5px; color: var(--secondary); margin-left: 4px; }
 .wq-book > div:last-child { text-align: right; }
 .wq-mid { text-align: center; padding: 0 10px; border-left: 1px solid var(--border-soft); border-right: 1px solid var(--border-soft); }
+.wq-mid small { display: block; margin: 1px 0 0; }
 .wq-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 6px; margin-top: 9px; }
 .wq-grid label { display: block; font-size: 9px; color: var(--dim); margin-bottom: 1px; }
 .wq-grid span { font-size: 11px; font-weight: 650; color: var(--text); }

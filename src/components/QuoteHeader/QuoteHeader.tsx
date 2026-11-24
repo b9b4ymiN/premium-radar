@@ -12,8 +12,8 @@ import {
   count,
   daysUntil,
   fmt,
-  isExtendedSession,
   pct,
+  sessionKind,
   sessionLabel,
   signedPct,
   signOf,
@@ -99,16 +99,21 @@ export default function QuoteHeader({
       : "US OPTIONS · Webull TH feed";
 
   const status = quote?.trade_status ?? null;
-  const extended = quote?.extended && isExtendedSession(status) ? quote.extended : null;
+  const kind = quote ? sessionKind(status) : null;
+  // only an extended-hours session may show the extended trade
+  const extended = kind === "extended" ? (quote?.extended ?? null) : null;
   const sessionLine = !hasTauri
     ? "สถานะตลาด · แสดงเฉพาะในแอป"
     : quoteError
       ? "สถานะตลาด: ไม่ทราบ"
       : quote
         ? extended
-          ? `${sessionLabel(status)} · ${num(extended.last_price)} ${signedPct(extended.change_ratio)} · ${timeEt(extended.last_trade_time_ms)} ET`
-          : `${sessionLabel(status)} · ล่าสุด ${timeEt(quote.last_trade_time_ms)}`
+          ? `${sessionLabel(status)} · ${num(extended.last_price)} ${signedPct(extended.change_ratio)} · ${timeEt(extended.last_trade_time_ms)}`
+          : kind === "extended"
+            ? `${sessionLabel(status)} · ยังไม่มีราคา · ล่าสุด ${timeEt(quote.last_trade_time_ms)}`
+            : `${sessionLabel(status)} · ล่าสุด ${timeEt(quote.last_trade_time_ms)}`
         : "กำลังดึงสถานะตลาด …";
+  const dot = quoteError ? "err" : extended ? "ext" : kind === "regular" ? "rth" : "off";
 
   const earnings = facts?.next_earnings ?? null;
   const earningsDays = earnings ? daysUntil(earnings.start_date) : null;
@@ -155,9 +160,7 @@ export default function QuoteHeader({
             className={`qh-session num ${extended ? "ext" : ""}`}
             title={quoteError ?? (quoteAt ? `ดึงจาก Webull ${timeEt(Date.parse(quoteAt))}` : undefined)}
           >
-            {hasTauri && (
-              <i className={`session-dot ${quoteError ? "err" : extended ? "ext" : "rth"}`} />
-            )}
+            {hasTauri && <i className={`session-dot ${dot}`} />}
             {sessionLine}
           </div>
         </div>
@@ -211,7 +214,7 @@ export default function QuoteHeader({
           <div className="cp-head">
             <b>{profile?.company_name ?? symbol}</b>
             <span className="cp-source">
-              Webull fundamentals{overview.fetchedAt ? ` · ดึงเมื่อ ${timeEt(Date.parse(overview.fetchedAt))} ET` : ""}
+              Webull fundamentals{overview.fetchedAt ? ` · ดึงเมื่อ ${timeEt(Date.parse(overview.fetchedAt))}` : ""}
             </span>
             <button type="button" className="qh-info on" aria-label="ปิดข้อมูลบริษัท" onClick={() => setCompanyOpen(false)}>
               ✕
@@ -257,73 +260,111 @@ export default function QuoteHeader({
                 </div>
               </div>
 
-              <div className="cp-section">
-                <div className="section-title">
-                  EARNINGS
-                  {earningsDays != null && earningsDays >= 0 && earningsDays <= 45 && (
-                    <span className="warn">ใกล้ประกาศผล — ตลาด option มักเคลื่อนแรง</span>
-                  )}
-                </div>
-                {earnings ? (
-                  <div className="cp-line">
-                    ช่วงที่ Webull คาด <b>{thaiDate(earnings.start_date)}</b>
-                    {earnings.end_date !== earnings.start_date && <> ถึง <b>{thaiDate(earnings.end_date)}</b></>}
-                    {earnings.fiscal_year != null && <> · Q{earnings.fiscal_period ?? "--"} {earnings.fiscal_year}</>}
-                    {earnings.eps_est != null && <> · EPS คาด {fmt(earnings.eps_est, 2)}</>}
-                  </div>
-                ) : (
-                  <div className="cp-line">Webull ไม่มีข้อมูลวันประกาศผลของหุ้นนี้</div>
-                )}
-              </div>
-
-              <div className="cp-section">
-                <div className="section-title">DIVIDEND</div>
-                <div className="cp-line">
-                  {nextDividend?.ex_div_date ? (
-                    <>
-                      ครั้งถัดไปเข้า ex <b>{thaiDate(nextDividend.ex_div_date)}</b>
-                      {nextDividend.amount != null && <> · ${fmt(nextDividend.amount, 2)}/หุ้น</>}
-                    </>
-                  ) : (
-                    "ไม่มีวันเข้า ex ที่รออยู่"
-                  )}
-                  {lastDividend?.ex_div_date && (
-                    <>
-                      {` · ล่าสุด ${thaiDate(lastDividend.ex_div_date)}`}
-                      {lastDividend.amount != null && ` ($${fmt(lastDividend.amount, 2)})`}
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div className="cp-section">
-                <div className="section-title">ANALYSTS</div>
-                {facts.analyst_target ? (
-                  <div className="cp-line num">
-                    ราคาเป้าหมาย เฉลี่ย <b>{facts.analyst_target.mean == null ? "--" : `$${fmt(facts.analyst_target.mean, 0)}`}</b>
-                    {facts.analyst_target.median != null && ` · มัธยฐาน $${fmt(facts.analyst_target.median, 0)}`}
-                    {facts.analyst_target.low != null && facts.analyst_target.high != null
-                      ? ` · ช่วง $${fmt(facts.analyst_target.low, 0)}–$${fmt(facts.analyst_target.high, 0)}`
-                      : ""}
-                    {price != null && facts.analyst_target.mean != null && (
-                      <span className={signOf(facts.analyst_target.mean - price)}>
-                        {" "}
-                        ({signedPct(facts.analyst_target.mean / price - 1)} จากราคาล่าสุด)
-                      </span>
+              <div className="cp-columns">
+                <div className="cp-section">
+                  <div className="section-title">
+                    EARNINGS
+                    {earningsDays != null && earningsDays >= 0 && earningsDays <= 45 && (
+                      <span className="warn">ใกล้ประกาศผล — ตลาด option มักเคลื่อนแรง</span>
                     )}
                   </div>
-                ) : (
-                  <div className="cp-line">ไม่มีข้อมูลราคาเป้าหมายของนักวิเคราะห์</div>
-                )}
-                {facts.analyst_rating && (
-                  <RatingBar
-                    strongBuy={facts.analyst_rating.strong_buy}
-                    buy={facts.analyst_rating.buy}
-                    hold={facts.analyst_rating.hold}
-                    sell={facts.analyst_rating.sell}
-                    total={facts.analyst_rating.number}
-                  />
-                )}
+                  {earnings ? (
+                    <>
+                      <div className="cp-line">
+                        <label>ช่วงที่ Webull คาด</label>
+                        <b>{thaiDate(earnings.start_date)}</b>
+                        {earnings.end_date !== earnings.start_date && (
+                          <>
+                            {" "}
+                            ถึง <b>{thaiDate(earnings.end_date)}</b>
+                          </>
+                        )}
+                      </div>
+                      <div className="cp-sub">
+                        {[
+                          earnings.fiscal_year != null
+                            ? `Q${earnings.fiscal_period ?? "--"} ${earnings.fiscal_year}`
+                            : null,
+                          earnings.eps_est != null ? `EPS คาด ${fmt(earnings.eps_est, 2)}` : null,
+                          earningsDays != null && earningsDays >= 0 ? `ใน ${earningsDays} วัน` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="cp-line">Webull ไม่มีข้อมูลวันประกาศผลของหุ้นนี้</div>
+                  )}
+                </div>
+
+                <div className="cp-section">
+                  <div className="section-title">DIVIDEND</div>
+                  {nextDividend?.ex_div_date ? (
+                    <>
+                      <div className="cp-line">
+                        <label>เข้า ex ครั้งถัดไป</label>
+                        <b>{thaiDate(nextDividend.ex_div_date)}</b>
+                        {nextDividend.amount != null && <> · ${fmt(nextDividend.amount, 2)}/หุ้น</>}
+                      </div>
+                      {nextDividend.pay_date && (
+                        <div className="cp-sub">จ่ายเงิน {thaiDate(nextDividend.pay_date)}</div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="cp-line">ไม่มีวันเข้า ex ที่รออยู่</div>
+                  )}
+                  {lastDividend?.ex_div_date && (
+                    <div className="cp-sub">
+                      ล่าสุด {thaiDate(lastDividend.ex_div_date)}
+                      {lastDividend.amount != null && ` ($${fmt(lastDividend.amount, 2)})`}
+                    </div>
+                  )}
+                </div>
+
+                <div className="cp-section">
+                  <div className="section-title">ANALYSTS</div>
+                  {facts.analyst_target ? (
+                    <>
+                      <div className="cp-line num">
+                        <label>ราคาเป้าหมาย เฉลี่ย</label>
+                        <b>
+                          {facts.analyst_target.mean == null
+                            ? "--"
+                            : `$${fmt(facts.analyst_target.mean, 0)}`}
+                        </b>
+                        {price != null && facts.analyst_target.mean != null && (
+                          <span className={signOf(facts.analyst_target.mean - price)}>
+                            {" "}
+                            {signedPct(facts.analyst_target.mean / price - 1)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="cp-sub">
+                        {[
+                          facts.analyst_target.median != null
+                            ? `มัธยฐาน $${fmt(facts.analyst_target.median, 0)}`
+                            : null,
+                          facts.analyst_target.low != null && facts.analyst_target.high != null
+                            ? `ช่วง $${fmt(facts.analyst_target.low, 0)}–$${fmt(facts.analyst_target.high, 0)}`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="cp-line">ไม่มีข้อมูลราคาเป้าหมายของนักวิเคราะห์</div>
+                  )}
+                  {facts.analyst_rating && (
+                    <RatingBar
+                      strongBuy={facts.analyst_rating.strong_buy}
+                      buy={facts.analyst_rating.buy}
+                      hold={facts.analyst_rating.hold}
+                      sell={facts.analyst_rating.sell}
+                      total={facts.analyst_rating.number}
+                    />
+                  )}
+                </div>
               </div>
 
               {profile?.profile && (

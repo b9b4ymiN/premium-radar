@@ -317,6 +317,14 @@ export default function App() {
   const toggleSort = (key: SortKey) => setSort(current =>
     current?.key !== key ? { key, dir: 1 } : current.dir === 1 ? { key, dir: -1 } : null,
   );
+  // The cheapest contract of the loaded chain (the engine's `rows` are every
+  // enriched row, before any filter): when it costs more than the budget cap,
+  // that alone empties the table, and the empty state can say so with numbers.
+  const cheapestCollateral = useMemo(() => {
+    const priced = (snap?.rows ?? []).map(r => r.collateral).filter((c): c is number => c != null && c > 0);
+    return priced.length ? Math.min(...priced) : null;
+  }, [snap]);
+  const budgetCap = parseFloat(budget) || 0;
   const stock: StockUpdate | null = snap?.stock ?? (hasTauri ? null : MOCK_STOCK);
   const stats: ChainStats | null = snap?.stats ?? (hasTauri ? null : MOCK_STATS);
   const selectedRow = rows.find(r => r.q.symbol === selected) ?? rows[0];
@@ -379,9 +387,14 @@ export default function App() {
   const feed = !tauriReady
     ? { t: "DEMO", cls: "warn" }
     : scanPhase === "error" ? { t: "ERROR", cls: "neg" }
+    : scanPhase === "realtime" ? { t: "LIVE · PUSH", cls: "pos" }
     : scanPhase === "live" ? { t: "REST · LIVE", cls: "pos" }
     : ["discovery", "seed", "bars"].includes(scanPhase) ? { t: "SYNCING", cls: "warn" }
     : { t: "IDLE", cls: "" };
+
+  // the chain is loaded and the scan is keeping it fresh: an empty table is
+  // now about the filters, not about data still on its way
+  const scanSettled = scanPhase === "live" || scanPhase === "realtime";
 
   const isError = scanPhase === "error";
   const badge = !hasTauri
@@ -675,9 +688,13 @@ export default function App() {
                                   เปิดหน้า Setup แก้ไข API keys
                                 </button>
                               </div>
-                            ) : scanPhase === "live" ? (
-                              <span style={{ color: "#8797aa", fontSize: 11.5 }}>
-                                ไม่พบ contracts ที่ผ่าน filters — ลองเพิ่ม Budget, เลือก All contracts หรือเปลี่ยน Expiration
+                            ) : scanSettled ? (
+                              <span style={{ color: "#8797aa", fontSize: 11.5, lineHeight: 1.6 }}>
+                                {rows.length > 0
+                                  ? `ไม่มี ${tab === "put" ? "Put" : "Call"} ที่ผ่าน filters ในมุมมองนี้`
+                                  : cheapestCollateral != null && budgetCap > 0 && cheapestCollateral > budgetCap
+                                    ? <>ไม่พบ contracts ที่ผ่าน filters — Collateral ต่ำสุดของ {symbol} คือ ${fmt(cheapestCollateral, 0)} สูงกว่า Budget ${fmt(budgetCap, 0)}<br />เพิ่ม Budget (หรือใส่ 0 = ไม่จำกัด) แล้วตรวจ Strategy · Assignment risk · Expiration ด้วย</>
+                                    : "ไม่พบ contracts ที่ผ่าน filters — ลองเพิ่ม Budget, เลือก All contracts หรือเปลี่ยน Expiration"}
                               </span>
                             ) : (
                               <span style={{ color: "#8797aa", fontSize: 11.5 }}>{scanMsg}</span>

@@ -89,18 +89,25 @@ export type Sign = "pos" | "neg" | "";
 export const signOf = (n: number | null | undefined): Sign =>
   n == null || !Number.isFinite(n) || n === 0 ? "" : n > 0 ? "pos" : "neg";
 
+/** What the broker's session tag means for the quote header. The tags seen
+ *  live from the Thailand host are PRE and ATH; the other spellings are the
+ *  ones the reference docs use. */
+export type SessionKind = "regular" | "extended" | "closed" | "other";
+
+export const sessionKind = (status: string | null | undefined): SessionKind => {
+  const code = (status ?? "").toUpperCase();
+  if (["PRE", "ATH", "POST", "AFTER", "AFTER_HOURS", "AH"].includes(code)) return "extended";
+  if (["RTH", "REGULAR", "REG", "OPEN", "TRADING"].includes(code)) return "regular";
+  if (["CLOSED", "CLOSE"].includes(code)) return "closed";
+  return "other";
+};
+
 /** Broker session tag → label; unknown tags are shown as returned. */
 export const sessionLabel = (status: string | null | undefined): string => {
   const code = (status ?? "").toUpperCase();
   if (code === "PRE") return "Pre-market";
-  if (code === "POST" || code === "AFTER" || code === "AFTER_HOURS" || code === "AH") return "After-hours";
-  if (code === "RTH" || code === "OPEN" || code === "TRADING") return "Regular session";
+  if (code === "ATH" || code === "POST" || code === "AFTER" || code === "AFTER_HOURS" || code === "AH") return "After-hours";
+  if (code === "RTH" || code === "REGULAR" || code === "REG" || code === "OPEN" || code === "TRADING") return "Regular session";
   if (code === "CLOSED" || code === "CLOSE") return "Closed";
   return code || "--";
-};
-
-/** True when the tag names a session outside regular hours. */
-export const isExtendedSession = (status: string | null | undefined) => {
-  const code = (status ?? "").toUpperCase();
-  return code === "PRE" || code === "POST" || code === "AFTER" || code === "AFTER_HOURS" || code === "AH";
 };
