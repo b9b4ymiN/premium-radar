@@ -11,7 +11,11 @@ export default tseslint.config(
     files: ['**/*.{ts,tsx}'],
     languageOptions: { globals: globals.browser },
     plugins: { 'react-hooks': reactHooks },
-    rules: { ...reactHooks.configs.recommended.rules },
+    rules: {
+      ...reactHooks.configs.recommended.rules,
+      // fetch/reset effects must set loading/error state synchronously on start; moving to event handlers or external stores would change render timing
+      'react-hooks/set-state-in-effect': 'off',
+    },
   },
   {
     files: ['tools/**/*.mjs'],

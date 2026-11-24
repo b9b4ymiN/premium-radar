@@ -248,6 +248,9 @@ export default function App() {
     return () => { disposed = true; uns.forEach((u) => u()); };
   }, []);
 
+  // must stay declared above the effects that reset it on symbol change
+  const [expirySel, setExpirySel] = useState<string>("ทุกวัน");
+
   // A symbol switch drops the previous chain immediately: rows, selection and
   // sort reset, and the scan status becomes a loading text naming the new
   // symbol — until the new scan's first event arrives, nothing of the old
@@ -387,7 +390,6 @@ export default function App() {
   const chgCls = chg == null || chg === 0 ? "" : chg > 0 ? "pos" : "neg";
 
   // expiry chips: "ทุกวัน" + real expiry dates from the loaded rows
-  const [expirySel, setExpirySel] = useState<string>("ทุกวัน");
   const expiryOptions = useMemo(() => {
     const dates = Array.from(new Set(rows.map(r => r.q.expiry))).sort().slice(0, 6);
     return ["ทุกวัน", ...dates];

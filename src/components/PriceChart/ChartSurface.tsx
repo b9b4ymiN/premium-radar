@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import type { Chart, Crosshair } from "klinecharts";
 import type { ChartBar } from "./chartData";
 import { DrawingToolbar, drawingTitle } from "./DrawingToolbar";
@@ -11,14 +11,15 @@ const price = (value: number | null | undefined) => value?.toFixed(2) ?? "—";
 
 const ChartReadout = memo(function ChartReadout({ chart, host, data, timespan }: {
   chart: Chart | undefined;
-  host: HTMLElement | null;
+  host: RefObject<HTMLDivElement | null>;
   data: ChartBar[];
   timespan: Timeframe;
 }) {
   const [hover, setHover] = useState<{ index: number; data: ChartBar[] } | null>(null);
 
   useEffect(() => {
-    if (!chart || !host) return;
+    const element = host.current;
+    if (!chart || !element) return;
     let lastIndex: number | undefined;
     const crosshair = (event?: unknown) => {
       const point = event as Crosshair | undefined;
@@ -31,10 +32,10 @@ const ChartReadout = memo(function ChartReadout({ chart, host, data, timespan }:
     };
     const leave = () => crosshair();
     chart.subscribeAction("onCrosshairChange", crosshair);
-    host.addEventListener("pointerleave", leave);
+    element.addEventListener("pointerleave", leave);
     return () => {
       chart.unsubscribeAction("onCrosshairChange", crosshair);
-      host.removeEventListener("pointerleave", leave);
+      element.removeEventListener("pointerleave", leave);
     };
   }, [chart, data, host]);
 
@@ -149,7 +150,7 @@ export default function ChartSurface({ symbol, data, timespan, onTimeframe }: {
       {failed && ready && <div className="pc-status err" role="status">ไม่สามารถเปิดกราฟราคาได้</div>}
       <div className={`pc-content${expanded ? " expanded" : ""}`} hidden={!ready || failed}>
         <div className="pc-chart-head">
-          <ChartReadout chart={chart} host={host.current} data={data} timespan={timespan} />
+          <ChartReadout chart={chart} host={host} data={data} timespan={timespan} />
           <div className="pc-chart-actions">
             <button type="button" className="pc-range" title="แสดงข้อมูลทั้งหมดในช่วง"
               aria-label="แสดงข้อมูลทั้งหมดในช่วง" onClick={() => controller.current?.fit()}>⤢ Fit</button>
