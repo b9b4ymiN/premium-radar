@@ -223,13 +223,13 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
       style={{
         position: "fixed",
         inset: 0,
-        background: "var(--canvas, #0b0d11)",
+        background: "var(--canvas)",
         zIndex: 999,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         fontFamily: "'Inter', 'IBM Plex Sans Thai', 'Segoe UI', sans-serif",
-        color: "#f0f3f8",
+        color: "var(--text)",
       }}
     >
       <div
@@ -237,8 +237,8 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
           width: 540,
           maxHeight: "92vh",
           overflowY: "auto",
-          background: "#151a21",
-          border: "1px solid #292f39",
+          background: "var(--surface2)",
+          border: "1px solid var(--border)",
           borderRadius: 10,
           padding: 32,
         }}
@@ -253,7 +253,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
         >
           PREMIUM RADAR
         </h1>
-        <p style={{ color: "#778394", fontSize: 12, marginBottom: 24 }}>
+        <p style={{ color: "var(--dim)", fontSize: 12, marginBottom: 24 }}>
           {isEdit
             ? "ตั้งค่า API keys — โหลดค่าที่บันทึกไว้มาให้แก้ไขแล้ว"
             : "ตั้งค่าครั้งแรก — ใส่ API keys เพื่อเริ่มใช้งาน"}
@@ -265,7 +265,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
             style={{
               fontSize: 11,
               fontWeight: 700,
-              color: "#a2adbc",
+              color: "var(--secondary)",
               letterSpacing: "0.08em",
               textTransform: "uppercase",
               marginBottom: 10,
@@ -315,9 +315,9 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
               onClick={handleCreateToken}
               disabled={creatingToken || !hasTauri}
               style={{
-                background: "#1a2029",
-                color: creatingToken ? "#6b7d98" : "#cfd9e6",
-                border: "1px solid #384251",
+                background: "var(--surface2)",
+                color: creatingToken ? "var(--dim)" : "var(--th-label)",
+                border: "1px solid var(--border-strong)",
                 borderRadius: 6,
                 padding: "6px 12px",
                 fontSize: 11,
@@ -333,7 +333,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
                 style={{
                   fontSize: 11,
                   lineHeight: 1.5,
-                  color: "#e8c170",
+                  color: "var(--amber)",
                   whiteSpace: "nowrap",
                 }}
               >
@@ -345,7 +345,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
                 style={{
                   fontSize: 11,
                   lineHeight: 1.5,
-                  color: tokenNotice.ok ? "#3ddc97" : "#f4788c",
+                  color: tokenNotice.ok ? "var(--green)" : "var(--red)",
                 }}
               >
                 {tokenNotice.ok ? "✓ " : "✕ "}
@@ -358,9 +358,9 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
               onClick={handleTest}
               disabled={testing || !hasTauri}
               style={{
-                background: "#1a2029",
-                color: testing ? "#6b7d98" : "#cfd9e6",
-                border: "1px solid #384251",
+                background: "var(--surface2)",
+                color: testing ? "var(--dim)" : "var(--th-label)",
+                border: "1px solid var(--border-strong)",
                 borderRadius: 6,
                 padding: "7px 14px",
                 fontSize: 11,
@@ -376,28 +376,28 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
                 style={{
                   fontSize: 11,
                   lineHeight: 1.5,
-                  color: testResult.webull_ok ? "#3ddc97" : "#f4788c",
+                  color: testResult.webull_ok ? "var(--green)" : "var(--red)",
                 }}
               >
                 {testResult.webull_ok ? "✓ " : "✕ "}
                 {testResult.detail}
                 {testResult.streaming === "entitled" && (
-                  <span style={{ color: "#3ddc97" }}> · 📡 ราคาสด: มีสิทธิ์ streaming</span>
+                  <span style={{ color: "var(--green)" }}> · 📡 ราคาสด: มีสิทธิ์ streaming</span>
                 )}
                 {testResult.streaming === "limit" && (
-                  <span style={{ color: "#e8c170" }}>
+                  <span style={{ color: "var(--amber)" }}>
                     {" "}
                     · 📡 ราคาสด: มีสิทธิ์ (ครบโควตา 5 จุดชั่วคราว — ลองใหม่ใน ~1 นาที)
                   </span>
                 )}
                 {testResult.streaming === "none" && (
-                  <span style={{ color: "#e8c170" }}>
+                  <span style={{ color: "var(--amber)" }}>
                     {" "}
                     · 📡 ราคาสด: AppKey นี้ไม่มีสิทธิ์ streaming (สแกนยังใช้ REST ได้ปกติ)
                   </span>
                 )}
                 {testResult.streaming === "unknown" && (
-                  <span style={{ color: "#8da7ca" }}> · 📡 ราคาสด: ตรวจไม่ได้ (timeout/เครือข่าย)</span>
+                  <span style={{ color: "var(--secondary)" }}> · 📡 ราคาสด: ตรวจไม่ได้ (timeout/เครือข่าย)</span>
                 )}
               </span>
             )}
@@ -410,7 +410,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
             style={{
               fontSize: 11,
               fontWeight: 700,
-              color: "#a2adbc",
+              color: "var(--secondary)",
               letterSpacing: "0.08em",
               textTransform: "uppercase",
               marginBottom: 10,
@@ -426,8 +426,8 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
                 style={{
                   ...presetBtnStyle,
                   background:
-                    llmUrl === p.url ? "#1b365a" : "#1a2029",
-                  color: llmUrl === p.url ? "#f2f7ff" : "#aab7c8",
+                    llmUrl === p.url ? "var(--blue-soft)" : "var(--surface2)",
+                  color: llmUrl === p.url ? "var(--text)" : "var(--secondary)",
                 }}
               >
                 {p.label}
@@ -468,9 +468,9 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
               onClick={handleLlmTest}
               disabled={testingLlm || !hasTauri}
               style={{
-                background: "#1a2029",
-                color: testingLlm ? "#6b7d98" : "#cfd9e6",
-                border: "1px solid #384251",
+                background: "var(--surface2)",
+                color: testingLlm ? "var(--dim)" : "var(--th-label)",
+                border: "1px solid var(--border-strong)",
                 borderRadius: 6,
                 padding: "7px 14px",
                 fontSize: 11,
@@ -486,7 +486,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
                 style={{
                   fontSize: 11,
                   lineHeight: 1.5,
-                  color: llmResult.webull_ok ? "#3ddc97" : "#f4788c",
+                  color: llmResult.webull_ok ? "var(--green)" : "var(--red)",
                 }}
               >
                 {llmResult.webull_ok ? "✓ " : "✕ "}
@@ -497,7 +497,7 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
         </div>
 
         {error && (
-          <p style={{ color: "#f4788c", fontSize: 11, marginBottom: 12 }}>{error}</p>
+          <p style={{ color: "var(--red)", fontSize: 11, marginBottom: 12 }}>{error}</p>
         )}
 
         <div style={{ display: "flex", gap: 8 }}>
@@ -506,9 +506,9 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
             disabled={saving}
             style={{
               flex: 1,
-              background: saving ? "#1a365a" : "#2b6cb8",
-              color: "#fff",
-              border: "1px solid #4a91fa",
+              background: saving ? "var(--blue-soft)" : "#2b6cb8",
+              color: "var(--text)",
+              border: "1px solid var(--blue)",
               borderRadius: 7,
               padding: "10px 0",
               fontSize: 13,
@@ -523,8 +523,8 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
               onClick={onSkip}
               style={{
                 background: "transparent",
-                color: "#778394",
-                border: "1px solid #384251",
+                color: "var(--dim)",
+                border: "1px solid var(--border-strong)",
                 borderRadius: 7,
                 padding: "10px 16px",
                 fontSize: 12,
@@ -538,14 +538,14 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
         </div>
 
         {!isEdit && (
-          <p style={{ color: "#5f6b7c", fontSize: 10, lineHeight: 1.7, marginTop: 14 }}>
+          <p style={{ color: "var(--dim)", fontSize: 10, lineHeight: 1.7, marginTop: 14 }}>
             "ข้าม" = ใช้ตัวแปร environment ของโปรเซสแอป แทนไฟล์ settings —
-            อ่าน <code style={{ color: "#8da7ca" }}>WEBULL_APP_KEY</code>,{" "}
-            <code style={{ color: "#8da7ca" }}>WEBULL_APP_SECRET</code>,{" "}
-            <code style={{ color: "#8da7ca" }}>WEBULL_ACCESS_TOKEN</code> (ถ้ามี) และ
-            <code style={{ color: "#8da7ca" }}> LLM_BASE_URL + LLM_API_KEY + LLM_MODEL</code>{" "}
-            (หรือ <code style={{ color: "#8da7ca" }}>GLM_API_KEY</code> /{" "}
-            <code style={{ color: "#8da7ca" }}>OPENAI_API_KEY</code>) —
+            อ่าน <code style={{ color: "var(--secondary)" }}>WEBULL_APP_KEY</code>,{" "}
+            <code style={{ color: "var(--secondary)" }}>WEBULL_APP_SECRET</code>,{" "}
+            <code style={{ color: "var(--secondary)" }}>WEBULL_ACCESS_TOKEN</code> (ถ้ามี) และ
+            <code style={{ color: "var(--secondary)" }}> LLM_BASE_URL + LLM_API_KEY + LLM_MODEL</code>{" "}
+            (หรือ <code style={{ color: "var(--secondary)" }}>GLM_API_KEY</code> /{" "}
+            <code style={{ color: "var(--secondary)" }}>OPENAI_API_KEY</code>) —
             ใช้ได้เฉพาะตอนเปิดแอปจาก terminal ที่ set ตัวแปรไว้ ถ้าดับเบิลคลิกแอปปกติจะไม่เห็นค่าเหล่านี้
           </p>
         )}
@@ -556,10 +556,10 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
-  background: "#0e1319",
-  border: "1px solid #384251",
+  background: "var(--surface)",
+  border: "1px solid var(--border-strong)",
   borderRadius: 6,
-  color: "#f0f3f8",
+  color: "var(--text)",
   padding: "8px 12px",
   fontSize: 12,
   marginBottom: 8,
@@ -569,7 +569,7 @@ const inputStyle: React.CSSProperties = {
 
 const presetBtnStyle: React.CSSProperties = {
   flex: 1,
-  border: "1px solid #353d49",
+  border: "1px solid var(--border-strong)",
   borderRadius: 5,
   padding: "6px 4px",
   fontSize: 10,
