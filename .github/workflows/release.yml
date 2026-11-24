@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-draft:
+    name: Build Windows release (draft)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      # rust-toolchain.toml pins stable-x86_64-pc-windows-msvc for cargo runs
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and draft the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "PREMIUM RADAR v__VERSION__"
+          releaseBody: |
+            PREMIUM RADAR v__VERSION__
+
+            อัปเดตในเวอร์ชันนี้ (What's new)
+            - ตรวจหาเวอร์ชันใหม่อัตโนมัติเมื่อเปิดโปรแกรม และอัปเดตได้ในคลิกเดียว (in-app auto-update)
+
+            การติดตั้ง (Install)
+            1. ดาวน์โหลดไฟล์ติดตั้งด้านล่าง — แนะนำไฟล์ชื่อจบด้วย -setup.exe (NSIS) หรือเลือกไฟล์ .msi ก็ได้
+            2. ถ้า Windows ขึ้นหน้าต่าง SmartScreen ("Windows protected your PC") ให้กด More info แล้วเลือก Run anyway — แอปยังไม่ได้เซ็นชื่อด้วย certificate จาก CA จึงขึ้นเตือนได้ตามปกติ
+            3. ขั้นตอนการติดตั้งโดยละเอียดอ่านได้ที่ README: https://github.com/b9b4ymiN/premium-radar#readme
+
+            English: download the installer below — the NSIS file ending in -setup.exe is recommended, or use the .msi. If Windows SmartScreen appears, choose "More info" then "Run anyway" (the app is not yet signed by a CA certificate). See the README for full install steps: https://github.com/b9b4ymiN/premium-radar#readme
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true

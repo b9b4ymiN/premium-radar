@@ -15,6 +15,7 @@ import type { EnrichedRow, StockUpdate, ChainStats, EngineSnapshot } from "./typ
 import "./App.css";
 import brandMark from "./assets/thpforge-mark.svg";
 import { RadarAssistant } from "./components/RadarAssistant/RadarAssistant";
+import UpdateBanner from "./components/UpdateBanner";
 
 /** The pages of the icon rail — the app's single menu. */
 type MainTab = "home" | "market" | "monitor" | "lab" | "portfolio" | "watchlist";
@@ -500,6 +501,7 @@ export default function App() {
         </label>
         <span className={`tag-demo ${badge.cls}`}>{badge.text}</span>
       </header>
+      <UpdateBanner />
 
       {/* ============ WORKSPACE ============ */}
       <div className="workspace">

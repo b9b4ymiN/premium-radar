@@ -845,3 +845,24 @@ button:focus-visible, input:focus-visible {
 .ra-note { font-size: 9.5px; color: var(--amber); padding: 6px 12px 0; }
 .ra-error { color: var(--red); }
 .ra-panel .chatlog { flex: 1; }
+
+/* ============ In-app update banner (under the app bar) ============ */
+.upd-bar {
+  display: flex; align-items: center; gap: 10px; flex: none;
+  padding: 5px 14px; font-size: 12px; color: var(--text);
+  background: var(--blue-soft); border-bottom: 1px solid var(--border);
+}
+.upd-msg { flex: 1; min-width: 0; }
+.upd-msg.err { color: var(--amber); }
+.upd-btn {
+  flex: none; padding: 3px 12px; border-radius: 4px; font-weight: 600;
+  background: var(--blue); border: 1px solid var(--blue); color: var(--text);
+}
+.upd-btn:hover { background: var(--cyan); border-color: var(--cyan); }
+.upd-btn.ghost { background: transparent; border-color: var(--border-strong); color: var(--secondary); }
+.upd-btn.ghost:hover { border-color: var(--dim); color: var(--text); }
+.upd-progress {
+  flex: none; width: 180px; height: 4px; border-radius: 2px;
+  background: var(--surface3); overflow: hidden;
+}
+.upd-progress-fill { display: block; height: 100%; background: var(--blue); transition: width 0.2s ease; }
