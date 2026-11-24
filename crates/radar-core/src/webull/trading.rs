@@ -6,8 +6,7 @@
 
 use serde_json::Value;
 
-use super::rest::{FetchError, HttpFetch, extract_list, opt_f64, opt_str, to_f64};
-use super::watchlists::rows_of;
+use super::rest::{FetchError, HttpFetch, extract_list, opt_f64, opt_str, rows_of, to_f64};
 
 pub const PATH_ACCOUNTS: &str = "/trading/accounts/list";
 pub const PATH_POSITIONS: &str = "/trading/assets/positions/list";

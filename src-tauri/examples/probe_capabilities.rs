@@ -158,11 +158,17 @@ impl Probe {
     fn describe(&self, step: &Step<'_>, outcome: &Outcome, ms: u128) -> (String, Value) {
         let scheme = step.scheme.unwrap_or(self.scheme);
         let code = outcome.body.get("error_code").and_then(Value::as_str);
-        let message = outcome
-            .body
-            .get("message")
-            .and_then(Value::as_str)
-            .map(|m| m.chars().take(220).collect::<String>());
+        // a trading message can echo an account number — the code is enough;
+        // any other message is clipped and scrubbed of long digit runs
+        let message = if step.path.starts_with("/trading/") {
+            None
+        } else {
+            outcome
+                .body
+                .get("message")
+                .and_then(Value::as_str)
+                .map(|m| redact_digits(&m.chars().take(220).collect::<String>()))
+        };
         let rows = rows_of(&outcome.body);
         let row_count = rows.as_ref().map_or(0, Vec::len);
         let first = rows.as_ref().and_then(|r| r.first().copied());
@@ -251,6 +257,32 @@ fn rows_of(body: &Value) -> Option<Vec<&Value>> {
         }
         _ => None,
     }
+}
+
+/// Replace any run of 6 or more digits with `[digits]` — an account or order
+/// number must never reach a console line or the report, while short codes
+/// ("error 42") stay readable.
+fn redact_digits(text: &str) -> String {
+    fn emit(out: &mut String, run: &str) {
+        if run.len() >= 6 {
+            out.push_str("[digits]");
+        } else {
+            out.push_str(run);
+        }
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut run = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_digit() {
+            run.push(ch);
+        } else {
+            emit(&mut out, &run);
+            run.clear();
+            out.push(ch);
+        }
+    }
+    emit(&mut out, &run);
+    out
 }
 
 /// Any non-empty value at the top two levels of `row`.
@@ -1131,4 +1163,27 @@ fn main() {
     }
     std::fs::write(path, &out).ok();
     println!("\nreport → {}", path.display());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_digits;
+
+    /// Six or more consecutive digits become `[digits]`; shorter runs (codes,
+    /// quantities) stay readable. Runs at both edges of the text are covered.
+    #[test]
+    fn long_digit_runs_are_redacted_and_short_ones_are_not() {
+        assert_eq!(
+            redact_digits("account 123456789 not found"),
+            "account [digits] not found"
+        );
+        assert_eq!(redact_digits("code 42"), "code 42");
+        assert_eq!(redact_digits("code 12345"), "code 12345");
+        assert_eq!(redact_digits("top 123456 tail"), "top [digits] tail");
+        assert_eq!(
+            redact_digits("two 1234567 and 987654321"),
+            "two [digits] and [digits]"
+        );
+        assert_eq!(redact_digits(""), "");
+    }
 }

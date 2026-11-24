@@ -10,35 +10,12 @@
 
 use serde_json::Value;
 
-use super::rest::{FetchError, HttpFetch, opt_f64, opt_str};
+use super::rest::{FetchError, HttpFetch, opt_f64, opt_str, rows_of};
 
 /// GET `/market-data/watchlists/list`
 pub const PATH_WATCHLISTS: &str = "/market-data/watchlists/list";
 /// GET `/market-data/watchlists/instruments/list`
 pub const PATH_WATCHLIST_INSTRUMENTS: &str = "/market-data/watchlists/instruments/list";
-
-/// The rows of a list body: a bare array, or an object holding them under
-/// `key` (the common `data` envelope is accepted too). Anything else is
-/// reported by shape only — field names, never values.
-pub(super) fn rows_of<'a>(
-    data: &'a Value,
-    key: &str,
-    what: &str,
-) -> Result<&'a [Value], FetchError> {
-    const DATA: &str = "data";
-    match data {
-        Value::Array(rows) => Ok(rows),
-        Value::Object(fields) => [key, DATA]
-            .into_iter()
-            .find_map(|name| fields.get(name).and_then(Value::as_array))
-            .map(Vec::as_slice)
-            .ok_or_else(|| {
-                let names: Vec<&str> = fields.keys().map(String::as_str).collect();
-                FetchError::Unexpected(format!("{what}: object with fields [{names:?}]"))
-            }),
-        _ => Err(FetchError::Unexpected(format!("{what}: not a list"))),
-    }
-}
 
 /// One watchlist as the broker holds it.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]

@@ -66,9 +66,9 @@ impl std::fmt::Debug for Credentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Credentials(app_key={}, secret=***{}***, access_token={})",
-            self.app_key,
-            self.app_secret.len(),
+            "Credentials(app_key={}…, secret={}, access_token={})",
+            key_head(&self.app_key),
+            secret_state(&self.app_secret),
             self.access_token.is_some()
         )
     }
@@ -97,12 +97,25 @@ impl Credentials {
 
     /// Log-safe representation.
     pub fn masked(&self) -> String {
-        // never print the full app_key — first 8 chars identify, rest masked
-        let head: String = self.app_key.chars().take(8).collect();
         format!(
-            "Credentials(app_key={head}…, secret=***{}***)",
-            self.app_secret.len()
+            "Credentials(app_key={}…, secret={})",
+            key_head(&self.app_key),
+            secret_state(&self.app_secret)
         )
+    }
+}
+
+/// The most of the app key that ever reaches a log line: its first 4 chars.
+fn key_head(app_key: &str) -> String {
+    app_key.chars().take(4).collect()
+}
+
+/// The secret's presence, never its length — a length narrows a brute force.
+fn secret_state(app_secret: &str) -> &'static str {
+    if app_secret.is_empty() {
+        "empty"
+    } else {
+        "set"
     }
 }
 
@@ -122,6 +135,25 @@ pub fn extract_list(d: &Value) -> Vec<Value> {
             _ => Vec::new(),
         },
         _ => Vec::new(),
+    }
+}
+
+/// The rows of a list body: a bare array, or an object holding them under
+/// `key` (the common `data` envelope is accepted too). Anything else is
+/// reported by shape only — field names, never values.
+pub fn rows_of<'a>(data: &'a Value, key: &str, what: &str) -> Result<&'a [Value], FetchError> {
+    const DATA: &str = "data";
+    match data {
+        Value::Array(rows) => Ok(rows),
+        Value::Object(fields) => [key, DATA]
+            .into_iter()
+            .find_map(|name| fields.get(name).and_then(Value::as_array))
+            .map(Vec::as_slice)
+            .ok_or_else(|| {
+                let names: Vec<&str> = fields.keys().map(String::as_str).collect();
+                FetchError::Unexpected(format!("{what}: object with fields [{names:?}]"))
+            }),
+        _ => Err(FetchError::Unexpected(format!("{what}: not a list"))),
     }
 }
 
@@ -808,12 +840,29 @@ mod tests {
     #[test]
     fn credentials_never_leak_secret_in_debug() {
         let c = Credentials {
-            app_key: "KEY".into(),
-            app_secret: "SECRET".into(),
+            app_key: "ABCDEFGHIJ".into(),
+            app_secret: "s3cr3t".into(),
             access_token: None,
         };
-        let m = c.masked();
-        assert!(m.contains("***") && !m.contains("SECRET"));
-        assert_eq!(c.app_key, "KEY");
+        for text in [format!("{c:?}"), c.masked()] {
+            assert!(text.contains("ABCD…"), "{text}");
+            // not the fifth key char, not the secret, not its length (6)
+            assert!(!text.contains("ABCDE"), "{text}");
+            assert!(!text.contains("s3cr3t"), "{text}");
+            assert!(!text.contains('6'), "{text}");
+        }
+        assert_eq!(c.app_key, "ABCDEFGHIJ");
+    }
+
+    /// A missing secret reports "empty" instead of leaking a zero length.
+    #[test]
+    fn an_empty_secret_says_empty() {
+        let c = Credentials {
+            app_key: "ABCDEFGHIJ".into(),
+            app_secret: String::new(),
+            access_token: None,
+        };
+        assert!(c.masked().contains("secret=empty"));
+        assert!(format!("{c:?}").contains("secret=empty"));
     }
 }
