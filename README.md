@@ -99,7 +99,7 @@ tests/fixtures/        — Golden test fixtures (deterministic)
 ## Testing
 
 ```bash
-# Rust: unit, golden (quant / screener / signing) and wiremock tests — 211 passed, 1 ignored
+# Rust: unit, golden (quant / screener / signing) and wiremock tests — 234 passed, 1 ignored
 cargo test --workspace
 
 # Frontend

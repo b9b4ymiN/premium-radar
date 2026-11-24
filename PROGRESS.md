@@ -12,9 +12,9 @@ Branch **`feat/webull-api-expansion`** จาก `f2fee8b` (branch เก่า 
 | 3 Integrations (backend) | DONE | typed clients: stocks/options/fundamentals/screeners/watchlists/trading (`33b84ee`, `590f331`) · คำสั่ง Tauri เพิ่ม 9 ตัว (รวม 31 ตัว) · 17 คำสั่งเป็น async ที่ทำงานหลังฉาก + cache ตามอายุข้อมูล (`0e46e8b`) |
 | 3 Integrations (frontend) | DONE | `88031bb` · `0de8120` · `4007755` · `41d5d1a` — รายละเอียดที่ `design/REFINEMENT-V2-1.md` (V2.2) |
 | 4 UI/UX | DONE | ก่อน/หลัง ที่ 1920 / 1680 / 1440 / 1290 (browser preview 44 รูป + รูปจากแอปจริง) ใน `tmp/shots/` · ตัวอักษรตาราง 10.8 → 11.4 px · shell/navigation ไม่เปลี่ยน |
-| 5 Validation | IN_PROGRESS | gate ทั้งหมดเขียว (ตารางล่าง) + แอปจริงต่อ host จริงผ่าน · **รอผล independent validator** |
+| 5 Validation | DONE | independent audit (Codex, read-only, `.cx/audit_20261124190043_b008.md`) → FAIL 11 findings → แก้ด้วย ZCode workers W1–W7 + commander review ทุก diff → re-audit โดย commander → PASS (ตาราง "Phase 5 findings" ล่าง) |
 
-### Gate ล่าสุด (รันจริงที่ `4f1a85b`)
+### Gate ล่าสุด (รันจริงที่ `2de9447`, `npm run verify` = 5 คำสั่งนี้)
 
 | คำสั่ง | ผล |
 |---|---|
@@ -22,7 +22,27 @@ Branch **`feat/webull-api-expansion`** จาก `f2fee8b` (branch เก่า 
 | `npm run build` | ผ่าน |
 | `cargo fmt --all --check` | ผ่าน |
 | `cargo clippy --workspace --all-targets -- -D warnings` | ผ่าน |
-| `cargo test --workspace` | **211 passed · 0 failed · 1 ignored** |
+| `cargo test --workspace` | **234 passed · 0 failed · 1 ignored** |
+
+### Phase 5 findings (audit 2026-11-24)
+
+| ID | ระดับ | เรื่อง | ผล |
+|---|---|---|---|
+| F1 | High | secret/token/LLM key ข้าม Tauri IPC (`get_settings` คืนทั้ง struct) — มีมาก่อน branch นี้ | แก้ `af27033` — `SettingsView` (has_* flags), ช่องว่าง = ใช้ค่าเดิม, token ที่ออกใหม่อยู่ใน native |
+| F2 | Med | base URL อิสระ ส่ง key ไป host ใดก็ได้ | แก้ `af27033` — รับเฉพาะ `https://api.webull.co.th` (เจ้าของเลือก prod อย่างเดียว) |
+| F3 | Med | cache ไม่ผูก credential — ทดสอบ key ใหม่อาจผ่านจาก cache | แก้ `af27033` — test ไม่ใช้ cache, save ล้าง cache โดยไม่เปลี่ยน coordinator |
+| F4 | High | หัวราคาโชว์ราคาหุ้นตัวก่อนหลังเปลี่ยน symbol (engine ไม่เคย reset) | แก้ `ea201ec` — `begin_symbol` + symbol tag ที่ UI เช็ค |
+| F5 | Low | Debug/probe แสดง app key prefix 8 ตัว + ความยาว secret | แก้ `7cc231d` — prefix 4 ตัว, secret=set/empty, probe ปิดเลขยาว |
+| F6 | Med | open orders/watchlist envelope ผิดรูป → "ไม่มีรายการ" | แก้ `4dcc016` — SCHEMA_MISMATCH |
+| F7 | Med | 403+INVALID_SIGNATURE = Permission; "generate" ทำให้ retry | แก้ `4dcc016` — code ก่อน status, classifier เดียว |
+| F8 | Med | quota ข้าม process (แอป + lab_recorder) | **เลื่อน** — ข้อจำกัดที่รู้แล้ว |
+| F9 | Med | copilot ถือ engine lock ระหว่างเรียก LLM; lock poison → panic | แก้ `89a9807` |
+| F10 | Med | change ที่ไม่มีโชว์ +0.00 | แก้ `ea201ec` — derive จาก pre_close หรือ `--` |
+| F11 | Low | wiremock POST ไม่เช็ค body | แก้ `4dcc016` |
+| N1 | Med | redirect พา `x-access-token` ไป host อื่นได้ (เจอตอน re-audit) | แก้ `2de9447` — `Policy::none()` ทั้ง broker และ LLM client |
+| — | Low | สี hard-code ใน Setup | แก้ `587d02e` — design tokens |
+
+เหลือ (Low, บันทึกไว้): race สั้นระหว่าง `stale()` กับ push option quote ของ scan เก่า · `#2b6cb8` ปุ่มบันทึกไม่มี token ใกล้ · ล้างค่า LLM ผ่าน Setup ไม่ได้ (ช่องว่าง = คงค่าเดิม)
 
 ### สิ่งที่การรันแอปจริงเจอ (unit test ไม่เจอ)
 
@@ -47,7 +67,7 @@ Branch **`feat/webull-api-expansion`** จาก `f2fee8b` (branch เก่า 
 - พฤติกรรมหน้าจอใหม่ช่วง Pre-market / ตลาดปกติในแอป (probe ผ่าน HTTP เท่านั้น) · tag `CLOSED` และ tag ของตลาดปกติ ยังไม่เคยเห็น
 - host ที่รับได้แค่ V2 (ทดสอบด้วย fixture + wiremock) · UAT
 - ปุ่ม "คัดลอก" หุ้นจาก watchlist ของโบรกเกอร์เข้า list ในเครื่อง — ไม่ได้กด เพราะจะแก้ข้อมูลของเจ้าของเครื่อง (ใช้คำสั่งเดียวกับช่องเพิ่มหุ้นเดิม)
-- `npm run verify` ใน package.json ยังรัน cargo จากโฟลเดอร์ `src-tauri` แบบไม่มี `--workspace` — ใช้ 5 คำสั่งในตาราง gate แทน
+- Base URL รับเฉพาะ production — การทดสอบกับ UAT ต้องแก้ allowlist ใน `src-tauri/src/settings.rs` ชั่วคราว
 
 ## Webull Thailand and Terminal refinement · 2026-11-23
 
