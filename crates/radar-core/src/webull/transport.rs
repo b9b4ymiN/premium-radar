@@ -29,6 +29,19 @@ const BASE_URL: &str = "https://api.webull.co.th";
 /// start has to queue).
 const MAX_IN_FLIGHT: usize = 3;
 
+/// The lane a client's request waits in when the origin's in-flight permits
+/// are exhausted. Pacing, family windows and the permit cap apply to BOTH
+/// lanes unchanged — priority only decides who takes the next freed permit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Priority {
+    /// Fair share: first-come-first-served among Background callers.
+    #[default]
+    Background,
+    /// User-visible work (a running scan): served before any WAITING
+    /// Background caller whenever a permit frees up.
+    Interactive,
+}
+
 /// Documented Thailand ceilings per endpoint family, taken at 85% of the
 /// documented maximum (owner's decision: 80–90%), floored: the Data API pool
 /// is 300/60 s → 255/60 s (≈ 4.25 req/s); instrument profiles 60/60 s →
@@ -95,6 +108,10 @@ struct Coordinator {
     /// Requests of this origin currently between their paced start and their
     /// body being read; capped at [`MAX_IN_FLIGHT`].
     in_flight: usize,
+    /// Interactive callers parked on `wake` waiting for a permit. A Background
+    /// caller yields its turn to them as long as this is non-zero, so a
+    /// queued scan request is never stuck behind Home/Market refreshes.
+    interactive_waiting: usize,
 }
 
 /// The origin's coordinator behind its mutex, with the permit-waiting
@@ -112,6 +129,7 @@ impl Coordinator {
             cache: SnapCache::from_constants(),
             sent: HashMap::new(),
             in_flight: 0,
+            interactive_waiting: 0,
         }
     }
 
@@ -255,6 +273,8 @@ pub struct WebullClient {
     cancel: Option<Arc<AtomicBool>>,
     /// Off for probes and tests that must observe the wire, not a cached copy.
     use_cache: bool,
+    /// Which lane this client's requests wait in when permits are exhausted.
+    priority: Priority,
 }
 
 /// A blocking client that never follows redirects. reqwest's default policy
@@ -284,6 +304,7 @@ impl WebullClient {
             scheme: SignatureScheme::default(),
             cancel: None,
             use_cache: true,
+            priority: Priority::default(),
         }
     }
 
@@ -315,6 +336,13 @@ impl WebullClient {
         self
     }
 
+    /// Queue in the [`Priority::Interactive`] lane: while this caller waits
+    /// for an in-flight permit, waiting Background callers hold back.
+    pub fn with_priority(mut self, priority: Priority) -> Self {
+        self.priority = priority;
+        self
+    }
+
     fn is_cancelled(&self) -> bool {
         self.cancel
             .as_ref()
@@ -334,9 +362,13 @@ impl WebullClient {
     ///
     /// Under the coordinator lock: wait for the throttle + family window,
     /// record the start, take one of the [`MAX_IN_FLIGHT`] permits (a 4th
-    /// caller parks on the condvar — no spinning). The lock is released when
-    /// this returns, so the send and body read run with nothing held; the
-    /// permit itself is returned by the guard on every path (RAII).
+    /// caller parks on the condvar — no spinning). A Background caller parks
+    /// while any Interactive caller is already waiting, so a queued
+    /// Interactive request takes the next freed permit first; Background
+    /// resumes the moment no Interactive caller waits (starvation bound).
+    /// The lock is released when this returns, so the send and body read run
+    /// with nothing held; the permit itself is returned by the guard on every
+    /// path (RAII).
     fn acquire_start(&self, path: &str) -> StartPermit<'_> {
         let mut coord = self
             .coordinator
@@ -344,7 +376,8 @@ impl WebullClient {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         loop {
-            if coord.in_flight < MAX_IN_FLIGHT {
+            let yields = self.priority == Priority::Background && coord.interactive_waiting > 0;
+            if !yields && coord.in_flight < MAX_IN_FLIGHT {
                 coord.wait_turn(path);
                 coord.record(path);
                 coord.in_flight += 1;
@@ -352,11 +385,18 @@ impl WebullClient {
                     coordinator: &self.coordinator,
                 };
             }
+            let interactive = self.priority == Priority::Interactive;
+            if interactive {
+                coord.interactive_waiting += 1;
+            }
             coord = self
                 .coordinator
                 .wake
                 .wait(coord)
                 .unwrap_or_else(|e| e.into_inner());
+            if interactive {
+                coord.interactive_waiting -= 1;
+            }
         }
     }
 
@@ -518,7 +558,11 @@ impl Drop for StartPermit<'_> {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         coord.in_flight -= 1;
-        self.coordinator.wake.notify_one();
+        // Wake every waiter, not one: a Background waiter must re-check
+        // whether an Interactive caller is now waiting before taking the
+        // freed permit, and a parked Interactive caller must get its turn
+        // even when a Background waiter is ahead in the condvar queue.
+        self.coordinator.wake.notify_all();
     }
 }
 

@@ -11,13 +11,19 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use chrono::NaiveDate;
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
-use radar_core::webull::rest::{Credentials, FetchError, HttpFetch};
+use radar_core::webull::discovery::{
+    fetch_option_contracts, fetch_option_contracts_par, fetch_symbols_flow_par,
+};
+use radar_core::webull::rest::{
+    Credentials, FetchError, HttpFetch, PATH_OPTION_CONTRACTS, PATH_STOCK_SNAPSHOT,
+};
 use radar_core::webull::sign::SignatureScheme;
-use radar_core::webull::transport::WebullClient;
+use radar_core::webull::transport::{Priority, WebullClient};
 
 fn test_creds() -> Credentials {
     Credentials {
@@ -609,6 +615,355 @@ async fn failed_requests_release_in_flight_permits() {
     assert!(
         elapsed < delay * 3,
         "three calls did not overlap: {elapsed:?}"
+    );
+}
+
+// ---------- priority lane + parallel discovery ----------
+
+/// Arrivals tagged with the caller's marker (the `i` query param), in
+/// arrival order — server-side evidence of WHO started WHEN.
+#[derive(Default)]
+struct TaggedArrivals {
+    seen: std::sync::Mutex<Vec<(String, std::time::Instant)>>,
+}
+
+impl TaggedArrivals {
+    fn record(&self, tag: &str) {
+        self.seen
+            .lock()
+            .unwrap()
+            .push((tag.to_string(), std::time::Instant::now()));
+    }
+
+    fn count(&self) -> usize {
+        self.seen.lock().unwrap().len()
+    }
+
+    fn order(&self) -> Vec<(String, std::time::Instant)> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+/// The coordinator is saturated (3 slow in-flight Background requests, 2
+/// Background waiters parked on the condvar); an Interactive request issued
+/// LAST must still START before both waiters, and every start keeps the full
+/// MIN_INTERVAL spacing. Background-only traffic still drains on its own —
+/// that half is `concurrent_gets_overlap_round_trips_while_pacing_starts`
+/// above (6 Background callers, no Interactive one, all complete).
+#[tokio::test]
+async fn interactive_request_starts_before_waiting_background_callers() {
+    let server = MockServer::start().await;
+    let arrivals = Arc::new(TaggedArrivals::default());
+    let delay = std::time::Duration::from_millis(900);
+    let responder = {
+        let arrivals = arrivals.clone();
+        move |req: &Request| {
+            let tag = req
+                .url
+                .query_pairs()
+                .find(|(k, _)| k == "i")
+                .map(|(_, v)| v.to_string())
+                .unwrap_or_default();
+            arrivals.record(&tag);
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok": true}))
+                .set_delay(delay)
+        }
+    };
+    Mock::given(method("GET"))
+        .and(path("/lane"))
+        .respond_with(responder)
+        .mount(&server)
+        .await;
+    let uri = server.uri();
+
+    // 5 Background callers race in together: 3 take the in-flight permits,
+    // 2 park on the condvar.
+    let barrier = Arc::new(std::sync::Barrier::new(5));
+    let mut handles = Vec::new();
+    for i in 0..5 {
+        let uri = uri.clone();
+        let barrier = barrier.clone();
+        handles.push(std::thread::spawn(move || {
+            barrier.wait();
+            let mut c = WebullClient::new(test_creds()).with_base_url(uri);
+            let (status, _) = c.get("/lane", &[("i".into(), i.to_string())]).unwrap();
+            assert_eq!(status, 200);
+        }));
+    }
+    // wait until all three permits are genuinely on the wire, so the
+    // Interactive request below can only be a WAITER, never in-flight
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while arrivals.count() < 3 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "background callers never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    // issued LAST: after the permits are exhausted and the waiters parked
+    let fg_uri = uri.clone();
+    handles.push(std::thread::spawn(move || {
+        let mut c = WebullClient::new(test_creds())
+            .with_base_url(fg_uri)
+            .with_priority(Priority::Interactive);
+        let (status, _) = c.get("/lane", &[("i".into(), "99".into())]).unwrap();
+        assert_eq!(status, 200);
+    }));
+    for h in handles {
+        h.join().expect("lane thread");
+    }
+
+    let order = arrivals.order();
+    assert_eq!(order.len(), 6, "every caller completed");
+    // arrivals 0..3 are the initial in-flight trio (they started before the
+    // Interactive caller was even spawned); the Interactive caller must be
+    // arrival #4 — ahead of BOTH parked Background waiters
+    let fg = order
+        .iter()
+        .position(|(tag, _)| tag.as_str() == "99")
+        .expect("interactive arrival recorded");
+    assert_eq!(
+        fg, 3,
+        "interactive did not jump the waiting background queue: {order:?}"
+    );
+    // rate guarantees unchanged: starts stay a full MIN_INTERVAL apart even
+    // across the priority handoff (20 ms arrival jitter budget)
+    let min_gap = std::time::Duration::from_secs_f64(radar_core::webull::sign::MIN_INTERVAL_SEC)
+        - std::time::Duration::from_millis(20);
+    let mut starts: Vec<std::time::Instant> = order.iter().map(|(_, at)| *at).collect();
+    starts.sort();
+    for pair in starts.windows(2) {
+        assert!(
+            pair[1].duration_since(pair[0]) >= min_gap,
+            "starts too close: {pair:?}"
+        );
+    }
+}
+
+/// One contracts row, in the shape the discovery scan consumes.
+fn contract_row(id: i64, expiry: &str, symbol: &str) -> serde_json::Value {
+    json!({"instrument_id": id, "expiration_date": expiry, "symbol": symbol})
+}
+
+/// Deterministic per-window contracts responder: window 0 pages twice (its
+/// second page carries a PAST expiry), window 1 repeats instrument_id 102
+/// from window 0. Keyed by `start_date`, so sequential and parallel runs that
+/// issue identical windows get identical responses.
+fn contracts_responder() -> impl Fn(&Request) -> ResponseTemplate + Send + Sync {
+    move |req: &Request| {
+        let params: Vec<(String, String)> = req
+            .url
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        let get = |k: &str| {
+            params
+                .iter()
+                .find(|(kk, _)| kk == k)
+                .map(|(_, v)| v.clone())
+        };
+        let (rows, more) = match (get("start_date").as_deref(), get("pagination_key")) {
+            (Some("2026-11-24"), None) => (
+                vec![contract_row(101, "2026-11-26", "A261126P00095000")],
+                true,
+            ),
+            (Some("2026-11-24"), Some(_)) => (
+                vec![
+                    // past expiry: the client-side filter must drop it
+                    contract_row(100, "2026-11-20", "A261120P00095000"),
+                    contract_row(102, "2026-11-28", "A261128C00105000"),
+                ],
+                false,
+            ),
+            (Some("2026-12-02"), _) => (
+                vec![
+                    // duplicate instrument id: first occurrence wins
+                    contract_row(102, "2026-12-04", "A261204P00090000"),
+                    contract_row(103, "2026-12-07", "A261207C00100000"),
+                ],
+                false,
+            ),
+            (Some("2026-12-09"), _) => (
+                vec![
+                    contract_row(104, "2026-12-11", "A261211P00095000"),
+                    contract_row(105, "2026-12-18", "A261218C00105000"),
+                ],
+                false,
+            ),
+            (Some("2026-12-25"), _) => (
+                vec![contract_row(106, "2027-01-15", "A270115P00095000")],
+                false,
+            ),
+            (Some("2027-01-24"), _) => (
+                vec![contract_row(107, "2027-02-19", "A270219P00095000")],
+                false,
+            ),
+            (Some("2027-03-25"), _) => (
+                vec![contract_row(108, "2027-06-18", "A270618P00095000")],
+                false,
+            ),
+            _ => (
+                vec![contract_row(109, "2028-06-16", "A280616P00095000")],
+                false,
+            ),
+        };
+        let mut body = json!({"data": rows});
+        if more {
+            body["pagination_key"] = json!("w0-page2");
+        }
+        ResponseTemplate::new(200).set_body_json(body)
+    }
+}
+
+fn run_sequential(
+    uri: String,
+    today: NaiveDate,
+    need: Option<usize>,
+) -> (Vec<serde_json::Value>, Vec<String>) {
+    std::thread::spawn(move || {
+        let mut c = WebullClient::new(test_creds())
+            .with_base_url(uri)
+            .without_cache();
+        let mut log = Vec::new();
+        let mut sink = |m: String| log.push(m);
+        let rows = fetch_option_contracts(
+            &mut c,
+            "A",
+            None,
+            None,
+            None,
+            60,
+            need,
+            today,
+            None,
+            Some(&mut sink),
+        )
+        .unwrap();
+        (rows, log)
+    })
+    .join()
+    .expect("sequential thread")
+}
+
+fn run_parallel(
+    uri: String,
+    today: NaiveDate,
+    need: Option<usize>,
+) -> (Vec<serde_json::Value>, Vec<String>) {
+    std::thread::spawn(move || {
+        let make = move || {
+            Some(
+                WebullClient::new(test_creds())
+                    .with_base_url(uri.clone())
+                    .without_cache(),
+            )
+        };
+        let mut log = Vec::new();
+        let mut sink = |m: String| log.push(m);
+        let rows = fetch_option_contracts_par(
+            &make,
+            "A",
+            None,
+            None,
+            None,
+            60,
+            need,
+            today,
+            None,
+            Some(&mut sink),
+        )
+        .unwrap();
+        (rows, log)
+    })
+    .join()
+    .expect("parallel thread")
+}
+
+/// The parallel window scan returns EXACTLY the sequential scan's list (same
+/// order) and the same progress messages. The dataset spans all 7 windows
+/// (pagination, an overlapping instrument id, a past expiry); the early stop
+/// (`need = 6` expiries) lands on window 3 — the middle of the SECOND wave —
+/// so wave merging, mid-wave discarding and the stop rule are all exercised.
+#[tokio::test]
+async fn parallel_discovery_matches_the_sequential_scan() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(PATH_OPTION_CONTRACTS))
+        .respond_with(contracts_responder())
+        .mount(&server)
+        .await;
+    let today = NaiveDate::from_ymd_opt(2026, 11, 24).unwrap();
+    // expiries per window: 2, 1, 2, 1, ... -> cumulative 2, 3, 5, 6: stop at
+    // window 3, i.e. the second window of wave [2, 3, 4]
+    let need = Some(6usize);
+    let (seq_rows, seq_progress) = run_sequential(server.uri(), today, need);
+    let (par_rows, par_progress) = run_parallel(server.uri(), today, need);
+    assert_eq!(
+        par_rows, seq_rows,
+        "parallel merge must equal the sequential list"
+    );
+    assert_eq!(par_progress, seq_progress);
+    // window 0 kept 101+102 (past 100 dropped), window 1 kept only 103 (the
+    // repeated id 102 deduped), then 104, 105 from window 2 and 106 from
+    // window 3 — where the early stop fired; window 4's rows are discarded
+    let ids: Vec<i64> = seq_rows
+        .iter()
+        .map(|r| r["instrument_id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(ids, vec![101, 102, 103, 104, 105, 106]);
+    // the early stop really happened mid-flow (4 progress messages, not 7)
+    assert_eq!(seq_progress.len(), 4);
+    assert!(server.received_requests().await.unwrap().len() >= 4);
+}
+
+/// With a known spot the parallel flow never touches the stock snapshot
+/// path — Phase 0's quote is reused instead of fetching the spot again.
+#[tokio::test]
+async fn known_spot_skips_the_stock_snapshot_call() {
+    let server = MockServer::start().await;
+    // only the contracts endpoint is mocked: a snapshot call would 404 the
+    // whole flow, and the request log below asserts none even happened
+    Mock::given(method("GET"))
+        .and(path(PATH_OPTION_CONTRACTS))
+        .respond_with(|_req: &Request| {
+            ResponseTemplate::new(200).set_body_json(json!({"data": [
+                {"instrument_id": 1, "expiration_date": "2026-12-18", "symbol": "A261218P00095000"},
+                {"instrument_id": 2, "expiration_date": "2026-12-18", "symbol": "A261218C00105000"},
+                {"instrument_id": 3, "expiration_date": "2027-01-15", "symbol": "A270115P00095000"},
+                {"instrument_id": 4, "expiration_date": "2027-01-15", "symbol": "A270115C00105000"},
+            ]}))
+        })
+        .mount(&server)
+        .await;
+    let uri = server.uri();
+    let (symbols, spot) = std::thread::spawn(move || {
+        let make = move || {
+            Some(
+                WebullClient::new(test_creds())
+                    .with_base_url(uri.clone())
+                    .without_cache(),
+            )
+        };
+        fetch_symbols_flow_par(
+            &make,
+            "A",
+            Some(100.0),
+            NaiveDate::from_ymd_opt(2026, 11, 24).unwrap(),
+            None,
+            None,
+        )
+        .unwrap()
+    })
+    .join()
+    .expect("flow thread");
+    assert_eq!(spot, 100.0, "the known spot is the flow's spot");
+    assert!(!symbols.is_empty());
+    let reqs = server.received_requests().await.expect("captured requests");
+    assert!(
+        reqs.iter().all(|r| r.url.path() != PATH_STOCK_SNAPSHOT),
+        "no stock snapshot call may happen with a known spot: {:?}",
+        reqs.iter().map(|r| r.url.path()).collect::<Vec<_>>()
     );
 }
 

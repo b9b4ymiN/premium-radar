@@ -19,8 +19,14 @@ use crate::quant::OptType;
 
 /// Progress sink (`on_progress` in Python).
 pub type Progress<'a> = Option<&'a mut dyn FnMut(String)>;
-/// Cancellation probe (`stale` in Python) — return true to abort.
-pub type Stale<'a> = Option<&'a dyn Fn() -> bool>;
+/// Cancellation probe (`stale` in Python) — return true to abort. `Sync`
+/// because the parallel window scan shares it across scoped threads.
+pub type Stale<'a> = Option<&'a (dyn Fn() -> bool + Sync)>;
+
+/// Windows fetched concurrently per wave by [`fetch_option_contracts_par`].
+/// Matches the transport's in-flight permit cap, so one wave exactly fills
+/// the origin's lanes instead of queueing against itself.
+const PARALLEL_WINDOWS: usize = 3;
 
 fn stale_err() -> FetchError {
     FetchError::Cancelled
@@ -83,6 +89,71 @@ pub fn fetch_window<F: HttpFetch>(
 
 // ---------- contract scan across windows (mirrors fetch_option_contracts) ----------
 
+/// The (a, b) bounds the window scan uses for a `(x, y)` days-out pair, or
+/// `None` when `last_day` excludes the window entirely.
+fn window_bounds(
+    x: i64,
+    y: i64,
+    last_day: Option<NaiveDate>,
+    today: NaiveDate,
+) -> Option<(NaiveDate, NaiveDate)> {
+    let mut a = today + Duration::days(x);
+    let mut b = today + Duration::days(y);
+    if let Some(last) = last_day {
+        if a > last {
+            return None;
+        }
+        if b > last {
+            b = last;
+        }
+    }
+    if a < today {
+        a = today;
+    }
+    Some((a, b))
+}
+
+/// Merge one window's rows into `out`: dedupe by instrument id (first
+/// occurrence wins), drop expiries already past, report progress. Shared by
+/// the sequential and parallel scans so their results stay identical by
+/// construction.
+#[allow(clippy::too_many_arguments)]
+fn merge_window(
+    rows: &[Value],
+    today_s: &str,
+    seen: &mut HashSet<String>,
+    out: &mut Vec<Value>,
+    exps: &mut BTreeSet<String>,
+    a: NaiveDate,
+    b: NaiveDate,
+    on_progress: &mut Progress<'_>,
+) {
+    for c in rows {
+        let iid = value_id(c.get("instrument_id").unwrap_or(&Value::Null));
+        let ed = c
+            .get("expiration_date")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if seen.contains(&iid) || ed.as_str() < today_s {
+            continue;
+        }
+        seen.insert(iid);
+        out.push(c.clone());
+        exps.insert(ed);
+    }
+    if let Some(p) = on_progress.as_mut() {
+        p(format!(
+            "contracts {}..{}: +{} (total {}, {} expiries)",
+            a,
+            b,
+            rows.len(),
+            out.len(),
+            exps.len()
+        ));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn fetch_option_contracts<F: HttpFetch>(
     f: &mut F,
@@ -101,46 +172,105 @@ pub fn fetch_option_contracts<F: HttpFetch>(
     let mut out: Vec<Value> = Vec::new();
     let mut exps: BTreeSet<String> = BTreeSet::new();
     for (x, y) in WINDOWS {
-        let mut a = today + Duration::days(x);
-        let mut b = today + Duration::days(y);
-        if let Some(last) = last_day {
-            if a > last {
-                continue;
-            }
-            if b > last {
-                b = last;
-            }
-        }
-        if a < today {
-            a = today;
-        }
+        let Some((a, b)) = window_bounds(x, y, last_day, today) else {
+            continue;
+        };
         let rows = fetch_window(f, symbol, a, b, gte, lte, max_pages, stale)?;
-        for c in &rows {
-            let iid = value_id(c.get("instrument_id").unwrap_or(&Value::Null));
-            let ed = c
-                .get("expiration_date")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            if seen.contains(&iid) || ed < today_s {
-                continue;
-            }
-            seen.insert(iid);
-            out.push(c.clone());
-            exps.insert(ed);
-        }
-        if let Some(p) = on_progress.as_mut() {
-            p(format!(
-                "contracts {}..{}: +{} (total {}, {} expiries)",
-                a,
-                b,
-                rows.len(),
-                out.len(),
-                exps.len()
-            ));
-        }
+        merge_window(
+            &rows,
+            &today_s,
+            &mut seen,
+            &mut out,
+            &mut exps,
+            a,
+            b,
+            &mut on_progress,
+        );
         if need_expiries.is_some_and(|need| exps.len() >= need) {
             break;
+        }
+    }
+    Ok(out)
+}
+
+/// Concurrent sibling of [`fetch_option_contracts`]: windows are fetched in
+/// waves of [`PARALLEL_WINDOWS`] (pages inside a window stay sequential),
+/// then merged in `WINDOWS` order with the same dedupe, past-expiry filter,
+/// progress messages and early-stop rule — for identical responses the
+/// returned list equals the sequential scan's. When the early-stop point
+/// falls inside a wave the wave's later windows are discarded (their extra
+/// requests were already spent). `stale` is checked before each window starts
+/// and after each wave; `make_client` builds one fresh client per window
+/// worker (`None` aborts the scan) — the transport paces their starts and
+/// caps their overlap exactly like any other callers.
+#[allow(clippy::too_many_arguments)]
+pub fn fetch_option_contracts_par<F: HttpFetch + Send>(
+    make_client: &(dyn Fn() -> Option<F> + Sync),
+    symbol: &str,
+    gte: Option<&str>,
+    lte: Option<&str>,
+    last_day: Option<NaiveDate>,
+    max_pages: usize,
+    need_expiries: Option<usize>,
+    today: NaiveDate,
+    stale: Stale<'_>,
+    mut on_progress: Progress<'_>,
+) -> Result<Vec<Value>, FetchError> {
+    let today_s = today.to_string();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<Value> = Vec::new();
+    let mut exps: BTreeSet<String> = BTreeSet::new();
+    let windows: Vec<(NaiveDate, NaiveDate)> = WINDOWS
+        .iter()
+        .filter_map(|&(x, y)| window_bounds(x, y, last_day, today))
+        .collect();
+    for wave in windows.chunks(PARALLEL_WINDOWS) {
+        if let Some(true) = stale.map(|s| s()) {
+            return Err(stale_err());
+        }
+        let fetched: Vec<Result<Vec<Value>, FetchError>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = wave
+                .iter()
+                .map(|&(a, b)| {
+                    scope.spawn(move || {
+                        // stale before each window starts
+                        if let Some(true) = stale.map(|s| s()) {
+                            return Err(stale_err());
+                        }
+                        let mut f = make_client().ok_or_else(|| {
+                            FetchError::Network("ไม่พบ Webull API keys สำหรับ discovery".into())
+                        })?;
+                        fetch_window(&mut f, symbol, a, b, gte, lte, max_pages, stale)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap_or_else(|_| Err(stale_err())))
+                .collect()
+        });
+        // stale after each wave
+        if let Some(true) = stale.map(|s| s()) {
+            return Err(stale_err());
+        }
+        // Merge the wave in WINDOWS order: the earliest failing window's
+        // error is the one the sequential scan would have surfaced.
+        for (result, &(a, b)) in fetched.into_iter().zip(wave) {
+            let rows = result?;
+            merge_window(
+                &rows,
+                &today_s,
+                &mut seen,
+                &mut out,
+                &mut exps,
+                a,
+                b,
+                &mut on_progress,
+            );
+            if need_expiries.is_some_and(|need| exps.len() >= need) {
+                // Later windows of this wave were fetched but are discarded.
+                return Ok(out);
+            }
         }
     }
     Ok(out)
@@ -368,6 +498,68 @@ pub fn fetch_symbols_flow<F: HttpFetch>(
     if contracts.is_empty() && gte.is_some() {
         contracts = fetch_option_contracts(
             f,
+            root,
+            None,
+            None,
+            None,
+            60,
+            Some(MAX_EXPIRIES + 1),
+            today,
+            stale,
+            Some(&mut progress),
+        )?;
+    }
+    let mut found = BTreeSet::new();
+    collect_occ_symbols(&Value::Array(contracts), &mut found);
+    select_symbols(root, &found, spot, today)
+}
+
+/// [`fetch_symbols_flow`] for the scan path: reuses an already-known spot
+/// (the Phase-0 quote) instead of fetching the stock snapshot again, and
+/// fetches the contract windows in parallel via [`fetch_option_contracts_par`]
+/// (band-less retry included). When `known_spot` is absent or not positive it
+/// falls back to one snapshot call, like the sequential flow.
+pub fn fetch_symbols_flow_par<F: HttpFetch + Send>(
+    make_client: &(dyn Fn() -> Option<F> + Sync),
+    root: &str,
+    known_spot: Option<f64>,
+    today: NaiveDate,
+    stale: Stale<'_>,
+    mut on_progress: Progress<'_>,
+) -> Result<(Vec<String>, f64), FetchError> {
+    let no_client = || FetchError::Network("ไม่พบ Webull API keys สำหรับ discovery".into());
+    let spot = match known_spot.filter(|s| *s > 0.0) {
+        Some(s) => Some(s),
+        None => {
+            let mut f = make_client().ok_or_else(no_client)?;
+            // Python fetch_spot catches everything -> None; degrade, never abort.
+            fetch_spot(&mut f, root).ok().flatten()
+        }
+    };
+    let (gte, lte) = spot
+        .map(strike_band)
+        .map(|(g, l)| (Some(g), Some(l)))
+        .unwrap_or((None, None));
+    let mut progress = |msg: String| {
+        if let Some(p) = on_progress.as_deref_mut() {
+            p(msg);
+        }
+    };
+    let mut contracts = fetch_option_contracts_par(
+        make_client,
+        root,
+        gte.as_deref(),
+        lte.as_deref(),
+        None,
+        60,
+        Some(MAX_EXPIRIES + 1),
+        today,
+        stale,
+        Some(&mut progress),
+    )?;
+    if contracts.is_empty() && gte.is_some() {
+        contracts = fetch_option_contracts_par(
+            make_client,
             root,
             None,
             None,

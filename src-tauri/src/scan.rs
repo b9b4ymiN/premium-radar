@@ -16,11 +16,12 @@ use radar_core::engine::{
     DataSource, Engine, EngineSnapshot, QuoteUpdate, StockUpdate, ws_stock_change,
 };
 use radar_core::webull::contracts::parse_occ;
-use radar_core::webull::discovery::{fetch_symbols_flow, pick_ws_symbols};
+use radar_core::webull::discovery::{fetch_symbols_flow_par, pick_ws_symbols};
 use radar_core::webull::pb;
 use radar_core::webull::quotes::{self, OI_BATCH};
 use radar_core::webull::rest::{MAX_CONTRACTS, PATH_STREAMING_SUBSCRIBE};
 use radar_core::webull::stream::{StreamClient, StreamConfig, StreamEvent};
+use radar_core::webull::transport::Priority;
 
 /// REST poll interval when the real-time feed is silent (Python `_rest_tick`:
 /// 180 s without WS, 60 s with).
@@ -135,7 +136,13 @@ fn run(
         }
     };
 
-    let Some(mut client) = settings.webull_client() else {
+    // Every client the scan builds queues in the Interactive lane: the wire
+    // still sees ONE paced quota, but a scan request never waits behind the
+    // Home/Market background refreshes sharing this origin.
+    let Some(mut client) = settings
+        .webull_client()
+        .map(|c| c.with_priority(Priority::Interactive))
+    else {
         progress(
             &app,
             "error",
@@ -159,9 +166,12 @@ fn run(
 
     // ---- Phase 0: stock quote before discovery ----
     // The header price must not wait for the whole discovery pass; the loop
-    // below still refreshes it on every pass.
+    // below still refreshes it on every pass. Discovery reuses this price as
+    // the spot instead of fetching the snapshot a second time.
+    let mut known_spot = None;
     if let Ok(Some(mut stk)) = quotes::fetch_stock_update(&mut client, &root) {
         stk.symbol = root.clone();
+        known_spot = (stk.price > 0.0).then_some(stk.price);
         lock(&engine).push_stock(stk);
         emit_snapshot(&app, &engine);
         timing("quote-shown", "");
@@ -173,14 +183,22 @@ fn run(
         "discovery",
         format!("ค้นหา option contracts ของ {root} ..."),
     );
+    timing("discovery-start", "");
     let mut on_progress = |msg: String| progress(&app, "discovery", msg);
     // The stale probe lets the windowed scan stop BETWEEN pages: a symbol
     // change retires the old discovery instead of letting it spend the quota.
-    let flow = fetch_symbols_flow(
-        &mut client,
+    // Windows are fetched in parallel waves; one Interactive client each.
+    let make_client = || {
+        settings
+            .webull_client()
+            .map(|c| c.with_priority(Priority::Interactive))
+    };
+    let flow = fetch_symbols_flow_par(
+        &make_client,
         &root,
+        known_spot,
         quotes::ny_today(),
-        Some(&stale as &dyn Fn() -> bool),
+        Some(&stale as &(dyn Fn() -> bool + Sync)),
         Some(&mut on_progress),
     );
     let (symbols, spot) = match flow {
@@ -236,7 +254,11 @@ fn run(
             let seeded = AtomicUsize::new(0);
             let misses: Mutex<Vec<String>> = Mutex::new(Vec::new());
             let mut workers: Vec<_> = (0..SCAN_WORKERS.min(batches.len()))
-                .filter_map(|_| settings.webull_client())
+                .filter_map(|_| {
+                    settings
+                        .webull_client()
+                        .map(|c| c.with_priority(Priority::Interactive))
+                })
                 .collect();
             if workers.is_empty() {
                 empty.extend(symbols.iter().cloned());
@@ -313,7 +335,11 @@ fn run(
             let batches: Vec<&[String]> = empty.chunks(OI_BATCH).collect();
             let next_batch = AtomicUsize::new(0);
             let mut workers: Vec<_> = (0..SCAN_WORKERS.min(batches.len()))
-                .filter_map(|_| settings.webull_client())
+                .filter_map(|_| {
+                    settings
+                        .webull_client()
+                        .map(|c| c.with_priority(Priority::Interactive))
+                })
                 .collect();
             if !workers.is_empty() {
                 std::thread::scope(|scope| {
@@ -606,6 +632,7 @@ async fn do_subscribe(
     tokio::task::spawn_blocking(move || {
         let mut http = settings
             .webull_client()
+            .map(|c| c.with_priority(Priority::Interactive))
             .ok_or_else(|| "ไม่พบ Webull API keys".to_string())?;
         let stock_body = serde_json::json!({
             "session_id": sid, "symbols": [root], "category": "US_STOCK",
