@@ -40,3 +40,4 @@ AGENTS.override.md
 
 # codegraph index
 .codegraph/
+/target-release/
