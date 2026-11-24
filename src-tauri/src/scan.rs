@@ -11,7 +11,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::settings::AppSettings;
-use radar_core::engine::{DataSource, Engine, EngineSnapshot, QuoteUpdate, StockUpdate};
+use radar_core::engine::{
+    DataSource, Engine, EngineSnapshot, QuoteUpdate, StockUpdate, ws_stock_change,
+};
 use radar_core::webull::contracts::parse_occ;
 use radar_core::webull::discovery::{fetch_symbols_flow, pick_ws_symbols};
 use radar_core::webull::pb;
@@ -189,7 +191,8 @@ fn run(
     let ws_alive: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
     let mut first_pass = true;
     'outer: loop {
-        if let Ok(Some(stk)) = quotes::fetch_stock_update(&mut client, &root) {
+        if let Ok(Some(mut stk)) = quotes::fetch_stock_update(&mut client, &root) {
+            stk.symbol = root.clone();
             engine.lock().unwrap().push_stock(stk);
         }
         if stale() {
@@ -419,15 +422,23 @@ async fn ws_loop(
                                         src: DataSource::Ws,
                                     });
                                 } else if sym == root {
+                                    // protobuf absent = 0 — derive honestly, never +0.00
+                                    let (change, change_ratio) = ws_stock_change(
+                                        snap.change,
+                                        snap.change_ratio,
+                                        snap.price,
+                                        snap.pre_close,
+                                    );
                                     engine.lock().unwrap().push_stock(StockUpdate {
+                                        symbol: root.clone(),
                                         price: snap.price,
                                         open: snap.open,
                                         high: snap.high,
                                         low: snap.low,
                                         pre_close: snap.pre_close,
                                         volume: snap.volume,
-                                        change: snap.change,
-                                        change_ratio: snap.change_ratio,
+                                        change,
+                                        change_ratio,
                                         src: DataSource::Ws,
                                     });
                                 }

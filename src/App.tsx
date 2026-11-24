@@ -53,6 +53,7 @@ interface ScanProgress {
 // ---------- mock data (browser preview ONLY — never inside the desktop app) ----------
 
 const MOCK_STOCK: StockUpdate = {
+  symbol: "NVDA",
   price: 182.45, open: 180.02, high: 183.72, low: 179.10,
   pre_close: 180.14, volume: 128_400_000,
   change: 2.31, change_ratio: 0.0128, src: "DEMO",
@@ -327,12 +328,25 @@ export default function App() {
     return priced.length ? Math.min(...priced) : null;
   }, [snap]);
   const budgetCap = parseFloat(budget) || 0;
-  const stock: StockUpdate | null = snap?.stock ?? (hasTauri ? null : MOCK_STOCK);
+  // A stock snapshot from a different underlying (a scan raced by a symbol
+  // switch) is not this symbol's price — show nothing rather than the old one.
+  const sameSymbol = (s: StockUpdate) => s.symbol.toUpperCase() === symbol.toUpperCase();
+  const engineStock = snap?.stock ?? null;
+  const stock: StockUpdate | null =
+    engineStock != null
+      ? sameSymbol(engineStock)
+        ? engineStock
+        : null
+      : hasTauri
+        ? null
+        : sameSymbol(MOCK_STOCK)
+          ? MOCK_STOCK
+          : null;
   const stats: ChainStats | null = snap?.stats ?? (hasTauri ? null : MOCK_STATS);
   const selectedRow = rows.find(r => r.q.symbol === selected) ?? rows[0];
-  const chg = stock?.change ?? 0;
-  const chgPct = (stock?.change_ratio ?? 0) * 100;
-  const chgCls = chg >= 0 ? "pos" : "neg";
+  const chg = stock?.change ?? null;
+  const chgPct = stock?.change_ratio != null ? stock.change_ratio * 100 : null;
+  const chgCls = chg == null || chg === 0 ? "" : chg > 0 ? "pos" : "neg";
 
   // expiry chips: "ทุกวัน" + real expiry dates from the loaded rows
   const [expirySel, setExpirySel] = useState<string>("ทุกวัน");
@@ -964,7 +978,7 @@ export default function App() {
       {/* ============ STATUS BAR ============ */}
       <footer className="statusbar">
         <span><b>{tauriReady ? (isLive ? "LIVE · WEBULL TH FEED" : scanMsg) : "OFFLINE · BROWSER PREVIEW"}</b></span>
-        <span>{symbol} {stock ? fmt(stock.price) : "--"} <b className={stock ? chgCls : ""}>{stock ? `${chg >= 0 ? "+" : ""}${chgPct.toFixed(2)}%` : ""}</b></span>
+        <span>{symbol} {stock ? fmt(stock.price) : "--"} <b className={chgCls}>{chg != null && chgPct != null ? `${chg >= 0 ? "+" : ""}${chgPct.toFixed(2)}%` : "--"}</b></span>
         <span>{isLive ? (wsLive ? "📡 real-time push" : "REST snapshot · รอบถัดไป 3 นาที") : "REST snapshot feed"}</span>
         <span className="statusright">
           <span>Contracts: {rows.length}</span>

@@ -54,17 +54,20 @@ pub struct QuoteUpdate {
     pub src: DataSource,
 }
 
-/// Stock-level quote update.
+/// Stock-level quote update. `change`/`change_ratio` are `None` when the
+/// broker did not send them and they cannot be derived from `pre_close`.
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct StockUpdate {
+    /// Underlying root this quote belongs to (set by the scan).
+    pub symbol: String,
     pub price: f64,
     pub open: f64,
     pub high: f64,
     pub low: f64,
     pub pre_close: f64,
     pub volume: f64,
-    pub change: f64,
-    pub change_ratio: f64,
+    pub change: Option<f64>,
+    pub change_ratio: Option<f64>,
     pub src: DataSource,
 }
 
@@ -111,6 +114,17 @@ impl Engine {
             selected_expiry: None,
             now,
         }
+    }
+
+    /// Reset everything that belongs to the previous underlying before a scan
+    /// of a new one starts: stock quote, option quotes, symbol universe and
+    /// spot. User filters (and the expiry selection) survive.
+    pub fn begin_symbol(&mut self, _root: &str) {
+        self.stock = None;
+        self.latest.clear();
+        self.symbols.clear();
+        self.spot = None;
+        self.enriched_cache = None;
     }
 
     /// Set the symbol universe from discovery (fetch_symbols_flow output).
@@ -301,27 +315,88 @@ pub fn parse_quote_update(v: &Value, src: DataSource) -> Option<QuoteUpdate> {
     })
 }
 
+/// Resolve the honest (change, change_ratio) pair shared by the REST parse
+/// and the WS push: a finite value the broker actually sent wins; otherwise
+/// the change is derived from `pre_close`; otherwise it stays `None` so the
+/// UI renders `--` instead of a made-up zero.
+pub fn resolve_change(
+    price: f64,
+    pre_close: f64,
+    change: Option<f64>,
+    change_ratio: Option<f64>,
+) -> (Option<f64>, Option<f64>) {
+    let change = change.filter(|c| c.is_finite());
+    let ratio = change_ratio.filter(|r| r.is_finite());
+    let change = change.or_else(|| (pre_close > 0.0 && price > 0.0).then_some(price - pre_close));
+    let ratio = match (change, ratio) {
+        (Some(c), None) if pre_close > 0.0 => Some(c / pre_close),
+        (_, r) => r,
+    };
+    (change, ratio)
+}
+
+/// protobuf absent = 0: a zero change counts as "not sent" unless it is the
+/// honest answer (price equals the previous close) or there is nothing to
+/// derive from.
+pub fn ws_stock_change(
+    change: f64,
+    change_ratio: f64,
+    price: f64,
+    pre_close: f64,
+) -> (Option<f64>, Option<f64>) {
+    let sent_change = if change == 0.0 && pre_close > 0.0 && price != pre_close {
+        None
+    } else {
+        Some(change)
+    };
+    let sent_ratio = (change_ratio != 0.0).then_some(change_ratio);
+    resolve_change(price, pre_close, sent_change, sent_ratio)
+}
+
+/// Read an optional finite f64 field — absent/null stays `None`.
+fn opt_f64(v: &Value, key: &str) -> Option<f64> {
+    match v.get(key) {
+        None | Some(Value::Null) => None,
+        Some(x) => {
+            let f = to_f64(x, 0.0);
+            f.is_finite().then_some(f)
+        }
+    }
+}
+
 /// Parse a stock snapshot JSON object into a StockUpdate.
 pub fn parse_stock_update(v: &Value, src: DataSource) -> Option<StockUpdate> {
     let price = to_f64(v.get("price").unwrap_or(&Value::Null), 0.0);
     if price <= 0.0 {
         return None;
     }
+    let pre_close = to_f64(
+        v.get("pre_close")
+            .or_else(|| v.get("preClose"))
+            .or_else(|| v.get("prev_close"))
+            .unwrap_or(&Value::Null),
+        0.0,
+    );
+    let (change, change_ratio) = resolve_change(
+        price,
+        pre_close,
+        opt_f64(v, "change"),
+        opt_f64(v, "change_ratio"),
+    );
     Some(StockUpdate {
+        symbol: v
+            .get("symbol")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .replace(' ', ""),
         price,
         open: to_f64(v.get("open").unwrap_or(&Value::Null), 0.0),
         high: to_f64(v.get("high").unwrap_or(&Value::Null), 0.0),
         low: to_f64(v.get("low").unwrap_or(&Value::Null), 0.0),
-        pre_close: to_f64(
-            v.get("pre_close")
-                .or_else(|| v.get("preClose"))
-                .or_else(|| v.get("prev_close"))
-                .unwrap_or(&Value::Null),
-            0.0,
-        ),
+        pre_close,
         volume: to_f64(v.get("volume").unwrap_or(&Value::Null), 0.0),
-        change: to_f64(v.get("change").unwrap_or(&Value::Null), 0.0),
-        change_ratio: to_f64(v.get("change_ratio").unwrap_or(&Value::Null), 0.0),
+        change,
+        change_ratio,
         src,
     })
 }
@@ -458,6 +533,76 @@ mod tests {
         assert!(!snap.candidates.is_empty());
         // all 3 should be enriched
         assert_eq!(snap.rows.len(), 3);
+    }
+
+    #[test]
+    fn begin_symbol_clears_previous_underlying_but_keeps_filters() {
+        let mut e = Engine::new(now());
+        let f = Filters {
+            budget: 100.0, // collateral cap far below any real contract
+            ..Filters::default()
+        };
+        e.set_filters(f);
+        e.set_symbols(vec!["NVDA261218P00175000".into()], Some(182.45));
+        e.push_stock(StockUpdate {
+            symbol: "NVDA".into(),
+            price: 182.45,
+            ..Default::default()
+        });
+        e.push_quote(q("NVDA261218P00175000", 4.20, 4.15, 4.25, DataSource::Ws));
+        assert!(e.snapshot().stock.is_some());
+        assert_eq!(e.quote_count(), 1);
+
+        e.begin_symbol("AAPL");
+        let snap = e.snapshot();
+        assert!(snap.stock.is_none());
+        assert!(snap.rows.is_empty());
+        assert_eq!(e.quote_count(), 0);
+
+        // filters survived: a fresh AAPL row is enriched but screened out by budget
+        e.set_symbols(vec!["AAPL261218C00200000".into()], Some(199.0));
+        e.push_quote(q("AAPL261218C00200000", 2.20, 2.15, 2.25, DataSource::Ws));
+        let snap = e.snapshot();
+        assert_eq!(snap.rows.len(), 1);
+        assert!(snap.candidates.is_empty());
+    }
+
+    #[test]
+    fn parse_stock_update_derives_change_from_pre_close() {
+        // no change fields + pre_close → derived honestly
+        let v = serde_json::json!({"price": 101.0, "pre_close": 100.0});
+        let s = parse_stock_update(&v, DataSource::Rest).unwrap();
+        assert!((s.change.unwrap() - 1.0).abs() < 1e-9);
+        assert!((s.change_ratio.unwrap() - 0.01).abs() < 1e-9);
+        // no pre_close → unknown, never a made-up zero
+        let v = serde_json::json!({"price": 101.0});
+        let s = parse_stock_update(&v, DataSource::Rest).unwrap();
+        assert!(s.change.is_none());
+        assert!(s.change_ratio.is_none());
+        // explicit change wins over derivation
+        let v = serde_json::json!({"price": 101.0, "pre_close": 100.0, "change": -2.5});
+        let s = parse_stock_update(&v, DataSource::Rest).unwrap();
+        assert_eq!(s.change, Some(-2.5));
+    }
+
+    #[test]
+    fn ws_zero_change_is_absent_when_price_moved() {
+        let (chg, ratio) = ws_stock_change(0.0, 0.0, 101.0, 100.0);
+        assert!((chg.unwrap() - 1.0).abs() < 1e-9);
+        assert!((ratio.unwrap() - 0.01).abs() < 1e-9);
+        // price == pre_close → the zero is the honest answer
+        let (chg, ratio) = ws_stock_change(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(chg, Some(0.0));
+        assert_eq!(ratio, Some(0.0));
+    }
+
+    #[test]
+    fn stock_update_json_contains_symbol_and_null_change() {
+        let s = parse_stock_update(&serde_json::json!({"price": 101.0}), DataSource::Rest).unwrap();
+        let j = serde_json::to_value(&s).unwrap();
+        assert!(j.get("symbol").is_some());
+        assert!(j.get("change").is_some_and(Value::is_null));
+        assert!(j.get("change_ratio").is_some_and(Value::is_null));
     }
 
     #[test]

@@ -52,14 +52,17 @@ export interface EnrichedRow {
 }
 
 export interface StockUpdate {
+  /** Underlying root this quote belongs to; a snapshot from another symbol must not be shown. */
+  symbol: string;
   price: number;
   open: number;
   high: number;
   low: number;
   pre_close: number;
   volume: number;
-  change: number;
-  change_ratio: number;
+  /** null = the broker did not send it and it could not be derived. */
+  change: number | null;
+  change_ratio: number | null;
   src: string;
 }
 

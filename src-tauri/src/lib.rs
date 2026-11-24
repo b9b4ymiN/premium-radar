@@ -84,6 +84,11 @@ fn start_scan(
         return Err("ไม่พบ Webull API keys — เปิดหน้า Setup เพื่อตั้งค่าก่อน".into());
     }
 
+    // Drop everything that belongs to the previously scanned underlying so a
+    // new scan never shows the old symbol's stock/option prices; the lock is
+    // released before the scan thread (and any network call) starts.
+    state.engine.lock().unwrap().begin_symbol(&symbol);
+
     state
         .scan
         .spawn(app, state.engine.clone(), settings, symbol.clone());

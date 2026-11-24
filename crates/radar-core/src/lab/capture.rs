@@ -306,14 +306,15 @@ mod tests {
         assert!(saturday_received > anchor.event_time);
 
         let update = StockUpdate {
+            symbol: "NVDA".into(),
             price: 176.0,
             open: 0.0,
             high: 0.0,
             low: 0.0,
             pre_close: 174.5,
             volume: 0.0,
-            change: 0.0,
-            change_ratio: 0.0,
+            change: Some(0.0),
+            change_ratio: Some(0.0),
             src: DataSource::Rest,
         };
         let o = stock_observation("NVDA", &update, &anchor, saturday_received, "u1");
@@ -325,14 +326,15 @@ mod tests {
     #[test]
     fn stock_observation_keeps_pre_close() {
         let update = StockUpdate {
+            symbol: "NVDA".into(),
             price: 176.0,
             open: 175.0,
             high: 177.0,
             low: 174.0,
             pre_close: 174.5,
             volume: 1_000_000.0,
-            change: 1.5,
-            change_ratio: 0.0086,
+            change: Some(1.5),
+            change_ratio: Some(0.0086),
             src: DataSource::Rest,
         };
         let o = stock_observation(

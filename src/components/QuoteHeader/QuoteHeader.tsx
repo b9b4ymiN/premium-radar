@@ -90,6 +90,9 @@ export default function QuoteHeader({
   const low = engine ? known(engine.low) : quote?.low ?? null;
   const preClose = engine ? known(engine.pre_close) : quote?.pre_close ?? null;
   const changeClass = signOf(change);
+  // a change the broker never sent shows as `--` (signOf(null) is neutral)
+  const changeText = change == null ? "--" : `${change >= 0 ? "+" : "-"}${fmt(Math.abs(change))}`;
+  const ratioText = ratio == null ? "--" : signedPct(ratio);
   const profile = overview.overview?.profile ?? null;
   const facts = overview.overview;
   const subtitle = profile
@@ -151,12 +154,10 @@ export default function QuoteHeader({
         <div className="qh-price">
           <div className={`bigprice num ${changeClass}`}>
             {price == null ? "--" : fmt(price)}
-            {price != null && ratio != null && <small className={changeClass}>{signedPct(ratio)}</small>}
+            {price != null && <small className={changeClass}>{ratioText}</small>}
           </div>
           <div className="quotefoot num">
-            {price == null || change == null || ratio == null
-              ? "รอราคาจาก feed ..."
-              : `${change >= 0 ? "+" : "-"}${fmt(Math.abs(change))} (${signedPct(ratio)}) · USD`}
+            {price == null ? "รอราคาจาก feed ..." : `${changeText} (${ratioText}) · USD`}
           </div>
           <div
             className={`qh-session num ${extended ? "ext" : ""}`}
