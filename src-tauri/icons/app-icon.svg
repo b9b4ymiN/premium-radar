@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- App icon source for `tauri icon`: the THPForge mark on the logo's navy, so
+       the white strokes stay visible on light taskbars and docks. -->
+  <rect width="1024" height="1024" rx="200" fill="#0A1426"/>
+  <svg x="132" y="132" width="760" height="760" viewBox="11 10 236 236">
+    <path fill="#FFFFFF" fill-rule="evenodd" d="M18 96L56 58H98L116 76L92 100H80V200H76L52 176V100H18Z"/>
+    <path fill="#FFFFFF" fill-rule="evenodd" d="M88 116H100L112 128V140H136V96H160V200H136V164H112V200H88Z"/>
+    <path fill="#FFFFFF" fill-rule="evenodd" d="M168 144L192 168V188L180 200H168Z"/>
+    <path fill="#E8B84A" fill-rule="evenodd" d="M136 88L168 56H208L240 88V112L192 160L168 136L186 118C196 108 208 110 214 116C214 98 202 88 184 88Z"/>
+    <path fill="#0A1426" fill-rule="evenodd" d="M180 96C188 96 196 100 200 106C190 108 184 104 180 96Z"/>
+  </svg>
+</svg>

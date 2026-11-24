@@ -52,9 +52,9 @@ button:focus-visible, input:focus-visible {
   padding: 0 16px; height: 100%; border-right: 1px solid var(--border);
 }
 .brand-icon {
-  height: 25px; width: 25px; border: 1px solid #2e8cf1; border-radius: 5px;
-  display: flex; align-items: center; justify-content: center;
-  color: #fff; font-size: 11px; font-weight: 800; letter-spacing: -1px; background: #0e3154;
+  height: 28px; width: 28px; flex: none; display: block;
+  padding: 2px; border-radius: 6px; background: #0a1426; /* the logo's own navy */
+  border: 1px solid var(--border-strong);
 }
 .brand-text { font-size: 12.2px; letter-spacing: 0.075em; font-weight: 750; }
 .brand-sub { font-size: 9px; color: var(--dim); margin-top: 2px; letter-spacing: 0.03em; }

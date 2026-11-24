@@ -15,6 +15,7 @@ import { useStockOverview } from "./lib/useStockOverview";
 import { fmt, thaiDate } from "./lib/format";
 import type { EnrichedRow, StockUpdate, ChainStats, EngineSnapshot } from "./types/screener";
 import "./App.css";
+import brandMark from "./assets/thpforge-mark.svg";
 
 /** The pages of the icon rail — the app's single menu. */
 type MainTab = "home" | "market" | "monitor" | "lab" | "portfolio" | "watchlist";
@@ -477,7 +478,7 @@ export default function App() {
       {/* ============ TOP BAR ============ */}
       <header className="appbar">
         <div className="brand">
-          <div className="brand-icon">PR</div>
+          <img className="brand-icon" src={brandMark} alt="THPForge" />
           <div>
             <div className="brand-text">PREMIUM RADAR</div>
             <div className="brand-sub">OPTIONS OPERATION SYSTEM</div>
