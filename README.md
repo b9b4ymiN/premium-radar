@@ -19,23 +19,30 @@ git clone <repo>
 cd option2
 npm install
 
-# Dev mode (mock data, no keys needed)
+# Browser preview (mock data, no keys, no desktop shell)
 npm run dev
 
-# Run tests
-export PATH="/c/Users/bfipa/winlibs_tmp/mingw64/bin:$PATH"  # MinGW portable
-cargo test -p radar-core --features "client stream"
+# The real app in dev mode (keys entered once in the Setup screen)
+npm run tauri dev
 
-# Build frontend
-npm run build
+# Gates — run from the repo root
+npm run check                                                    # TypeScript + ESLint
+npm run build                                                    # Vite build
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace                                           # unit, golden, wiremock
 
-# Build Tauri app (requires MSVC + Rust)
+# Build the Tauri app (requires MSVC + Rust)
 cargo tauri build
 ```
 
+ตารางว่า API ไหนของ Webull ไทยใช้ได้จริงด้วย key นี้: [`docs/WEBULL_TH_CAPABILITY_MATRIX.md`](docs/WEBULL_TH_CAPABILITY_MATRIX.md) · คู่มือใช้งานภาษาไทย: [`USAGE-TH.md`](USAGE-TH.md)
+
 ## API Keys
 
-ดู `.env.example` สำหรับตัวอย่างการตั้งค่า
+คีย์กรอกในหน้า **Setup** ของแอปและเก็บใน OS keyring ของเครื่อง (service `premium-radar`) — ไม่เก็บเป็นข้อความธรรมดา และถ้า keyring ใช้ไม่ได้แอปจะแจ้ง error แทนที่จะ fallback
+
+ตัวแปร environment ยังใช้เป็นทางเลือกได้ (ดู `.env.example`)
 
 | Variable | จำเป็น | คำอธิบาย |
 |----------|--------|----------|
@@ -55,43 +62,50 @@ crates/radar-core/     — Rust domain logic (framework-free)
   ├── screener.rs      — Enrichment / Grading / Filters
   ├── engine.rs        — Coalescing state store
   ├── copilot.rs       — LLM function calling
+  ├── lab/             — Option Lab: payoff, probability, storage, replay, calibration
   └── webull/
       ├── contracts.rs — OCC symbol parser
-      ├── sign.rs      — HMAC-SHA1 request signing
-      ├── rest.rs      — REST policy (throttle/cache)
+      ├── sign.rs      — Request signing (V3 HMAC-SHA256 by default, V2 selectable)
+      ├── transport.rs — HTTP client + one shared request coordinator
+      ├── rest.rs      — Fetcher trait, error classification
+      ├── auth.rs      — Access token create / check
+      ├── stocks.rs    — Stock snapshots, bars, instrument profiles
+      ├── options.rs   — Option quotes (greeks) and trades
+      ├── fundamentals.rs — Company profile, earnings window, dividends, analysts
+      ├── screeners.rs — Gainers / losers / most active / 52-week / dividend / sectors
+      ├── watchlists.rs — Broker watchlists, read only
+      ├── trading.rs   — Accounts, balances, positions, open orders (read only)
       ├── discovery.rs — Contract discovery pipeline
-      ├── transport.rs — Real HTTP client (reqwest)
       ├── stream.rs    — MQTT streaming (rumqttc)
       └── pb/          — Protobuf decode (prost)
 
 src/                   — React frontend (TypeScript)
-src-tauri/             — Tauri bridge (commands + settings)
+src-tauri/             — Tauri bridge (commands + settings + scan worker)
 design/                — Design baseline (DESIGN.md + prototype)
+docs/                  — Webull Thailand capability matrix
 tests/fixtures/        — Golden test fixtures (deterministic)
 ```
 
 ## Design System
 
-อ้างอิงจาก `design/DESIGN.md` — V2 Modern Visual Refinement
+อ้างอิงจาก `design/DESIGN.md` + `design/REFINEMENT-V2-1.md`
 
-- โทนสี: Charcoal dark (#0b0d11), flat 1px borders
+- โทนสี: Charcoal dark (#0b0d11), 1px borders
 - ฟอนต์: Inter + IBM Plex Sans Thai, tabular numerals
-- โครง: 4-column shell (icon rail / sidebar / main / right panel)
-- ไม่ใช้ gloss, gradients, heavy shadows
+- โครง: 4-column shell (icon rail / sidebar / main / right panel) — icon rail เป็นเมนูเดียวของแอป
+- Gradient เฉพาะ chrome (แถบหัวแอป หัว panel แถบราคา หัวตาราง) แบบ 2 สีเพื่อนกัน — พื้นที่ข้อมูลเป็นสีเรียบ ไม่มี gloss หรือเงาหนัก
+- เขียว/แดง = บวก/ลบ (ค่าการเงิน และสัดส่วนความเห็นซื้อ/ขาย) · ฟ้า = การเลือกและการเน้น · เหลือง = คำเตือน
 
 ## Testing
 
 ```bash
-# Unit + golden tests (66 tests)
-cargo test -p radar-core --features "client stream"
+# Rust: unit, golden (quant / screener / signing) and wiremock tests — 211 passed, 1 ignored
+cargo test --workspace
 
 # Frontend
 npm run check   # TypeScript + ESLint
 npm run build   # Vite build
 
-# Wiremock integration (requires `client` feature)
-cargo test -p radar-core --features client --test transport_wiremock
-
-# Live smoke (requires real API keys)
-cargo test -p radar-core --features client --test transport_wiremock -- --ignored
+# Read-only probe of the Thailand host with the saved key (needs the app set up once)
+cd src-tauri && cargo run --example probe_capabilities
 ```

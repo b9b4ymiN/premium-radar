@@ -1,6 +1,57 @@
 # PROGRESS — loop ledger (memory นอก context)
 
+## Webull API expansion & professional UI · 2026-11-23–24
+
+Branch **`feat/webull-api-expansion`** จาก `f2fee8b` (branch เก่า `feat/premium-radar-webull-terminal` เก็บไว้ตามเดิม) · ยังไม่ merge · ไม่ push · ตาม brief "PREMIUM RADAR — Webull API Expansion & Professional UI/UX"
+
+| Phase | สถานะ | Evidence |
+|---|---|---|
+| 0 Baseline audit | DONE | gate ตอนเริ่ม: `npm run check` พัง (eslint lint โฟลเดอร์ `target/`) + clippy เข้มงวดไม่ผ่าน (lab/, mqtt_probe) → `670f8e8` |
+| 1 API research + live probes | DONE | เอกสาร 92 หน้า → 61 operations · **probe จริง 84 call บน `api.webull.co.th` (0×429)** ด้วย `src-tauri/examples/probe_capabilities.rs` (`a355265`, `17be1a3`) · ผลอ่านที่ `docs/WEBULL_TH_CAPABILITY_MATRIX.md` (`4f1a85b`) · รายงาน sanitize อยู่ใน `tmp/` (git-ignored) |
+| 2 Reliability & security | DONE | V3 signing (HMAC-SHA256) เป็นค่าเริ่มต้น + ไม่ส่ง `x-app-secret` + coordinator ร่วมทุก request (`52fef8c`) · เลือก scheme ตาม settings + ตรวจอัตโนมัติใน Setup (`b612c6d`) · error classification ตาม error_code ของโบรกเกอร์ (`33b84ee`) |
+| 3 Integrations (backend) | DONE | typed clients: stocks/options/fundamentals/screeners/watchlists/trading (`33b84ee`, `590f331`) · คำสั่ง Tauri เพิ่ม 9 ตัว (รวม 31 ตัว) · 17 คำสั่งเป็น async ที่ทำงานหลังฉาก + cache ตามอายุข้อมูล (`0e46e8b`) |
+| 3 Integrations (frontend) | DONE | `88031bb` · `0de8120` · `4007755` · `41d5d1a` — รายละเอียดที่ `design/REFINEMENT-V2-1.md` (V2.2) |
+| 4 UI/UX | DONE | ก่อน/หลัง ที่ 1920 / 1680 / 1440 / 1290 (browser preview 44 รูป + รูปจากแอปจริง) ใน `tmp/shots/` · ตัวอักษรตาราง 10.8 → 11.4 px · shell/navigation ไม่เปลี่ยน |
+| 5 Validation | IN_PROGRESS | gate ทั้งหมดเขียว (ตารางล่าง) + แอปจริงต่อ host จริงผ่าน · **รอผล independent validator** |
+
+### Gate ล่าสุด (รันจริงที่ `4f1a85b`)
+
+| คำสั่ง | ผล |
+|---|---|
+| `npm run check` | ผ่าน — 0 errors · 0 warnings |
+| `npm run build` | ผ่าน |
+| `cargo fmt --all --check` | ผ่าน |
+| `cargo clippy --workspace --all-targets -- -D warnings` | ผ่าน |
+| `cargo test --workspace` | **211 passed · 0 failed · 1 ignored** |
+
+### สิ่งที่การรันแอปจริงเจอ (unit test ไม่เจอ)
+
+| ที่พบ | แก้ที่ |
+|---|---|
+| **แอป crash ตอนเปิด** — สร้าง `reqwest::blocking` client บน async thread ของ command (debug build panics) แล้ว lock settings ติด poison ทำให้คำสั่งถัดไปตายหมด | `9bb03da` — สร้าง/ใช้/ทิ้ง client ใน blocking closure อย่างเดียว + อ่าน settings ผ่าน poison ได้ + regression test |
+| keyring test ล้มเอง 4/20 ครั้งเมื่อรันขนาน (Windows Credential Manager) | `9bb03da` — test ที่แตะ keyring รันทีละตัว → 0/25 |
+| broker ใส่ session หลังปิดตลาดเป็น `ATH` (ไม่มีในเอกสาร) และ `OVN` ช่วง overnight → หัวราคาโชว์รหัสดิบและไม่โชว์ราคานอกเวลา | `4007755`, `41d5d1a` |
+| ตารางสแกนว่างเพราะ budget ต่ำกว่า collateral แต่ข้อความบอกแค่ "เชื่อมต่อสดแล้ว" | `4007755` — บอกตัวเลขจริงทั้งสองค่า |
+| `get_status` บอก `scanning: false` ขณะ scan ตัวใหม่ยังทำงาน | `f3bba0c` |
+| รายการหุ้นใน watchlist ของโบรกเกอร์อยู่ใน key `instruments` ไม่ใช่ `data` → parser แรกอ่านได้ 0 แถวจากที่มี 5 | `590f331` — reader เข้มงวด + `FetchError::Unexpected` (SCHEMA_MISMATCH) |
+
+### หลักฐานจากแอปจริง (2026-11-24, US after-hours + overnight)
+
+- เรียกคำสั่งแบบอ่านอย่างเดียวจากในแอปจริง 25 ครั้ง ผ่านทุกครั้ง · `get_stock_overview` (5 call ต่อเนื่อง) ใช้ 7.3 วิ ระหว่างนั้น UI วาดได้ 437 เฟรม (~60 fps) → UI thread ไม่ถูกบล็อก
+- Monitor: 93 candidates, เรียงคอลัมน์ขึ้น/ลงได้, Webull quote + recent trades 12 รายการ, company sheet · Market: 200 แถว × 4 ลิสต์ + sectors 20 · Home movers 15 แถว · Portfolio (label/เลขบัญชี/ยอดเงินถูกปิดในภาพ) · Watchlist ของโบรกเกอร์ 7 ลิสต์ (ลิสต์ที่มีหุ้น = 5, หุ้น HKG แสดงว่าอยู่นอกขอบเขต)
+- log ของแอปหลังแก้ `9bb03da`: 0 panics ตลอดการรัน
+
+### ขอบเขตที่ตรวจไม่ได้ / เหลือไว้
+
+- schema รายการของ positions / open orders / historical orders — บัญชีไม่มีรายการตอนตรวจ (HTTP 200, 0 แถว)
+- พฤติกรรมหน้าจอใหม่ช่วง Pre-market / ตลาดปกติในแอป (probe ผ่าน HTTP เท่านั้น) · tag `CLOSED` และ tag ของตลาดปกติ ยังไม่เคยเห็น
+- host ที่รับได้แค่ V2 (ทดสอบด้วย fixture + wiremock) · UAT
+- ปุ่ม "คัดลอก" หุ้นจาก watchlist ของโบรกเกอร์เข้า list ในเครื่อง — ไม่ได้กด เพราะจะแก้ข้อมูลของเจ้าของเครื่อง (ใช้คำสั่งเดียวกับช่องเพิ่มหุ้นเดิม)
+- `npm run verify` ใน package.json ยังรัน cargo จากโฟลเดอร์ `src-tauri` แบบไม่มี `--workspace` — ใช้ 5 คำสั่งในตาราง gate แทน
+
 ## Webull Thailand and Terminal refinement · 2026-11-23
+
+> ส่วนนี้เป็นบันทึกของ branch `feat/premium-radar-webull-terminal` (งานก่อนหน้า) — งานที่บอกว่า "remain open" ด้านล่าง ปิดแล้วใน section ข้างบน
 
 - Feature branch `feat/premium-radar-webull-terminal` from `cde32a8`. CSS review `633b35e` and keyboard/preview fixes `36aeab4`.
 - Security `da792fd` removes the raw secret header, retains v2 signing, and restores prior keyring entries on a failed settings save where the OS permits rollback. `cargo test --workspace` passed 160 tests with 1 ignored. `cargo fmt --all --check` and `git diff --check` passed.

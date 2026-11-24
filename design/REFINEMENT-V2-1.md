@@ -55,3 +55,58 @@ screener table and the other tables that share the `screener-table` selector
 - Only merge after independent review and screenshot acceptance
 
 This is a narrow visual amendment to the frozen structure of design/DESIGN.md.
+
+---
+
+# V2.2 — Broker data on the existing surfaces
+
+Date: 2026-11-24. Status: applied on branch `feat/webull-api-expansion`
+(commits `88031bb`, `0de8120`, `4007755`, `41d5d1a`), validated against the
+live Thailand host.
+
+## What stayed fixed
+The four-column shell, the icon rail as the single menu, the scanner workflow
+(left panel → scanner table → Contract Analysis → Radar Assistant), the
+routing and the Rust/Tauri command contracts. No new navigation model, no tab
+row, no new top-level page outside the rail.
+
+## Where each new piece of data went
+
+| Data | Surface | Why there |
+|---|---|---|
+| Session (regular / pre-market / after-hours / overnight) and the extended-hours trade | Quote header, under the big price | It qualifies the price the header already shows. The big price and its change stay the scanner's regular-session numbers. |
+| Earnings window, ex-dividend date, 52-week range, market cap | Quote header, second stat row | The four facts an option seller checks first; they fit beside Open/High/Low/Prev close. The header stays about 75 px tall (two rows instead of one). |
+| Company profile, analyst target and rating mix, dividend calendar | Company sheet that unfolds under the header (`ⓘ`) | Needed more room than a header allows, but not a page of its own: it is context for the symbol being scanned, so it opens in place and closes again. |
+| Webull's own quote for the selected contract (sizes, open interest, greeks, timestamps) and its last trades | Contract Analysis, above the payoff | It belongs next to the model values it is compared with. Display only. |
+| Earnings and ex-dividend risk notes | Contract Analysis, above the Webull quote | A warning about this contract belongs to this contract. |
+| Screener ranks and sectors | Market page — the rail slot that was disabled | The prototype already had the slot (`◔`) with the page missing; this fills it. Rows open the stock in the scanner. |
+| Movers | Home, a three-column strip | A summary belongs on the landing page; the full lists live on Market. |
+| Open orders, balance failure | Portfolio | Same page, one more read-only table; a failed balance call no longer hides positions. |
+| Broker watchlists | Watchlists page, below the local list | The page is about lists. The broker's lists are read only; the one action copies a symbol into the local list. |
+| Sortable scanner columns | Scanner table header | Ordering only; no value is recomputed. |
+
+## Typography
+- Scanner table body 10.8 px → 11.4 px, header 9.5 px → 10 px; chat bubbles
+  10.7 → 11.2 px; small print under tables 8.5 px → 10 px.
+- Checked at 1920×1080, 1680×950, 1440×900 and 1290×760 (the window's minimum
+  is 1290×760). The header's subtitle truncates with an ellipsis at 1290.
+
+## States
+- Loading, empty and error states exist for every new surface. An empty
+  scanner explains itself once the chain is loaded: when the cheapest contract
+  costs more than the budget it says so with both numbers.
+- Without the desktop shell (browser preview) the new surfaces say that the
+  data is shown in the app; they never show an endless "loading".
+- A value the broker did not send is shown as `--`, never as 0.
+
+## Colour
+Unchanged rules: green and red for positive and negative values (including the
+analyst buy/sell mix), blue for selection and focus, amber for warnings.
+The only new coloured elements are the session dot (green regular, amber
+extended, grey closed/overnight, red unknown) and the analyst rating bar.
+
+## Screenshots
+`tmp/shots/` (git-ignored): `before-*` and `after-*` are the base commit
+`f2fee8b` and this branch in browser preview at the four sizes; `live-*` are
+the real app against the live host. The portfolio capture has the account
+label, the account number and the amounts hidden.
