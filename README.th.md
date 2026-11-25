@@ -31,7 +31,9 @@
 | **กราฟแบบ TradingView** | timeframe ตั้งแต่ 5 นาทีถึงรายเดือน, ซูมด้วยล้อเมาส์และลากเลื่อน, MA(5/20), volume และเครื่องมือวาด (trend line, ray, channel, Fibonacci, ข้อความ) ที่จำเส้นแยกตามหุ้น |
 | **ตลาดและ Watchlist** | หุ้นขึ้นแรง, ลงแรง, ปริมาณหุ้นสูงสุด (เรียงใหม่ตามมูลค่าซื้อขายหรือมูลค่าตลาดได้), จุดสูง/ต่ำสุด 52 สัปดาห์, กลุ่มอุตสาหกรรม, watchlist ในเครื่องและของโบรกเกอร์ |
 | **Option Lab** | ทดลองกลยุทธ์: กราฟกำไร/ขาดทุน, ความน่าจะเป็น, ตารางสถานการณ์ และบันทึกความแม่นยำของการคาดการณ์ |
+| **Recorder server (ไม่บังคับ)** | บริการบน Docker ที่เก็บข้อมูล Lab ตามตารางเวลาให้เอง แม้ปิดแอปอยู่ แอปดึงข้อมูลผ่าน API ที่มี token หรือจะเก็บในเครื่องแบบเดิมก็ได้ |
 | **Radar Assistant** | ผู้ช่วย AI แบบปุ่มลอย ใช้ได้กับ Z.ai GLM, OpenAI หรือ Ollama ในเครื่อง และตอบจากข้อมูลสดของตัวคัดกรองเท่านั้น |
+| **เวลาไทย** | ทุกเวลาบนหน้าจอแสดงเป็นเวลาไทยก่อน (มีเวลา ET กำกับ) และมีบรรทัดบอกสถานะตลาด เช่น "ตลาดเปิดอีก 3 ชม. (21:30 น.)" |
 | **อัปเดตอัตโนมัติ** | โปรแกรมเช็คเวอร์ชันใหม่ทุกครั้งที่เปิด และอัปเดตได้ในคลิกเดียว |
 
 ## ดาวน์โหลดและติดตั้ง
@@ -51,14 +53,32 @@
 2. ใส่ **Webull App Key และ App Secret ของคุณเอง** (ขอได้จาก developer portal ของ Webull Thailand OpenAPI)
 3. ถ้าบัญชีต้องใช้ Access Token ให้กด **สร้าง token** แล้วยืนยัน SMS ในแอป Webull ภายใน 5 นาที จากนั้นกด **ทดสอบการเชื่อมต่อ**
 4. (ไม่บังคับ) ใส่ AI provider สำหรับ Radar Assistant
-5. กด **บันทึกและเริ่มใช้งาน** อ่านวิธีใช้งานแบบละเอียดได้ที่ [`USAGE-TH.md`](USAGE-TH.md)
+5. (ไม่บังคับ) ในส่วน **แหล่งข้อมูล Lab** ถ้ามี Recorder server ให้เลือก **Recorder server** แล้วใส่ที่อยู่ server กับ API token จากนั้นกด **ทดสอบการเชื่อมต่อ** ถ้าไม่ได้รัน server ใช้ค่าเริ่มต้น (ในเครื่องนี้) ได้เลย
+6. กด **บันทึกและเริ่มใช้งาน** อ่านวิธีใช้งานแบบละเอียดได้ที่ [`USAGE-TH.md`](USAGE-TH.md)
 
 ## ความเป็นส่วนตัวและความปลอดภัย
 
-- **อ่านอย่างเดียว** โปรแกรมดึงข้อมูลตลาดและบัญชีมาแสดงเท่านั้น ไม่มีคำสั่งซื้อขาย โอนเงิน หรือแก้ไขบัญชีใดๆ
+- **อ่านอย่างเดียว** โปรแกรม (และ recorder server) ดึงข้อมูลตลาดและบัญชีมาแสดงเท่านั้น ไม่มีคำสั่งซื้อขาย โอนเงิน หรือแก้ไขบัญชีใดๆ
 - **key อยู่ในเครื่องคุณเท่านั้น** เก็บใน Windows Credential Manager (ชื่อ service `premium-radar`) ไม่ถูกส่งไปที่หน้าจอโปรแกรม และส่งไปที่ `https://api.webull.co.th` ที่เดียว ไม่ตาม redirect ไปที่อื่นพร้อม key
 - **ใช้ quota อย่างระวัง** ทุก request ผ่านตัวคุมจังหวะตัวเดียวกัน ที่ 85% ของ quota ที่ Webull Thailand กำหนด แยกนับตามกลุ่ม endpoint และลองใหม่อัตโนมัติเมื่อเจอ rate limit
 - พบปัญหาด้านความปลอดภัย? กรุณาแจ้งผ่าน private security advisory ของ repository นี้
+
+## Recorder server (ไม่บังคับ)
+
+Recorder เก็บข้อมูล option ให้ Option Lab ทุกวันทำการ: ภาพหลังตลาดปิด (สัญญาอายุไม่เกิน 60 วัน, strike ±20%) และภาพระหว่างวันของช่วงที่ขายได้จริง (ไม่เกิน 45 วัน, ±15%) ครอบคลุมหุ้นหลักของคุณและหุ้น US 100 อันดับแรกตาม market cap ซึ่งอัปเดตรายชื่อทุกสัปดาห์จาก NASDAQ screener ถ้าไม่มี server แอปก็ยังเก็บข้อมูลในเครื่องได้เหมือนเดิมทุกอย่าง
+
+```bash
+cd deploy/recorder
+cp .env.example .env   # ใส่ WEBULL_APP_KEY, WEBULL_APP_SECRET, RECORDER_API_TOKEN และ
+                       # WEBULL_ACCESS_TOKEN (สร้างในแอป: ยืนยัน SMS, อายุ ~15 วัน)
+docker compose up -d
+docker compose exec recorder recorder-server plan   # ดูตารางงานและจำนวน request โดยไม่ยิงจริง
+```
+
+- API เปิดที่ `127.0.0.1:8787` ให้ใช้ Tailscale หรือ Cloudflare Tunnel ทำ HTTPS ด้านหน้า
+- `GET /health` ไม่ต้องใช้ token ส่วนทุกอย่างใต้ `/v1` (`status`, `dates`, `observations`, `export`, `universe`) ต้องส่ง `Authorization: Bearer <RECORDER_API_TOKEN>` ถ้าไม่ได้ตั้ง API token ไว้ server จะไม่เปิด API
+- access token ของ Webull หมดอายุประมาณ 15 วัน ให้ใส่ตัวใหม่ใน `.env` แล้วสั่ง `docker compose up -d` อีกครั้ง (หรือวางเป็นไฟล์ `/data/secrets/access_token` ใน volume ก็ได้)
+- image จะถูก publish ขึ้น GHCR เมื่อ push tag `recorder-v*`
 
 ## Build จาก source
 
@@ -74,6 +94,9 @@ npm run tauri dev    # เปิดโปรแกรมจริงในโห
 npm run tauri build  # สร้างตัวติดตั้ง NSIS + ไฟล์ portable
 
 npm run verify       # ตรวจทั้งหมด: typecheck + lint, build, fmt, clippy, test
+
+cargo run -p recorder-server -- plan          # ดูแผนของ recorder โดยไม่ต้องมี key
+docker build -t premium-radar-recorder:dev .   # build image ของ recorder
 ```
 
 ตั้ง `RADAR_TIMING=1` ตอนรัน `npm run tauri dev` เพื่อดูเวลาที่ใช้ในแต่ละขั้นของการโหลดข้อมูล
@@ -89,7 +112,11 @@ crates/radar-core/   Rust domain logic (ไม่ผูกกับ framework)
   lab/               Option Lab: payoff, probability, replay, calibration
   webull/            signing (V3 HMAC-SHA256), ตัวคุมจังหวะ request, REST clients,
                      contract discovery, MQTT stream, protobuf
-src-tauri/           Tauri 2 shell: commands, settings + keyring, scan worker
+  universe.rs        รายชื่อหุ้น 100 อันดับตาม market cap (NASDAQ screener + cache)
+crates/recorder-server/  recorder แบบ headless: ตั้งเวลาตามเวลานิวยอร์ก + API อ่านอย่างเดียวที่มี token
+deploy/recorder/     ตัวอย่าง docker compose และไฟล์ .env ต้นแบบ
+src-tauri/           Tauri 2 shell: commands, settings + keyring, scan worker,
+                     client สำหรับ recorder API
 src/                 React 19 + TypeScript (กราฟใช้ KLineChart)
 docs/                capability matrix ของ Webull Thailand · docs/dev/ บันทึกสำหรับนักพัฒนา
 design/              design system และต้นแบบหน้าตา
