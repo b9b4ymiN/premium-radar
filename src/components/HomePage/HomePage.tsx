@@ -18,7 +18,21 @@ type Quote = { symbol: string } & (
   | { status: "no_data" | "error" | "setup_required"; reason?: string | null }
 );
 /** `error` is set when the whole quote request failed (every row is then "error"). */
-interface Overview { watchlist_name: string | null; quotes: Quote[]; error?: string | null; lab: { capture_days: number; last_capture: string | null }; fetched_at: string }
+interface Overview {
+  watchlist_name: string | null;
+  quotes: Quote[];
+  error?: string | null;
+  lab: {
+    capture_days: number;
+    last_capture: string | null;
+    /** "local" (default) หรือ "api" = อ่านจาก recorder server */
+    source?: "local" | "api";
+    /** มีเฉพาะเมื่อโหมด api ล้มและกลับไปใช้ตัวเลขในเครื่อง */
+    fallback?: "local";
+    error?: string | null;
+  };
+  fetched_at: string;
+}
 
 const quoteStatusText = {
   no_data: "Webull ไม่มีราคา",
@@ -147,7 +161,16 @@ export default function HomePage({
         <div className="lab-cell">
           <label>Lab capture</label>
           <strong>{o?.lab.capture_days ?? 0} วัน</strong>
-          <small>ล่าสุด {o?.lab.last_capture ?? "ยังไม่มี"} · เก็บอัตโนมัติทุกเช้า</small>
+          {o?.lab.fallback === "local" ? (
+            <small className="warn" title={o.lab.error ?? undefined} role="status">
+              ต่อ server ไม่ได้ ใช้ข้อมูลในเครื่องแทน
+            </small>
+          ) : (
+            <small>
+              ล่าสุด {o?.lab.last_capture ?? "ยังไม่มี"} ·{" "}
+              {o?.lab.source === "api" ? "จาก server" : "ในเครื่อง"}
+            </small>
+          )}
         </div>
       </div>
 

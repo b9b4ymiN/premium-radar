@@ -4,6 +4,7 @@
 use std::sync::Mutex;
 
 use chrono::Utc;
+pub mod recorder_api;
 pub mod scan;
 pub mod settings;
 
@@ -1034,6 +1035,8 @@ fn home_overview_on(
 }
 
 /// Home overview (P17.1) — quotes ของ active watchlist + สถานะ Lab capture
+/// (อ่านจาก storage จริง ไม่เดา; โหมด api อ่านวันที่จาก recorder server แทน
+/// โดยล้มทุกกรณีจะกลับไปใช้ตัวเลขในเครื่องพร้อมข้อความไทย)
 #[tauri::command]
 async fn get_home_overview(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
     let settings = settings_of(&state);
@@ -1043,11 +1046,11 @@ async fn get_home_overview(state: tauri::State<'_, AppState>) -> Result<serde_js
         .active_list()
         .map(|list| list.symbols.iter().take(20).cloned().collect())
         .unwrap_or_default();
-    // สถานะ Lab capture (อ่านจาก storage จริง ไม่เดา)
+    // ตัวเลข local คำนวณไว้เสมอ — โหมด api ใช้เป็น fallback เมื่อ server ล้ม
     let lab = radar_core::lab::storage::LabStorage::open(
         std::path::Path::new(&state.app_data_dir).join("lab"),
     );
-    let (capture_days, last_capture) = match &lab {
+    let (local_days, local_last) = match &lab {
         Ok(storage) => {
             let dates = storage.captured_dates().unwrap_or_default();
             let last = dates.last().map(|date| date.to_string());
@@ -1055,16 +1058,35 @@ async fn get_home_overview(state: tauri::State<'_, AppState>) -> Result<serde_js
         }
         Err(_) => (0, None),
     };
-    let (quotes, error) = off_ui_thread(move || {
-        // the client is optional on purpose: without credentials every row says so
-        Ok(home_overview_on(settings.webull_client(), &symbols))
-    })
-    .await?;
+    let use_api = settings.lab_source == settings::LabSource::Api;
+    let recorder_url = settings.recorder_api_url.clone();
+    let recorder_token = settings.recorder_api_token.clone();
+    // the quotes call and the (blocking) recorder call run side by side so a
+    // down server cannot delay the watchlist answer
+    let (quotes, recorder) = tokio::join!(
+        off_ui_thread(move || {
+            // the client is optional on purpose: without credentials every row says so
+            Ok(home_overview_on(settings.webull_client(), &symbols))
+        }),
+        async {
+            if !use_api {
+                return None;
+            }
+            let answer =
+                off_ui_thread(move || Ok(recorder_api::dates(&recorder_url, &recorder_token)))
+                    .await;
+            // the outer Err means the blocking pool itself died — treat that
+            // like an unreachable server (practically: reqwest errors, never panics)
+            Some(answer.unwrap_or(Err(recorder_api::RecorderError::Unreachable)))
+        }
+    );
+    let (quotes, error) = quotes?;
+    let lab = home_lab_section(recorder.as_ref(), local_days, local_last.as_deref());
     Ok(serde_json::json!({
         "watchlist_name": watchlist_name,
         "quotes": quotes,
         "error": error,
-        "lab": {"capture_days": capture_days, "last_capture": last_capture},
+        "lab": lab,
         "fetched_at": chrono::Utc::now().to_rfc3339(),
     }))
 }
@@ -1612,6 +1634,185 @@ fn test_llm_with(
     }
 }
 
+// ---------- Lab data source: local storage or recorder server ----------
+
+/// Result of the recorder-server connection test (setup screen). `message_th`
+/// is a plain-Thai one-liner ready to show next to the button.
+#[derive(serde::Serialize)]
+pub struct RecorderTestResult {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dates_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_time: Option<String>,
+    pub message_th: String,
+}
+
+impl RecorderTestResult {
+    fn fail(message_th: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            version: None,
+            dates_count: None,
+            last_date: None,
+            server_time: None,
+            message_th: message_th.into(),
+        }
+    }
+}
+
+/// The probe itself: health (no auth) first, then an authenticated /v1/dates
+/// so a wrong token surfaces here. `stored_token` is what a blank typed field
+/// falls back to. The token only ever travels in the Authorization header.
+fn recorder_test_connection_with(
+    url: String,
+    token: Option<String>,
+    stored_token: String,
+) -> RecorderTestResult {
+    let Some(url) = settings::normalise_recorder_api_url(&url) else {
+        return RecorderTestResult::fail("ที่อยู่ server ไม่ถูกต้อง — ต้องขึ้นต้นด้วย http:// หรือ https://");
+    };
+    let token = token
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| stored_token.trim().to_string());
+    let health = match recorder_api::health(&url) {
+        Ok(health) => health,
+        Err(e) => return RecorderTestResult::fail(e.message_th()),
+    };
+    if token.is_empty() {
+        return RecorderTestResult {
+            ok: false,
+            message_th: format!(
+                "เชื่อมต่อ server ได้ (v{}) แต่ยังไม่ได้ใส่ API token",
+                health.version
+            ),
+            version: Some(health.version),
+            dates_count: None,
+            last_date: None,
+            server_time: None,
+        };
+    }
+    match recorder_api::dates(&url, &token) {
+        Err(e) => RecorderTestResult {
+            ok: false,
+            version: Some(health.version),
+            dates_count: None,
+            last_date: None,
+            server_time: None,
+            message_th: e.message_th().to_string(),
+        },
+        Ok(dates) => {
+            let last_date = dates.last().cloned();
+            // status is a bonus field — a failure here must not fail the test
+            let server_time = recorder_api::status(&url, &token)
+                .ok()
+                .and_then(|value| value["server_time"].as_str().map(String::from));
+            let message_th = match &last_date {
+                Some(last) => format!("เชื่อมต่อได้ · มีข้อมูล {} วัน ล่าสุด {last}", dates.len()),
+                None => "เชื่อมต่อได้ · server ยังไม่มีข้อมูล".to_string(),
+            };
+            RecorderTestResult {
+                ok: true,
+                version: Some(health.version),
+                dates_count: Some(dates.len()),
+                last_date,
+                server_time,
+                message_th,
+            }
+        }
+    }
+}
+
+/// Probe the recorder server with either the typed token (setup screen,
+/// unsaved) or the stored one — blocking HTTP runs off the UI thread.
+#[tauri::command]
+async fn recorder_test_connection(
+    state: tauri::State<'_, AppState>,
+    url: String,
+    token: Option<String>,
+) -> Result<RecorderTestResult, String> {
+    let stored_token = settings_of(&state).recorder_api_token;
+    off_ui_thread(move || Ok(recorder_test_connection_with(url, token, stored_token))).await
+}
+
+/// Save the Lab data source from the setup screen. The API token follows the
+/// `save_credentials` pattern exactly: an EMPTY typed field keeps the stored
+/// value, the token is persisted only through the keyring path (fail closed)
+/// and never crosses IPC again — the returned view carries only `has_*`.
+/// Switching back to local keeps the stored URL/token so the user can return.
+#[tauri::command]
+fn save_lab_source(
+    state: tauri::State<'_, AppState>,
+    lab_source: String,
+    recorder_api_url: String,
+    recorder_api_token: Option<String>,
+) -> Result<SettingsView, String> {
+    let source =
+        settings::parse_lab_source(&lab_source).ok_or("ค่าแหล่งข้อมูล Lab ไม่ถูกต้อง (local หรือ api)")?;
+    let dir = state.app_data_dir.clone();
+    let mut s = lock(&state.settings);
+
+    // stage on a copy — shared state only swaps after the save commits
+    let mut candidate = s.clone();
+    candidate.lab_source = source;
+    let typed_url = recorder_api_url.trim().to_string();
+    if !typed_url.is_empty() {
+        candidate.recorder_api_url = settings::normalise_recorder_api_url(&typed_url)
+            .ok_or("ที่อยู่ server ไม่ถูกต้อง — ต้องขึ้นต้นด้วย http:// หรือ https://")?;
+    }
+    candidate.recorder_api_token = settings::merge_secret(
+        recorder_api_token.as_deref().unwrap_or(""),
+        &s.recorder_api_token,
+    );
+    if source == settings::LabSource::Api {
+        if candidate.recorder_api_url.is_empty() {
+            return Err("กรุณาใส่ที่อยู่ server (เช่น https://recorder.example.ts.net)".into());
+        }
+        if candidate.recorder_api_token.trim().is_empty() {
+            return Err("กรุณาใส่ API token ของ server".into());
+        }
+    }
+
+    candidate.save_with_keyring(&dir)?;
+    *s = candidate;
+    Ok(s.view())
+}
+
+/// The Lab block of [`get_home_overview`]: local mode reports the machine's
+/// own numbers; api mode reports the server's, falling back to the local
+/// numbers with the Thai reason on any failure.
+fn home_lab_section(
+    recorder: Option<&Result<Vec<String>, recorder_api::RecorderError>>,
+    local_days: usize,
+    local_last: Option<&str>,
+) -> serde_json::Value {
+    match recorder {
+        None => serde_json::json!({
+            "source": "local",
+            "capture_days": local_days,
+            "last_capture": local_last,
+        }),
+        Some(Ok(dates)) => serde_json::json!({
+            "source": "api",
+            "capture_days": dates.len(),
+            "last_capture": dates.last(),
+            "error": null,
+        }),
+        Some(Err(e)) => serde_json::json!({
+            "source": "api",
+            "fallback": "local",
+            "capture_days": local_days,
+            "last_capture": local_last,
+            "error": e.message_th(),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1832,6 +2033,48 @@ mod tests {
         assert_eq!(lock(&engine).quote_count(), 0);
         assert_eq!(lock(&settings).last_symbol, "NVDA");
     }
+
+    /// Home Lab block: local mode reports the machine's numbers; api mode
+    /// reports the server's; any api failure falls back to the local numbers
+    /// carrying the Thai reason.
+    #[test]
+    fn home_lab_section_local_api_and_fallback() {
+        let local = home_lab_section(None, 3, Some("2026-11-20"));
+        assert_eq!(local["source"], "local");
+        assert_eq!(local["capture_days"], 3);
+        assert_eq!(local["last_capture"], "2026-11-20");
+        assert!(local.get("fallback").is_none());
+
+        let dates = vec!["2026-11-23".to_string(), "2026-11-24".to_string()];
+        let api = home_lab_section(Some(&Ok(dates)), 3, Some("2026-11-20"));
+        assert_eq!(api["source"], "api");
+        assert_eq!(api["capture_days"], 2);
+        assert_eq!(api["last_capture"], "2026-11-24");
+        assert_eq!(api["error"], serde_json::Value::Null);
+        assert!(api.get("fallback").is_none());
+
+        let down = home_lab_section(
+            Some(&Err(recorder_api::RecorderError::Unreachable)),
+            3,
+            Some("2026-11-20"),
+        );
+        assert_eq!(down["source"], "api");
+        assert_eq!(down["fallback"], "local");
+        assert_eq!(down["capture_days"], 3, "falls back to the local count");
+        assert_eq!(down["last_capture"], "2026-11-20");
+        assert_eq!(down["error"], "ต่อ server ไม่ได้ — ตรวจที่อยู่หรือ Tailscale");
+    }
+
+    /// An invalid typed URL is rejected before any network leaves the machine.
+    #[test]
+    fn recorder_test_rejects_invalid_url_without_network() {
+        for garbage in ["", "no-scheme", "ftp://host"] {
+            let result = recorder_test_connection_with(garbage.into(), None, String::new());
+            assert!(!result.ok, "{garbage:?}");
+            assert!(result.message_th.contains("ที่อยู่ server"), "{garbage:?}");
+            assert_eq!(result.version, None);
+        }
+    }
 }
 
 /// Check if first-run setup is needed (no Webull keys configured).
@@ -1937,6 +2180,8 @@ pub fn run() {
             lab_predictions,
             ask_copilot,
             test_llm,
+            save_lab_source,
+            recorder_test_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

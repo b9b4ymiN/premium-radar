@@ -3387,6 +3387,7 @@ dependencies = [
  "chrono",
  "keyring",
  "radar-core",
+ "reqwest",
  "serde",
  "serde_json",
  "tauri",

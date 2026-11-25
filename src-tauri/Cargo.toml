@@ -24,6 +24,8 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 keyring = { version = "3", features = ["windows-native", "apple-native"] }
 radar-core = { path = "../crates/radar-core", features = ["client", "stream"] }
+# same version/features already unified through radar-core's `client` feature
+reqwest = { version = "0.13", features = ["blocking", "json", "rustls"] }
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }

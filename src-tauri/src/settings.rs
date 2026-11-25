@@ -15,6 +15,99 @@ use std::path::PathBuf;
 /// OS keyring service name for all Premium Radar secrets.
 const KEYRING_SERVICE: &str = "premium-radar";
 
+/// Where the Home screen's Lab capture numbers come from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LabSource {
+    /// This machine's own recordings — the default and today's behaviour.
+    #[default]
+    Local,
+    /// A recorder server's read-only API (`/v1/*` with a bearer token).
+    Api,
+}
+
+/// Unknown values load as Local instead of failing the whole file —
+/// `AppSettings::load` falls back to ALL defaults on any serde error, so a
+/// hand-edited `lab_source` must not wipe the user's other settings.
+impl<'de> Deserialize<'de> for LabSource {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(match String::deserialize(deserializer)?.as_str() {
+            "api" => Self::Api,
+            _ => Self::Local,
+        })
+    }
+}
+
+impl LabSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Api => "api",
+        }
+    }
+}
+
+/// Strict parse for the save command: only the two exact values are accepted.
+pub fn parse_lab_source(value: &str) -> Option<LabSource> {
+    match value.trim() {
+        "local" => Some(LabSource::Local),
+        "api" => Some(LabSource::Api),
+        _ => None,
+    }
+}
+
+/// Normalise the recorder-server URL (trim, drop trailing `/`) accepting only
+/// `http://` or `https://` with a non-empty host. `None` = invalid.
+pub fn normalise_recorder_api_url(url: &str) -> Option<String> {
+    let trimmed = url.trim().trim_end_matches('/');
+    if trimmed == "http://" || trimmed == "https://" {
+        return None;
+    }
+    let rest = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))?;
+    let host = rest.split(['/', ':', '?']).next().unwrap_or_default();
+    (!host.is_empty() && !rest.contains("://")).then(|| trimmed.to_string())
+}
+
+fn parse_ipv4(host: &str) -> Option<[u8; 4]> {
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    let mut octets = [0u8; 4];
+    for (i, part) in parts.iter().enumerate() {
+        octets[i] = part.parse().ok()?;
+    }
+    Some(octets)
+}
+
+/// True when the URL's host is one where plain `http://` is acceptable:
+/// localhost names, loopback (v4/v6) or a Tailscale CGNAT 100.64.0.0/10
+/// address. The UI consults this only for `http://` URLs to decide whether
+/// the "not encrypted" warning is shown; `https` is fine anywhere.
+pub fn recorder_host_is_private(url: &str) -> bool {
+    let Some((_, rest)) = url.trim().split_once("://") else {
+        return false;
+    };
+    let host = if let Some(after) = rest.strip_prefix('[') {
+        after.split(']').next().unwrap_or_default()
+    } else {
+        rest.split(['/', ':', '?']).next().unwrap_or_default()
+    };
+    let lower = host.to_ascii_lowercase();
+    if lower == "localhost" || lower == "::1" {
+        return true;
+    }
+    let Some([a, b, _, _]) = parse_ipv4(host) else {
+        return false;
+    };
+    a == 127 || (a == 100 && (64..=127).contains(&b))
+}
+
 /// Full app settings persisted to `<app_data>/radar_settings.json`.
 /// API keys are stored here for dev; production moves them to OS keyring.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -58,6 +151,16 @@ pub struct AppSettings {
     // LLM configuration (user-configurable via setup screen)
     #[serde(default)]
     pub llm: Option<LlmConfig>,
+
+    // Lab data source (user-configurable via setup screen)
+    #[serde(default)]
+    pub lab_source: LabSource,
+    #[serde(default)]
+    pub recorder_api_url: String,
+    /// Recorder-server API token — keyring only (scrubbed from the disk
+    /// snapshot exactly like the Webull secrets).
+    #[serde(default)]
+    pub recorder_api_token: String,
 }
 
 fn default_symbol() -> String {
@@ -151,6 +254,7 @@ pub(crate) fn copy_saved_secrets(current: &AppSettings, mut incoming: AppSetting
     incoming.webull_app_key = current.webull_app_key.clone();
     incoming.webull_app_secret = current.webull_app_secret.clone();
     incoming.webull_access_token = current.webull_access_token.clone();
+    incoming.recorder_api_token = current.recorder_api_token.clone();
     if let Some(llm) = incoming.llm.as_mut() {
         llm.api_key = current
             .llm
@@ -179,6 +283,9 @@ impl Default for AppSettings {
             webull_access_token: String::new(),
             webull_signature_scheme: SignatureScheme::default(),
             llm: None,
+            lab_source: LabSource::Local,
+            recorder_api_url: String::new(),
+            recorder_api_token: String::new(),
         }
     }
 }
@@ -208,6 +315,9 @@ pub struct SettingsView {
     pub has_webull_secret: bool,
     pub has_access_token: bool,
     pub llm: Option<LlmView>,
+    pub lab_source: LabSource,
+    pub recorder_api_url: String,
+    pub has_recorder_api_token: bool,
 }
 
 impl AppSettings {
@@ -231,6 +341,9 @@ impl AppSettings {
                 model: llm.model.clone(),
                 has_api_key: !llm.api_key.trim().is_empty(),
             }),
+            lab_source: self.lab_source,
+            recorder_api_url: self.recorder_api_url.clone(),
+            has_recorder_api_token: !self.recorder_api_token.trim().is_empty(),
         }
     }
 
@@ -300,6 +413,7 @@ impl AppSettings {
         self.webull_app_key = String::new();
         self.webull_app_secret = String::new();
         self.webull_access_token = String::new();
+        self.recorder_api_token = String::new();
         if let Some(c) = self.llm.as_mut() {
             c.api_key = String::new();
         }
@@ -310,6 +424,7 @@ impl AppSettings {
         !self.webull_app_key.is_empty()
             || !self.webull_app_secret.is_empty()
             || !self.webull_access_token.is_empty()
+            || !self.recorder_api_token.is_empty()
             || self.llm.as_ref().is_some_and(|c| !c.api_key.is_empty())
     }
 
@@ -319,10 +434,11 @@ impl AppSettings {
         service: &str,
         save_snapshot: impl FnOnce() -> Result<(), String>,
     ) -> Result<(), String> {
-        let fields: [(&str, String); 4] = [
+        let fields: [(&str, String); 5] = [
             ("webull_app_key", self.webull_app_key.clone()),
             ("webull_app_secret", self.webull_app_secret.clone()),
             ("webull_access_token", self.webull_access_token.clone()),
+            ("recorder_api_token", self.recorder_api_token.clone()),
             (
                 "llm_api_key",
                 self.llm
@@ -397,6 +513,9 @@ impl AppSettings {
         }
         if self.webull_access_token.is_empty() {
             self.webull_access_token = fill("webull_access_token");
+        }
+        if self.recorder_api_token.is_empty() {
+            self.recorder_api_token = fill("recorder_api_token");
         }
         if self.llm.as_ref().is_some_and(|c| c.api_key.is_empty()) {
             let k = fill("llm_api_key");
@@ -624,6 +743,120 @@ mod tests {
         assert_eq!(s.webull_base_url_or_default(), "https://api.webull.co.th");
     }
 
+    // ---------- W2: Lab data source (local / recorder server) ----------
+
+    #[test]
+    fn recorder_url_normalisation() {
+        let ok = |url: &str| normalise_recorder_api_url(url);
+        assert_eq!(
+            ok("https://recorder.example.ts.net").as_deref(),
+            Some("https://recorder.example.ts.net")
+        );
+        assert_eq!(
+            ok("  http://127.0.0.1:8787/ ").as_deref(),
+            Some("http://127.0.0.1:8787")
+        );
+        assert_eq!(ok("https://host/").as_deref(), Some("https://host"));
+        assert_eq!(ok("https://host/sub/").as_deref(), Some("https://host/sub"));
+        assert_eq!(ok("").as_deref(), None, "empty means not configured");
+        assert_eq!(ok("recorder.example.ts.net").as_deref(), None, "no scheme");
+        assert_eq!(ok("ftp://host").as_deref(), None);
+        assert_eq!(ok("https://").as_deref(), None, "empty host");
+        assert_eq!(
+            ok("http:///path").as_deref(),
+            None,
+            "empty host before path"
+        );
+        assert_eq!(
+            ok("https://evil.example/http://host").as_deref(),
+            None,
+            "embedded second scheme confuses nothing"
+        );
+    }
+
+    /// Plain http is only tolerated for localhost or Tailscale CGNAT hosts;
+    /// the UI shows the encryption warning for everything else.
+    #[test]
+    fn plain_http_is_private_only_for_loopback_and_tailscale() {
+        let private = |url: &str| recorder_host_is_private(url);
+        assert!(private("http://localhost:8787"));
+        assert!(private("http://LOCALHOST"));
+        assert!(private("http://127.0.0.1:8787"));
+        assert!(private("http://127.8.9.10"));
+        assert!(private("http://[::1]:8787"));
+        assert!(private("http://100.64.0.1"));
+        assert!(private("http://100.101.102.103"));
+        assert!(private("http://100.127.255.255"));
+        assert!(!private("http://100.63.0.1"), "below the CGNAT range");
+        assert!(!private("http://100.128.0.1"), "above the CGNAT range");
+        assert!(!private("http://99.1.1.1"));
+        assert!(
+            !private("http://192.168.1.10"),
+            "LAN is not in the allowed set"
+        );
+        assert!(!private("http://recorder.example.ts.net"));
+        assert!(!private("garbage"));
+    }
+
+    /// Old settings files (no lab fields) load as local with nothing
+    /// configured; an unknown `lab_source` value also loads as local without
+    /// failing the whole file.
+    #[test]
+    fn old_settings_without_lab_fields_load_as_local() {
+        let legacy: AppSettings =
+            serde_json::from_str(r#"{"last_symbol":"TSLA","webull_app_key":"k"}"#).unwrap();
+        assert_eq!(legacy.lab_source, LabSource::Local);
+        assert_eq!(legacy.recorder_api_url, "");
+        assert_eq!(legacy.recorder_api_token, "");
+
+        let unknown: AppSettings = serde_json::from_str(r#"{"lab_source":"banana"}"#).unwrap();
+        assert_eq!(unknown.lab_source, LabSource::Local);
+
+        let api: AppSettings = serde_json::from_str(r#"{"lab_source":"api"}"#).unwrap();
+        assert_eq!(api.lab_source, LabSource::Api);
+        assert_eq!(parse_lab_source("api"), Some(LabSource::Api));
+        assert_eq!(parse_lab_source(" local "), Some(LabSource::Local));
+        assert_eq!(parse_lab_source("cloud"), None);
+        assert_eq!(LabSource::Local.as_str(), "local");
+    }
+
+    /// The IPC view carries the source and the URL but only a `has_*` flag for
+    /// the token — the value never crosses the boundary.
+    #[test]
+    fn settings_view_carries_lab_fields_but_never_the_token() {
+        let s = AppSettings {
+            lab_source: LabSource::Api,
+            recorder_api_url: "https://recorder.example.ts.net".into(),
+            recorder_api_token: "FAKE_RECORDER_TOKEN".into(),
+            ..AppSettings::default()
+        };
+        let view = s.view();
+        assert_eq!(view.lab_source, LabSource::Api);
+        assert_eq!(view.recorder_api_url, "https://recorder.example.ts.net");
+        assert!(view.has_recorder_api_token);
+        let json = serde_json::to_string(&view).expect("view serialises");
+        assert!(!json.contains("FAKE_RECORDER_TOKEN"));
+
+        let empty = AppSettings::default().view();
+        assert_eq!(empty.lab_source, LabSource::Local);
+        assert_eq!(empty.recorder_api_url, "");
+        assert!(!empty.has_recorder_api_token);
+    }
+
+    #[test]
+    fn save_settings_never_persists_the_recorder_token_from_js() {
+        let current = AppSettings {
+            recorder_api_token: "SAVED-TOKEN".into(),
+            ..AppSettings::default()
+        };
+        let incoming = AppSettings {
+            recorder_api_token: "JS-TOKEN".into(),
+            ..AppSettings::default()
+        };
+        let guarded = copy_saved_secrets(&current, incoming);
+        assert_eq!(guarded.recorder_api_token, "SAVED-TOKEN");
+    }
+
     /// Empty incoming keeps the saved secret; non-empty replaces it; the
     /// access token resolves typed > pending > saved.
     #[test]
@@ -684,10 +917,11 @@ mod tests {
 
     // ---------- keyring migration regression (fake credentials only) ----------
 
-    const KEYRING_ACCOUNTS: [&str; 4] = [
+    const KEYRING_ACCOUNTS: [&str; 5] = [
         "webull_app_key",
         "webull_app_secret",
         "webull_access_token",
+        "recorder_api_token",
         "llm_api_key",
     ];
 

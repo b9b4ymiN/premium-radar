@@ -33,6 +33,16 @@ interface StoredLlm {
   has_api_key?: boolean;
 }
 
+/** recorder_test_connection result — the token never crosses IPC, only this verdict. */
+interface RecorderTestResult {
+  ok: boolean;
+  version?: string | null;
+  dates_count?: number | null;
+  last_date?: string | null;
+  server_time?: string | null;
+  message_th: string;
+}
+
 /** get_settings now returns a redacted SettingsView — secrets arrive only
  *  as has_* booleans, never as values. */
 interface StoredSettings {
@@ -41,6 +51,9 @@ interface StoredSettings {
   has_webull_secret?: boolean;
   has_access_token?: boolean;
   llm?: StoredLlm | null;
+  lab_source?: "local" | "api";
+  recorder_api_url?: string;
+  has_recorder_api_token?: boolean;
 }
 
 const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -69,6 +82,13 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
   const [hasSecret, setHasSecret] = useState(false);
   const [hasToken, setHasToken] = useState(false);
   const [hasLlmKey, setHasLlmKey] = useState(false);
+  // Lab data source (local / recorder server)
+  const [labSource, setLabSource] = useState<"local" | "api">("local");
+  const [recorderUrl, setRecorderUrl] = useState("");
+  const [recorderToken, setRecorderToken] = useState("");
+  const [hasRecorderToken, setHasRecorderToken] = useState(false);
+  const [testingRecorder, setTestingRecorder] = useState(false);
+  const [recorderResult, setRecorderResult] = useState<RecorderTestResult | null>(null);
 
   const isEdit = mode === "edit";
 
@@ -89,6 +109,9 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
         setHasSecret(!!st?.has_webull_secret);
         setHasToken(!!st?.has_access_token);
         setHasLlmKey(!!st?.llm?.has_api_key);
+        setLabSource(st?.lab_source === "api" ? "api" : "local");
+        setRecorderUrl(st?.recorder_api_url ?? "");
+        setHasRecorderToken(!!st?.has_recorder_api_token);
       })
       .catch(() => {});
   }, []);
@@ -105,6 +128,27 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
     setLlmLabel(preset.label);
     setLlmUrl(preset.url);
     setLlmModel(preset.model);
+  };
+
+  // คำเตือนเมื่อใช้ http:// กับ host ที่ไม่ใช่ localhost/Tailscale (100.64–100.127.x.x)
+  const recorderHttpWarning = (url: string): string | null => {
+    const trimmed = url.trim();
+    if (!/^http:\/\//i.test(trimmed)) return null;
+    const rest = trimmed.replace(/^http:\/\//i, "");
+    const host = (
+      rest.startsWith("[") ? rest.slice(1, rest.indexOf("]")) : rest.split(/[/:?]/)[0] ?? ""
+    ).toLowerCase();
+    const parts = host.split(".");
+    const isIpv4 = parts.length === 4 && parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255);
+    const isPrivate =
+      host === "localhost" ||
+      host === "::1" ||
+      (isIpv4 &&
+        (Number(parts[0]) === 127 ||
+          (Number(parts[0]) === 100 && Number(parts[1]) >= 64 && Number(parts[1]) <= 127)));
+    return isPrivate
+      ? null
+      : "ใช้ http เปล่าๆ ข้อมูลจะไม่ถูกเข้ารหัสระหว่างทาง — ปลอดภัยเฉพาะ localhost หรือ Tailscale แนะนำใช้ https";
   };
 
   const handleTest = async () => {
@@ -186,10 +230,42 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
     }
   };
 
+  const handleRecorderTest = async () => {
+    if (!recorderUrl.trim()) {
+      setError("กรุณาใส่ที่อยู่ server ก่อนทดสอบ");
+      return;
+    }
+    setTestingRecorder(true);
+    setError("");
+    setRecorderResult(null);
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const r = await invoke<RecorderTestResult>("recorder_test_connection", {
+        url: recorderUrl.trim(),
+        token: recorderToken.trim() || null,
+      });
+      setRecorderResult(r);
+    } catch (e) {
+      setError(`ทดสอบไม่สำเร็จ: ${e}`);
+    } finally {
+      setTestingRecorder(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!webullKey.trim() || (!webullSecret.trim() && !hasSecret)) {
       setError("กรุณาใส่ Webull App Key และ Secret");
       return;
+    }
+    if (labSource === "api") {
+      if (!recorderUrl.trim()) {
+        setError("กรุณาใส่ที่อยู่ server ของ recorder");
+        return;
+      }
+      if (!recorderToken.trim() && !hasRecorderToken) {
+        setError("กรุณาใส่ API token ของ server");
+        return;
+      }
     }
     setSaving(true);
     setError("");
@@ -208,6 +284,13 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
           llmBaseUrl: llmUrl.trim() || null,
           llmModel: llmModel.trim() || null,
           llmApiKey: llmKey.trim() || null,
+        });
+        // แหล่งข้อมูล Lab — ช่อง token ที่เว้นว่าง = ใช้ค่าที่บันทึกไว้
+        // (สลับกลับเป็น local ไม่ลบ URL/token ที่เก็บไว้)
+        await invoke("save_lab_source", {
+          labSource,
+          recorderApiUrl: recorderUrl.trim(),
+          recorderApiToken: recorderToken.trim() || null,
         });
       }
       onComplete();
@@ -496,6 +579,104 @@ export function SetupScreen({ mode = "first-run", onComplete, onSkip }: SetupScr
           </div>
         </div>
 
+        {/* Lab data source section */}
+        <div style={{ marginBottom: 24 }}>
+          <h2
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--secondary)",
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              marginBottom: 10,
+            }}
+          >
+            แหล่งข้อมูล Lab
+          </h2>
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            <button
+              onClick={() => setLabSource("local")}
+              style={{
+                ...choiceBtnStyle,
+                background: labSource === "local" ? "var(--blue-soft)" : "var(--surface2)",
+                color: labSource === "local" ? "var(--text)" : "var(--secondary)",
+              }}
+            >
+              <b>ในเครื่องนี้ (ค่าเริ่มต้น)</b>
+              <span style={{ fontWeight: 400, fontSize: 10 }}>อ่านข้อมูลที่แอปบันทึกเองในเครื่องนี้</span>
+            </button>
+            <button
+              onClick={() => setLabSource("api")}
+              style={{
+                ...choiceBtnStyle,
+                background: labSource === "api" ? "var(--blue-soft)" : "var(--surface2)",
+                color: labSource === "api" ? "var(--text)" : "var(--secondary)",
+              }}
+            >
+              <b>Recorder server</b>
+              <span style={{ fontWeight: 400, fontSize: 10 }}>เก็บข้อมูลให้แม้ปิดแอป</span>
+            </button>
+          </div>
+          {labSource === "api" && (
+            <>
+              <input
+                placeholder="ที่อยู่ server"
+                value={recorderUrl}
+                onChange={(e) => {
+                  setRecorderUrl(e.target.value);
+                  setRecorderResult(null);
+                }}
+                style={inputStyle}
+                autoComplete="off"
+              />
+              {recorderHttpWarning(recorderUrl) && (
+                <p style={{ color: "var(--amber)", fontSize: 10, lineHeight: 1.5, margin: "0 0 8px" }}>
+                  ⚠ {recorderHttpWarning(recorderUrl)}
+                </p>
+              )}
+              <input
+                placeholder={hasRecorderToken ? `API token (${keptHint})` : "API token"}
+                value={recorderToken}
+                onChange={(e) => setRecorderToken(e.target.value)}
+                style={inputStyle}
+                type="password"
+                autoComplete="off"
+              />
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+                <button
+                  onClick={handleRecorderTest}
+                  disabled={testingRecorder || !hasTauri}
+                  style={{
+                    background: "var(--surface2)",
+                    color: testingRecorder ? "var(--dim)" : "var(--th-label)",
+                    border: "1px solid var(--border-strong)",
+                    borderRadius: 6,
+                    padding: "7px 14px",
+                    fontSize: 11,
+                    fontWeight: 650,
+                    cursor: testingRecorder || !hasTauri ? "not-allowed" : "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {testingRecorder ? "กำลังทดสอบ..." : "ทดสอบการเชื่อมต่อ"}
+                </button>
+                {recorderResult && (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      lineHeight: 1.5,
+                      color: recorderResult.ok ? "var(--green)" : "var(--red)",
+                    }}
+                  >
+                    {recorderResult.ok ? "✓ " : "✕ "}
+                    {recorderResult.message_th}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
         {error && (
           <p style={{ color: "var(--red)", fontSize: 11, marginBottom: 12 }}>{error}</p>
         )}
@@ -574,5 +755,19 @@ const presetBtnStyle: React.CSSProperties = {
   padding: "6px 4px",
   fontSize: 10,
   fontWeight: 600,
+  cursor: "pointer",
+};
+
+const choiceBtnStyle: React.CSSProperties = {
+  flex: 1,
+  display: "flex",
+  flexDirection: "column",
+  gap: 3,
+  alignItems: "flex-start",
+  textAlign: "left",
+  border: "1px solid var(--border-strong)",
+  borderRadius: 5,
+  padding: "8px 10px",
+  fontSize: 11,
   cursor: "pointer",
 };
