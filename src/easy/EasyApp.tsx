@@ -121,6 +121,7 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
   const profileRef = useRef(profile);
   const ideasStateRef = useRef(ideasState);
   const universeRef = useRef(universe);
+  const saveChain = useRef<Promise<void>>(Promise.resolve());
   const bag = useRef<RetryBag>({ timers: {}, tries: {} });
 
   // mirrors for async callbacks (never written during render)
@@ -150,6 +151,7 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
     }
     setUniverse(prev => ({ data: prev.data, loading: true, error: null }));
     try {
+      await saveChain.current; // Rust ranks from the SAVED profile
       const data = await easyInvoke<UniverseIdeas>("easy_universe_ideas");
       setUniverse({ data, loading: false, error: null });
     } catch (e) {
@@ -202,7 +204,7 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
   // persist profile edits (skip the bootstrap value itself)
   useEffect(() => {
     if (!profileLoaded || !hasTauri) return;
-    easyInvoke("save_easy_profile", { profile }).catch(() => { /* keep the session going */ });
+    saveChain.current = easyInvoke("save_easy_profile", { profile }).then(() => undefined, () => { /* keep the session going */ });
   }, [profile, profileLoaded, hasTauri]);
 
   // entering home loads the universe picks; profile cash/risk edits change
