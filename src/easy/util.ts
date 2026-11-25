@@ -36,38 +36,14 @@ export function sourceLabel(source: string): string {
   return "ตัวอย่าง";
 }
 
+/** One data badge, never two: sample data says "ข้อมูลตัวอย่าง", a real source
+ *  says its own LIVE / API / ราคาปิด label. */
+export function badgeText(source: string, sample: boolean): string {
+  return sample ? "ข้อมูลตัวอย่าง" : sourceLabel(source);
+}
+
 export const LEVEL_TH: Record<IdeaLevel, string> = {
   safe: "ปลอดภัย",
   balanced: "สมดุล",
   high: "ได้เงินมากต่อวัน",
 };
-
-/** The prototype's market clock line, refreshed each minute. */
-export function clockLine(now: Date): { open: boolean; text: string } {
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    weekday: "short", year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
-  });
-  const thClock = (ms: number) =>
-    new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
-  const parts = Object.fromEntries(fmt.formatToParts(now).map(p => [p.type, p.value]));
-  const wd = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[parts.weekday as "Sun"] ?? 0;
-  const min = Number(parts.hour) * 60 + Number(parts.minute);
-  const left = (ms: number) => {
-    const t = Math.max(1, Math.ceil((ms - now.getTime()) / 60_000));
-    const h = Math.floor(t / 60), m = t % 60;
-    return h ? `${h} ชม.${m ? ` ${m} นาที` : ""}` : `${m} นาที`;
-  };
-  if (wd === 0 || wd === 6) {
-    const monday = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + (wd === 6 ? 2 : 1), 13, 30);
-    return { open: false, text: `ตลาดหุ้นอเมริกาปิดวันหยุดสุดสัปดาห์ · เปิดคืนวันจันทร์ ${thClock(monday)} น.` };
-  }
-  if (min >= 570 && min < 960) {
-    const close = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), 20, 0);
-    return { open: true, text: `ตลาดหุ้นอเมริกาเปิดอยู่ · ปิดอีก ${left(close)} (${thClock(close)} น.)` };
-  }
-  const add = min < 570 ? 0 : wd === 5 ? 3 : 1;
-  const open = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + add, 13, 30);
-  return { open: false, text: `ตลาดหุ้นอเมริกายังไม่เปิด · เปิดอีก ${left(open)} (${thClock(open)} น. เวลาไทย)` };
-}

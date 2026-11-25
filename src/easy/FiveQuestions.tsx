@@ -9,7 +9,7 @@ import { useState } from "react";
 import type { EasyIdea, EasyIdeas, EasyProfile } from "../types/easy";
 import { EzIcon } from "./icons";
 import { WhatIf } from "./WhatIf";
-import { LEVEL_TH, expiryTh, signed, sourceLabel, usd } from "./util";
+import { LEVEL_TH, badgeText, expiryTh, signed, usd } from "./util";
 import { easyHasTauri, easyInvoke } from "./invoke";
 import { sampleAnswer } from "./sample";
 
@@ -17,6 +17,7 @@ const ASK_QUESTIONS = [
   "ถ้าได้หุ้นแล้ว ทำอะไรต่อ?",
   "ทำไมไม่เลือกตัวที่ได้เงินมากกว่า?",
   "ถ้าหุ้นลงก่อนวันหมดอายุล่ะ?",
+  "เปลี่ยนใจกลางทางได้ไหม?",
 ];
 
 interface Props {
@@ -39,7 +40,7 @@ export function FiveQuestions(p: Props) {
   const ask = async (q: string) => {
     if (busy) return;
     if (!easyHasTauri) {
-      setThread(t => [...t, { q, a: sampleAnswer(q, o), sample: true }]);
+      setThread(t => [...t, { q, a: sampleAnswer(q, o, d, profile), sample: true }]);
       return;
     }
     setBusy(true);
@@ -65,8 +66,7 @@ export function FiveQuestions(p: Props) {
       <h1>{d.symbol} ทาง{LEVEL_TH[o.level]}: รับ {usd(o.credit)} ถ้ายอมซื้อหุ้นที่ ${o.strike}</h1>
       <p className="ez-lead">
         สัญญาหมดอายุ{expiryTh(o.expiry)} (อีก {o.days} วัน) · ราคา {d.symbol} ตอนนี้ ${d.spot.toFixed(2)}
-        <span className="ez-src">{sourceLabel(d.source)}</span>
-        {sample && <span className="ez-src" style={{ color: "var(--amber)", borderColor: "#5a4724" }}>ข้อมูลตัวอย่าง</span>}
+        <span className={`ez-src${sample ? " amber" : ""}`}>{badgeText(d.source, sample)}</span>
       </p>
 
       <div className="ez-panel ez-gap-l" style={{ paddingTop: 8 }}>

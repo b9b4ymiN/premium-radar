@@ -8,34 +8,42 @@ import { EzIcon } from "./icons";
 import { usd } from "./util";
 import { SAMPLE_THB } from "./sample";
 
-/** Per-stock "ถ้าราคาลง อยากได้หุ้นตัวนั้นไว้ถือไหม" toggle. */
-export function StockStanceList({ stocks, onStance }: {
+/** Per-stock "ถ้าราคาลง อยากได้หุ้นตัวนั้นไว้ถือไหม" toggle. `subline` supplies the
+ *  small second line under the ticker (company · price); it returns null when
+ *  the price is unknown — never a dash placeholder. */
+export function StockStanceList({ stocks, onStance, subline }: {
   stocks: EasyProfile["stocks"];
   onStance: (symbol: string, stance: Stance) => void;
+  subline?: (symbol: string) => string | null;
 }) {
   return (
     <>
-      {stocks.map(s => (
-        <div className="ez-stockrow" key={s.symbol}>
-          <div className="ez-ticker">
-            {s.symbol}
+      {stocks.map(s => {
+        const sub = subline?.(s.symbol) ?? null;
+        return (
+          <div className="ez-stockrow" key={s.symbol}>
+            <div className="ez-ticker">
+              {s.symbol}
+              {sub && <small>{sub}</small>}
+            </div>
+            <div className="ez-seg2" role="group" aria-label={`ถ้าราคาลง อยากได้ ${s.symbol} ไว้ถือไหม`}>
+              <button className="yes" aria-pressed={s.stance === "want"} onClick={() => onStance(s.symbol, "want")}>อยากถือ</button>
+              <button className="no" aria-pressed={s.stance === "avoid"} onClick={() => onStance(s.symbol, "avoid")}>ไม่อยากถือ</button>
+            </div>
           </div>
-          <div className="ez-seg2" role="group" aria-label={`ถ้าราคาลง อยากได้ ${s.symbol} ไว้ถือไหม`}>
-            <button className="yes" aria-pressed={s.stance === "want"} onClick={() => onStance(s.symbol, "want")}>อยากถือ</button>
-            <button className="no" aria-pressed={s.stance === "avoid"} onClick={() => onStance(s.symbol, "avoid")}>ไม่อยากถือ</button>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </>
   );
 }
 
-export function Onboarding({ step, profile, onPatch, onGo, browserPreview }: {
+export function Onboarding({ step, profile, onPatch, onGo, browserPreview, subline }: {
   step: 1 | 2 | 3;
   profile: EasyProfile;
   onPatch: (patch: Partial<EasyProfile>) => void;
   onGo: (screen: "ob1" | "ob2" | "ob3" | "home") => void;
   browserPreview: boolean;
+  subline?: (symbol: string) => string | null;
 }) {
   const [cashText, setCashText] = useState(profile.cash ? profile.cash.toLocaleString("en-US") : "");
   useEffect(() => { setCashText(profile.cash ? profile.cash.toLocaleString("en-US") : ""); }, [profile.cash]);
@@ -48,6 +56,7 @@ export function Onboarding({ step, profile, onPatch, onGo, browserPreview }: {
         <div className="ez-panel ez-gap-l">
           <StockStanceList
             stocks={profile.stocks}
+            subline={subline}
             onStance={(symbol, stance) =>
               onPatch({ stocks: profile.stocks.map(s => (s.symbol === symbol ? { ...s, stance } : s)) })}
           />

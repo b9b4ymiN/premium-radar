@@ -1,7 +1,8 @@
 /** Step 4 — the three-item checklist before deciding, ported from the
  *  prototype. The "ready" button unlocks only when every item is ticked, and
  *  the cash item is disabled (and marked เงินไม่พอ) when the reserved cash
- *  exceeds what the user set aside. */
+ *  exceeds what the user set aside — a disabled item never counts as ticked,
+ *  so a cash-short user cannot pass the gate. */
 
 import { useEffect, useState } from "react";
 import type { EasyIdea, EasyIdeas, EasyProfile } from "../types/easy";
@@ -33,7 +34,9 @@ export function Checklist(p: Props) {
   const [checked, setChecked] = useState<boolean[]>([false, false, false]);
   useEffect(() => { setChecked([false, false, false]); }, [o.occ]);
 
-  const all = checked.every((c, i) => c || (i === 1 && !enough));
+  // every item must be ticked by hand; a disabled item (cash short) can never
+  // count, so the ready button stays disabled until the user can actually pay
+  const all = checked.every(c => c);
 
   return (
     <section className="ez-screen">

@@ -22,7 +22,7 @@ import { Checklist } from "./Checklist";
 import { WebullFieldMap, NotYet } from "./WebullFieldMap";
 import { EzIcon, EzSprite } from "./icons";
 import { daysUntil, usd } from "./util";
-import { SAMPLE_HELD, sampleIdeas, sampleProfile } from "./sample";
+import { SAMPLE_HELD, SAMPLE_STOCKS, sampleIdeas, sampleProfile } from "./sample";
 import { easyInvoke } from "./invoke";
 import "./easy.css";
 
@@ -180,16 +180,26 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
   const second = profile.stocks.map(s => s.symbol.toUpperCase()).find(s => s !== primary) ?? null;
 
   // entering home/s1/s2 points the engine at the primary stock and makes sure
-  // its ideas are loaded (home also wants the second stock's skip reason)
+  // its ideas are loaded (home also wants the second stock's skip reason).
+  // Profile edits change what the agent should recommend, so once the cached
+  // ideas were computed for a different profile they are refetched.
+  const profileSig = `${profile.cash}|${profile.risk}|${profile.stocks.map(s => `${s.symbol}:${s.stance}`).join(",")}`;
+  const fetchedSig = useRef<string | null>(null);
   useEffect(() => {
     if (screen !== "home" && screen !== "s1" && screen !== "s2") return;
+    const stale = fetchedSig.current !== null && fetchedSig.current !== profileSig;
     const need = screen === "home" && second ? [primary, second] : [primary];
+    let fetchedAny = false;
     need.forEach(S => {
       const st = ideasStateRef.current[S];
-      if (!st?.data && !st?.loading) void fetchIdeas(S);
+      if ((!st?.data || stale) && !st?.loading) {
+        void fetchIdeas(S);
+        fetchedAny = true;
+      }
     });
+    if (fetchedAny || fetchedSig.current == null) fetchedSig.current = profileSig;
     if (symbol.toUpperCase() !== primary) setSymbol(primary);
-  }, [screen, primary, second, fetchIdeas, symbol, setSymbol]);
+  }, [screen, primary, second, fetchIdeas, symbol, setSymbol, profileSig]);
 
   // the scan settled: retry any ideas still waiting on the engine, now
   const prevLoading = useRef(loading);
@@ -234,6 +244,20 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
       })
       .filter((h): h is HeldContract => h != null);
   }, [browserPreview, positions, stock, profile]);
+
+  // ---------- ticker sub-lines (onboarding + step 1) ----------
+  // The second line under each ticker: the live quote when the app knows it
+  // (App tracks one symbol at a time), the prototype's demo lines in browser
+  // preview — and nothing at all when the price is unknown.
+  const stockSubline = useCallback((sym: string): string | null => {
+    const S = sym.toUpperCase();
+    if (browserPreview) {
+      const info = SAMPLE_STOCKS[S];
+      return info ? `${info.name} · ราคาตอนนี้ ${usd(info.spot, 2)}` : null;
+    }
+    if (stock && stock.symbol.toUpperCase() === S) return `ราคาตอนนี้ ${usd(stock.price, 2)}`;
+    return null;
+  }, [browserPreview, stock]);
 
   // ---------- navigation ----------
   const primaryState = ideasState[primary] ?? { data: null, loading: false, error: null };
@@ -299,6 +323,7 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
             onPatch={patchProfile}
             onGo={s => (s === "home" ? finishOnboarding() : go(s))}
             browserPreview={browserPreview}
+            subline={stockSubline}
           />
         )}
 
@@ -323,7 +348,7 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
             <h1>หุ้นที่ฉันสนใจ</h1>
             <p className="ez-lead">เลือกหุ้นที่อยากให้ผู้ช่วยหาไอเดีย ตอนนี้ตั้งเงินไว้ <strong>{usd(profile.cash)}</strong></p>
             <div className="ez-panel ez-gap-l">
-              <StockStanceList stocks={profile.stocks} onStance={onStance} />
+              <StockStanceList stocks={profile.stocks} onStance={onStance} subline={stockSubline} />
             </div>
             <div className="ez-actions"><button className="ez-btn primary" onClick={openIdeas}>ให้ผู้ช่วยหาไอเดีย</button></div>
           </section>

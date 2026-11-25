@@ -4,8 +4,9 @@
 
 import { useEffect, useState } from "react";
 import type { EasyIdeas, EasyProfile } from "../types/easy";
+import { marketClockText, usSession } from "../components/shared/usSession";
 import { EzIcon } from "./icons";
-import { clockLine, daysUntil, expiryTh, sourceLabel, usd } from "./util";
+import { badgeText, daysUntil, expiryTh, usd } from "./util";
 
 export interface HeldContract {
   symbol: string;
@@ -32,20 +33,49 @@ interface Props {
 }
 
 export function EasyHome(p: Props) {
-  const [clock, setClock] = useState(() => clockLine(new Date()));
+  // the pro mode's DST-correct clock, reused verbatim; the dot is lit only
+  // while the regular New York session is running
+  const [clock, setClock] = useState(() => {
+    const now = new Date();
+    return { open: usSession(now) === "regular", text: marketClockText(now) };
+  });
   useEffect(() => {
-    const t = window.setInterval(() => setClock(clockLine(new Date())), 60_000);
+    const t = window.setInterval(() => {
+      const now = new Date();
+      setClock({ open: usSession(now) === "regular", text: marketClockText(now) });
+    }, 60_000);
     return () => window.clearInterval(t);
   }, []);
 
-  const rec = p.ideas?.ideas.find(i => i.recommended) ?? p.ideas?.ideas[0] ?? null;
+  // the agent's pick is exactly the recommended idea — no silent fallback
+  const rec = p.ideas?.ideas.find(i => i.recommended) ?? null;
   const sample = p.browserPreview || p.ideas?.source === "DEMO";
+  const badge = p.ideas ? (
+    <span className={`ez-src${sample ? " amber" : ""}`}>{badgeText(p.ideas.source, sample)}</span>
+  ) : null;
+
+  // The home sentence is UI copy built here from the profile and the
+  // recommended idea, exactly as the prototype's renderHome; the contract's
+  // agent_say_th is the IDEAS-step (3-choices) sentence and stays on step 2.
+  const homeSay = (() => {
+    const d = p.ideas;
+    if (!d) return null;
+    if (d.ideas.length === 0) return `${d.symbol} ยังไม่มีไอเดียที่ดีพอสำหรับคืนนี้`;
+    if (rec == null) {
+      const minCost = Math.min(...d.ideas.map(i => i.cost));
+      return `คืนนี้ยังไม่มีไอเดีย ${d.symbol} ที่ใช้เงินไม่เกิน <strong>${usd(p.profile.cash)}</strong> เพราะต้องกันเงินไว้อย่างน้อย ${usd(minCost)} ต่อ 1 สัญญา`;
+    }
+    const want = p.profile.stocks.find(s => s.symbol.toUpperCase() === d.symbol.toUpperCase())?.stance !== "avoid";
+    const tail = p.skip ? ` ส่วน ${p.skip.symbol} ยังไม่มีไอเดียที่ดีพอ` : "";
+    return `คืนนี้มี <strong>1 ไอเดีย</strong>ที่ตรงกับที่คุณตั้งไว้ คือ ${d.symbol}${want ? " ซึ่งคุณอยากถืออยู่แล้ว" : " (คุณตั้งไว้ว่าไม่อยากถือ ผมจึงเลือกทางที่โอกาสต้องซื้อหุ้นต่ำ)"}${tail}`;
+  })();
 
   return (
     <section className="ez-screen">
       <div className="ez-clock">
         <span className={`ez-dot ${clock.open ? "open" : ""}`} />
-        <span>{clock.text}</span>
+        {/* the Thai time portion ("HH:MM น.") renders bold, as in the prototype */}
+        <span dangerouslySetInnerHTML={{ __html: clock.text.replace(/(\d{2}:\d{2} น\.)/g, "<b>$1</b>") }} />
       </div>
 
       <div className="ez-agent ez-gap-l">
@@ -61,7 +91,7 @@ export function EasyHome(p: Props) {
           ) : p.ideas == null ? (
             <p className="ez-say ez-muted">ผู้ช่วยกำลังคำนวณไอเดียของคืนนี้ รอสักครู่</p>
           ) : (
-            <p className="ez-say" dangerouslySetInnerHTML={{ __html: p.ideas.agent_say_th }} />
+            homeSay && <p className="ez-say" dangerouslySetInnerHTML={{ __html: homeSay }} />
           )}
         </div>
       </div>
@@ -74,8 +104,7 @@ export function EasyHome(p: Props) {
                 <div>
                   <div className="ez-what">
                     {p.ideas.symbol} · รับเงินตอนนี้ ถ้ายอมซื้อหุ้นที่ ${rec.strike}
-                    <span className="ez-src">{sourceLabel(p.ideas.source)}</span>
-                    {sample && <span className="ez-src" style={{ color: "var(--amber)", borderColor: "#5a4724" }}>ข้อมูลตัวอย่าง</span>}
+                    {badge}
                   </div>
                   <div className="ez-big ez-money ez-pos">{usd(rec.credit)}</div>
                 </div>
@@ -86,12 +115,25 @@ export function EasyHome(p: Props) {
                   รอ {rec.days} วัน ถึง{expiryTh(rec.expiry)} · ถูกกว่าราคาตอนนี้ {rec.below_spot_pct.toFixed(1)}%
                 </div>
               </>
+            ) : p.ideas.ideas.length > 0 ? (
+              // cash too short for every idea — the prototype's not-enough-cash state
+              <>
+                <div>
+                  <div className="ez-what">
+                    {p.ideas.symbol} · เงินที่ตั้งไว้ยังไม่พอ
+                    {badge}
+                  </div>
+                  <div className="ez-big ez-money">—</div>
+                </div>
+                <span className="ez-chance">ต้องกันไว้ {usd(Math.min(...p.ideas.ideas.map(i => i.cost)))}</span>
+                <div className="ez-sub">ลองเพิ่มเงินที่ตั้งไว้ หรือเพิ่มหุ้นที่ราคาต่ำกว่านี้</div>
+              </>
             ) : (
               <>
                 <div>
                   <div className="ez-what">
                     {p.ideas.symbol} · คืนนี้ยังไม่มีไอเดียที่พอดีกับที่คุณตั้งไว้
-                    <span className="ez-src">{sourceLabel(p.ideas.source)}</span>
+                    {badge}
                   </div>
                   <div className="ez-big ez-money">—</div>
                 </div>
@@ -164,9 +206,24 @@ export function EasyHome(p: Props) {
   );
 }
 
+/** Where a held contract sits against its strike: the status label, the dot
+ *  class, the colour the "ห่าง x%" label takes, and the soft gap fill pair
+ *  that follows the same colour. Thresholds: ≥1.05×strike safe, between
+ *  strike and 1.05×strike near, below strike already past the buy point. */
+function heldStatus(spot: number | null, strike: number) {
+  if (spot == null)
+    return { cls: "none", label: "ยังไม่มีราคา", color: "var(--dim)", gap: { background: "#12332b", boxShadow: "inset 0 0 0 1px #1f6b55" } };
+  if (spot >= strike * 1.05)
+    return { cls: "", label: "ปลอดภัย", color: "var(--green)", gap: { background: "#12332b", boxShadow: "inset 0 0 0 1px #1f6b55" } };
+  if (spot >= strike)
+    return { cls: "warn", label: "ใกล้จุดที่ต้องซื้อหุ้น", color: "var(--amber)", gap: { background: "#3a2e1a", boxShadow: "inset 0 0 0 1px #6a5229" } };
+  return { cls: "neg", label: "ต่ำกว่าจุดที่ต้องซื้อหุ้นแล้ว", color: "var(--red)", gap: { background: "#3a1c24", boxShadow: "inset 0 0 0 1px #6b2c38" } };
+}
+
 function HeldRow({ h, first }: { h: HeldContract; first: boolean }) {
   const days = h.daysLeft ?? daysUntil(h.expiry);
   const away = h.spot != null ? ((h.spot - h.strike) / h.spot) * 100 : null;
+  const st = heldStatus(h.spot, h.strike);
   // price line geometry: a window around the strike and today's price
   const lo = h.spot != null ? Math.min(h.strike, h.spot) * 0.96 : h.strike * 0.96;
   const hi = h.spot != null ? Math.max(h.strike, h.spot) * 1.03 : h.strike * 1.1;
@@ -184,7 +241,7 @@ function HeldRow({ h, first }: { h: HeldContract; first: boolean }) {
             เหลือ {Math.max(0, days)} วัน
           </div>
         </div>
-        <span className="ez-status-ok">ปลอดภัย</span>
+        <span className={"ez-status-ok" + (st.cls ? ` ${st.cls}` : "")}>{st.label}</span>
         {h.spot != null && np != null && away != null && (
           <div
             className="ez-pline"
@@ -192,12 +249,20 @@ function HeldRow({ h, first }: { h: HeldContract; first: boolean }) {
             aria-label={`ราคา ${h.symbol} ตอนนี้ $${h.spot.toFixed(2)} ${away >= 0 ? "สูงกว่า" : "ต่ำกว่า"}จุดที่ต้องซื้อหุ้น $${h.strike} อยู่ ${Math.abs(away).toFixed(1)}%`}
           >
             <span className="ez-track" />
-            <span className="ez-plgap" style={{ left: `${Math.min(sp, np)}%`, width: `${Math.abs(np - sp)}%` }} />
+            <span
+              className="ez-plgap"
+              style={{
+                left: `${Math.min(sp, np)}%`,
+                width: `${Math.abs(np - sp)}%`,
+                background: st.gap.background,
+                boxShadow: st.gap.boxShadow,
+              }}
+            />
             <span className="ez-mk strike" style={{ left: `${sp}%` }} />
             <span className="ez-mk now" style={{ left: `${np}%` }} />
             <span className="ez-lb top" style={{ left: `${sp}%` }}>ต้องซื้อหุ้นถ้าต่ำกว่า ${h.strike}</span>
             <span className="ez-lb bot" style={{ left: `${np}%` }}>ตอนนี้ ${h.spot.toFixed(2)}</span>
-            <span className="ez-lb bot" style={{ left: `${(sp + np) / 2}%`, color: "var(--green)" }}>ห่าง {Math.abs(away).toFixed(1)}%</span>
+            <span className="ez-lb bot" style={{ left: `${(sp + np) / 2}%`, color: st.color }}>ห่าง {Math.abs(away).toFixed(1)}%</span>
           </div>
         )}
       </div>

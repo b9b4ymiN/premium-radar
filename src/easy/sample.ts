@@ -4,13 +4,20 @@
  *  balanced 175 / 4.15; high 178 / 2.85 (9 days). */
 
 import type { EasyIdea, EasyIdeas, EasyProfile, IdeaLevel } from "../types/easy";
-import { usd } from "./util";
+import { LEVEL_TH, expiryTh, usd } from "./util";
 
 /** Sample exchange rate for the onboarding money hint only. */
 export const SAMPLE_THB = 32.4;
 
-export const NVDA_SPOT = 182.45;
-const VLO_SPOT = 142.30;
+/** The prototype's two demo stocks — names and prices for the browser-preview
+ *  sub-lines under each ticker. */
+export const SAMPLE_STOCKS: Record<string, { name: string; spot: number }> = {
+  NVDA: { name: "NVIDIA · ชิปคอมพิวเตอร์", spot: 182.45 },
+  VLO: { name: "Valero Energy · โรงกลั่นน้ำมัน", spot: 142.30 },
+};
+
+const NVDA_SPOT = SAMPLE_STOCKS.NVDA.spot;
+const VLO_SPOT = SAMPLE_STOCKS.VLO.spot;
 
 export function sampleProfile(onboarded: boolean): EasyProfile {
   return {
@@ -114,9 +121,10 @@ export function sampleIdeas(symbol: string, profile: EasyProfile): EasyIdeas {
     cash_short: i.cost > profile.cash,
     recommended: rec != null && i.level === rec.level,
   }));
+  // the contract's agent_say_th is the IDEAS-step sentence (the 3 choices)
   const agent_say_th = rec
-    ? `คืนนี้มี <strong>1 ไอเดีย</strong>ที่ตรงกับที่คุณตั้งไว้ คือ NVDA${want ? " ซึ่งคุณอยากถืออยู่แล้ว" : " (คุณตั้งไว้ว่าไม่อยากถือ ผมจึงเลือกทางที่โอกาสต้องซื้อหุ้นต่ำ)"} ส่วน VLO ยังไม่มีไอเดียที่ดีพอ`
-    : `คืนนี้ยังไม่มีไอเดีย NVDA ที่ใช้เงินไม่เกิน <strong>${usd(profile.cash)}</strong> เพราะต้องกันเงินไว้อย่างน้อย ${usd(16_500)} ต่อ 1 สัญญา`;
+    ? `NVDA มี 3 ทางเลือก คุณตั้งเงินไว้ <strong>${usd(profile.cash)}</strong> ${want ? `และยอมให้ต้องซื้อหุ้นได้ราว <strong>${profile.risk} ใน 10</strong> ครั้ง` : `และ<strong>ไม่อยากถือ NVDA</strong> ผมจึงเลือกเฉพาะทางที่โอกาสต้องซื้อหุ้นต่ำ`} ผมแนะนำ <strong>ทาง${LEVEL_TH[rec.level]}</strong>`
+    : `เงินที่ตั้งไว้ ${usd(profile.cash)} ยังไม่พอสำหรับ NVDA ทุกทาง ต้องกันไว้อย่างน้อย ${usd(NVDA_IDEAS[0].cost)}`;
   return {
     symbol: "NVDA",
     spot: NVDA_SPOT,
@@ -151,14 +159,30 @@ export const SAMPLE_HELD: HeldContract = {
   avoid: true,
 };
 
-/** The prototype's canned ask-agent answers (browser preview only). */
-export function sampleAnswer(question: string, idea: EasyIdea): string {
+/** The prototype's canned ask-agent answers (browser preview only), with every
+ *  prototype branch of "ทำไมไม่เลือกตัวที่ได้เงินมากกว่า?" ported: high option
+ *  not affordable / stance avoid / viewing the high option itself / the
+ *  risk-comfort comparison. */
+export function sampleAnswer(question: string, idea: EasyIdea, ideas: EasyIdeas, profile: EasyProfile): string {
+  const high = ideas.ideas.find(i => i.level === "high") ?? null;
+  const risk = profile.risk;
   switch (question) {
     case "ถ้าได้หุ้นแล้ว ทำอะไรต่อ?":
-      return `ถ้าได้ NVDA 100 หุ้น ต้นทุนจริงของคุณคือ $${idea.breakeven.toFixed(2)} ต่อหุ้น (เพราะได้เงิน ${usd(idea.credit)} มาแล้ว) คุณถือไว้เฉยๆ ได้ หรือจะ<strong>ขาย Call</strong> เพื่อรับเงินเพิ่มระหว่างรอ ซึ่งผมจะอธิบายเป็นขั้นตอนให้ตอนนั้นครับ`;
-    case "ทำไมไม่เลือกตัวที่ได้เงินมากกว่า?":
-      return `ทาง “ได้เงินมากต่อวัน” ได้ $285 ใน 9 วัน แต่โอกาสต้องซื้อหุ้น 30% หรือราว 3 ใน 10 ครั้ง ซึ่งมากกว่าที่คุณตั้งไว้ (1 ใน 10) ทางที่ดูอยู่ได้น้อยกว่า แต่ต้องซื้อหุ้นน้อยครั้งกว่า`;
+      return `ถ้าได้ ${ideas.symbol} 100 หุ้น ต้นทุนจริงของคุณคือ $${idea.breakeven.toFixed(2)} ต่อหุ้น (เพราะได้เงิน ${usd(idea.credit)} มาแล้ว) คุณถือไว้เฉยๆ ได้ หรือจะ<strong>ขาย Call</strong> เพื่อรับเงินเพิ่มระหว่างรอ ซึ่งผมจะอธิบายเป็นขั้นตอนให้ตอนนั้นครับ`;
+    case "ทำไมไม่เลือกตัวที่ได้เงินมากกว่า?": {
+      if (high && high.cost > profile.cash && idea.level !== "high")
+        return `ทาง “ได้เงินมากต่อวัน” ต้องกันเงินไว้ ${usd(high.cost)} มากกว่าเงินที่คุณตั้งไว้ (${usd(profile.cash)}) จึงเลือกไม่ได้ และยังมีโอกาสต้องซื้อหุ้นถึง ${Math.round(high.assign_pct)}%`;
+      if (ideas.stance !== "want" && idea.level !== "high")
+        return `ทาง “ได้เงินมากต่อวัน” มีโอกาสต้องซื้อหุ้น ${Math.round(high?.assign_pct ?? 30)}% ซึ่งไม่เหมาะ เพราะคุณบอกว่าไม่อยากถือ ${ideas.symbol}`;
+      if (idea.level === "high")
+        return `ทางนี้ได้เงินต่อวันมากที่สุดอยู่แล้ว แต่โอกาสต้องซื้อหุ้น ${Math.round(idea.assign_pct)}% หมายความว่าราว ${Math.round(idea.assign_pct / 10)} ใน 10 ครั้งคุณจะได้หุ้นจริง ${risk < 3 ? `ซึ่งมากกว่าที่คุณตั้งไว้ (${risk} ใน 10)` : "ตรงกับที่คุณตั้งไว้พอดี"}`;
+      return high
+        ? `ทาง “ได้เงินมากต่อวัน” ได้ ${usd(high.credit)} ใน ${high.days} วัน แต่โอกาสต้องซื้อหุ้น ${Math.round(high.assign_pct)}% หรือราว ${Math.round(high.assign_pct / 10)} ใน 10 ครั้ง ${risk < 3 ? `ซึ่งมากกว่าที่คุณตั้งไว้ (${risk} ใน 10)` : "ถ้ารับได้ ก็เลือกทางนั้นได้"} ทางที่ดูอยู่ได้น้อยกว่า แต่ต้องซื้อหุ้นน้อยครั้งกว่า`
+        : `ตอนนี้ยังไม่มีทางเลือกที่ได้เงินมากกว่าทางที่คุณดูอยู่ครับ`;
+    }
+    case "เปลี่ยนใจกลางทางได้ไหม?":
+      return `ได้ครับ คุณ<strong>ซื้อสัญญาคืน</strong>ได้ทุกวันที่ตลาดเปิด ถ้าราคา option ตอนนั้นต่ำกว่า $${idea.premium.toFixed(2)} คุณจะเหลือกำไรบางส่วน ถ้าสูงกว่า จะขาดทุนส่วนต่าง`;
     default:
-      return `ส่วนใหญ่การต้องซื้อหุ้นจะตัดสินกันที่ราคาปิดวันหมดอายุ แต่ถ้า NVDA ลงไปต่ำกว่า $${idea.strike} มากๆ ก็<strong>อาจถูกให้ซื้อหุ้นก่อนวันหมดอายุได้</strong> (ใช้เงินก้อนเดิมที่กันไว้) ระหว่างทางราคา option จะแพงขึ้น ถ้าอยากเลิกสัญญาก่อน ต้อง<strong>ซื้อคืน</strong>ในราคาที่แพงกว่า $${idea.premium.toFixed(2)} ที่ขายไป จึงขาดทุนส่วนต่าง แต่ถ้ารอถึงวันหมดอายุแล้วราคากลับขึ้นมาเหนือ $${idea.strike} ก็ยังเก็บ ${usd(idea.credit)} ครบ`;
+      return `ส่วนใหญ่การต้องซื้อหุ้นจะตัดสินกันที่ราคาปิด${expiryTh(idea.expiry)} แต่ถ้า ${ideas.symbol} ลงไปต่ำกว่า $${idea.strike} มากๆ ก็<strong>อาจถูกให้ซื้อหุ้นก่อนวันหมดอายุได้</strong> (ใช้เงินก้อนเดิมที่กันไว้) ระหว่างทางราคา option จะแพงขึ้น ถ้าอยากเลิกสัญญาก่อน ต้อง<strong>ซื้อคืน</strong>ในราคาที่แพงกว่า $${idea.premium.toFixed(2)} ที่ขายไป จึงขาดทุนส่วนต่าง แต่ถ้ารอถึงวันหมดอายุแล้วราคากลับขึ้นมาเหนือ $${idea.strike} ก็ยังเก็บ ${usd(idea.credit)} ครบ`;
   }
 }

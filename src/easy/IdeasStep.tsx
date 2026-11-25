@@ -4,7 +4,7 @@
 
 import type { EasyIdea, EasyIdeas } from "../types/easy";
 import { EzIcon } from "./icons";
-import { LEVEL_TH, expiryTh, sourceLabel, usd } from "./util";
+import { LEVEL_TH, badgeText, expiryTh, usd } from "./util";
 
 interface Props {
   ideas: EasyIdeas | null;
@@ -50,8 +50,7 @@ export function IdeasStep(p: Props) {
         <div>
           <div className="ez-agent-name">
             ผู้ช่วย · {d.symbol} ราคาตอนนี้ ${d.spot.toFixed(2)}
-            <span className="ez-src">{sourceLabel(d.source)}</span>
-            {sample && <span className="ez-src" style={{ color: "var(--amber)", borderColor: "#5a4724" }}>ข้อมูลตัวอย่าง</span>}
+            <span className={`ez-src${sample ? " amber" : ""}`}>{badgeText(d.source, sample)}</span>
           </div>
           <p className="ez-say" dangerouslySetInnerHTML={{ __html: d.agent_say_th }} />
         </div>

@@ -40,6 +40,7 @@
   border: 1px solid var(--border-strong); background: var(--surface2);
   padding: 1px 9px; border-radius: 999px; vertical-align: middle; margin-left: 8px;
 }
+.ez-src.amber { color: var(--amber); border-color: #5a4724; }
 
 /* ---------- progress (decision flow) ---------- */
 .ez-flowbar {
@@ -105,10 +106,15 @@
 }
 .ez-status-ok { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; color: #d3dbe7; }
 .ez-status-ok::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.ez-status-ok.warn::before { background: var(--amber); }
+.ez-status-ok.neg::before { background: var(--red); }
+.ez-status-ok.none::before { background: var(--dim); }
 .ez-chance.warn { background: #3a2e1a; color: var(--amber); }
 .ez-skip { display: grid; grid-template-columns: 24px 1fr; gap: 12px; color: var(--secondary); }
 
-.ez-clock { display: flex; align-items: center; gap: 10px; color: var(--secondary); font-size: 15px; flex-wrap: wrap; }
+/* no flex-wrap: the dot must never sit alone on a line — the text wraps
+   inside its own span instead */
+.ez-clock { display: flex; align-items: center; gap: 10px; color: var(--secondary); font-size: 15px; }
 .ez-clock b { color: var(--text); font-weight: 600; }
 .ez-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
 .ez-dot.open { background: var(--green); }
