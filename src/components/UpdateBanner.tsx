@@ -4,7 +4,10 @@ import type { Update } from "@tauri-apps/plugin-updater";
 /** The banner's lifecycle — hidden until a newer version is found. */
 type BannerState = "hidden" | "available" | "installing" | "error";
 
+type InstallKind = "installed" | "portable";
+
 const CHECK_DELAY_MS = 5_000;
+const RELEASES_URL = "https://github.com/b9b4ymiN/premium-radar/releases/latest";
 const ERR_CHECK = "ตรวจสอบอัปเดตไม่สำเร็จ";
 const ERR_INSTALL = "อัปเดตไม่สำเร็จ กรุณาลองใหม่ภายหลัง";
 
@@ -13,12 +16,18 @@ const ERR_INSTALL = "อัปเดตไม่สำเร็จ กรุณ�
  * the browser preview renders nothing). The check runs once, five seconds
  * after start; any failure just shows a short Thai message that can be
  * dismissed, so it never blocks the app.
+ *
+ * An installed copy updates itself in one click. A portable copy (no
+ * `uninstall.exe` next to the exe — detected via the `install_kind` command)
+ * only gets a link to the release page: it must never self-install. If the
+ * kind cannot be detected, treat it as portable — the safe direction.
  */
 export default function UpdateBanner() {
   const [state, setState] = useState<BannerState>("hidden");
   const [version, setVersion] = useState("");
   const [pct, setPct] = useState<number | null>(null);
   const [error, setError] = useState(ERR_CHECK);
+  const [portable, setPortable] = useState(false);
   const updateRef = useRef<Update | null>(null);
 
   useEffect(() => {
@@ -27,6 +36,15 @@ export default function UpdateBanner() {
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        try {
+          const kind = await invoke<InstallKind>("install_kind");
+          setPortable(kind === "portable");
+        } catch (e) {
+          // an unknown install kind must not lead to a self-install offer
+          console.warn("install kind detection failed:", e);
+          setPortable(true);
+        }
         const { check } = await import("@tauri-apps/plugin-updater");
         const update = await check();
         if (cancelled || !update?.available) return;
@@ -47,7 +65,18 @@ export default function UpdateBanner() {
 
   if (state === "hidden") return null;
 
+  /** Portable copies leave updating to the release page, never the updater. */
+  const openReleases = async () => {
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(RELEASES_URL);
+    } catch (e) {
+      console.warn("opening the release page failed:", e);
+    }
+  };
+
   const install = async () => {
+    if (portable) return;
     setState("installing");
     setPct(null);
     try {
@@ -84,7 +113,14 @@ export default function UpdateBanner() {
 
   return (
     <div className="upd-bar" role="status">
-      {state === "available" && (
+      {state === "available" && portable && (
+        <>
+          <span className="upd-msg">มีเวอร์ชันใหม่ v{version} — ดาวน์โหลด</span>
+          <button className="upd-btn" onClick={() => void openReleases()}>ดาวน์โหลด</button>
+          <button className="upd-btn ghost" onClick={() => setState("hidden")}>ภายหลัง</button>
+        </>
+      )}
+      {state === "available" && !portable && (
         <>
           <span className="upd-msg">มีเวอร์ชันใหม่ v{version}</span>
           <button className="upd-btn" onClick={() => void install()}>อัปเดตเลย</button>

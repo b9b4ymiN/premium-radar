@@ -36,9 +36,12 @@
 
 ## Download & install
 
-1. Download **`PREMIUM.RADAR_x.y.z_x64-setup.exe`** from the [latest release](https://github.com/b9b4ymiN/premium-radar/releases/latest) (an `.msi` is also available).
-2. Run it. Because the installer is not yet code-signed, Windows SmartScreen may show **"Windows protected your PC"** — choose **More info → Run anyway**.
-3. If Microsoft Edge WebView2 is missing, the installer downloads it (internet required).
+Two files are on the [latest release](https://github.com/b9b4ymiN/premium-radar/releases/latest) page:
+
+- **`PREMIUM-RADAR_x.y.z_x64-setup.exe`** — installer, recommended. Installs per-user and the app then updates itself in one click. If Microsoft Edge WebView2 is missing, the installer downloads it (internet required).
+- **`PREMIUM-RADAR_x.y.z_x64-portable.exe`** — portable. No install — just run the file. No auto-update (the app links you to the release page instead) and it needs WebView2, which Windows 11 already includes.
+
+Because the app is not yet code-signed, Windows SmartScreen may show **"Windows protected your PC"** — choose **More info → Run anyway**.
 
 Requirements: Windows 10 or 11 (x64) and your own **Webull Thailand** account with OpenAPI access.
 
@@ -68,7 +71,7 @@ npm install
 
 npm run dev          # browser preview with mock data (no keys, no desktop shell)
 npm run tauri dev    # the desktop app in dev mode
-npm run tauri build  # NSIS + MSI installers
+npm run tauri build  # NSIS installer + portable exe
 
 npm run verify       # all gates: typecheck + lint, build, fmt, clippy, tests
 ```

@@ -36,9 +36,12 @@
 
 ## ดาวน์โหลดและติดตั้ง
 
-1. ดาวน์โหลดไฟล์ **`PREMIUM.RADAR_x.y.z_x64-setup.exe`** จาก [Release ล่าสุด](https://github.com/b9b4ymiN/premium-radar/releases/latest) (มีไฟล์ `.msi` ให้เลือกด้วย)
-2. ดับเบิลคลิกเพื่อติดตั้ง ถ้า Windows ขึ้นหน้าจอสีน้ำเงิน **"Windows protected your PC"** (เพราะยังไม่ได้ซื้อใบรับรอง code signing) ให้กด **More info → Run anyway**
-3. ถ้าเครื่องยังไม่มี Microsoft Edge WebView2 ตัวติดตั้งจะดาวน์โหลดให้เอง (ต้องต่ออินเทอร์เน็ต)
+หน้า [Release ล่าสุด](https://github.com/b9b4ymiN/premium-radar/releases/latest) มีให้เลือก 2 ไฟล์:
+
+- **`PREMIUM-RADAR_x.y.z_x64-setup.exe`** — ตัวติดตั้ง (แนะนำ) ติดตั้งแบบ per-user แล้วโปรแกรมอัปเดตตัวเองได้ในคลิกเดียว ถ้าเครื่องยังไม่มี Microsoft Edge WebView2 ตัวติดตั้งจะดาวน์โหลดให้ (ต้องต่ออินเทอร์เน็ต)
+- **`PREMIUM-RADAR_x.y.z_x64-portable.exe`** — แบบพกพา ไม่ต้องติดตั้ง รันไฟล์นี้ได้เลย แต่ไม่มีอัปเดตอัตโนมัติ (โปรแกรมจะพาไปหน้า Release แทน) และต้องมี WebView2 ซึ่ง Windows 11 มีให้อยู่แล้ว
+
+เพราะโปรแกรมยังไม่ได้ซื้อใบรับรอง code signing ถ้า Windows ขึ้นหน้าจอ **"Windows protected your PC"** (SmartScreen) ให้กด **More info → Run anyway**
 
 ต้องใช้: Windows 10 หรือ 11 (x64) และบัญชี **Webull Thailand** ของคุณเองที่เปิดใช้ OpenAPI แล้ว
 
@@ -68,7 +71,7 @@ npm install
 
 npm run dev          # ดูหน้าตาใน browser ด้วยข้อมูลจำลอง (ไม่ต้องมี key)
 npm run tauri dev    # เปิดโปรแกรมจริงในโหมด dev
-npm run tauri build  # สร้างตัวติดตั้ง NSIS + MSI
+npm run tauri build  # สร้างตัวติดตั้ง NSIS + ไฟล์ portable
 
 npm run verify       # ตรวจทั้งหมด: typecheck + lint, build, fmt, clippy, test
 ```

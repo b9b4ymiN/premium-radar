@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PREMIUM RADAR",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "identifier": "com.premiumradar.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -25,7 +25,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": ["nsis"],
     "createUpdaterArtifacts": true,
     "publisher": "THPForge",
     "shortDescription": "CSP / Covered Call screener for US stocks via Webull Thailand API",
@@ -47,7 +47,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDAxRUUwMUE2QjQxN0RBNDEKUldSQjJoZTBwZ0h1QVVxY3oyajgxL3NiNUtPOUkzTTRlYmNXdW5EdmN2VFVmWnQ0bmFmY2ZNcEIK",
       "endpoints": [
-        "https://github.com/b9b4ymiN/premium-radar/releases/latest/download/latest.json"
+        "https://raw.githubusercontent.com/b9b4ymiN/premium-radar/updater/latest.json"
       ],
       "windows": {
         "installMode": "passive"

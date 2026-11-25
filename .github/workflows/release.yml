@@ -28,27 +28,54 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build and draft the release
+      # Build only: no tagName/releaseId, so the action neither creates nor
+      # uploads a release. Signing env stays so `createUpdaterArtifacts`
+      # keeps producing a signed NSIS updater artifact during the build.
+      - name: Build the app
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: v__VERSION__
-          releaseName: "PREMIUM RADAR v__VERSION__"
-          releaseBody: |
-            PREMIUM RADAR v__VERSION__
 
-            อัปเดตในเวอร์ชันนี้ (What's new)
-            - ตรวจหาเวอร์ชันใหม่อัตโนมัติเมื่อเปิดโปรแกรม และอัปเดตได้ในคลิกเดียว (in-app auto-update)
+      # Exactly two assets: the renamed NSIS installer and the bare app exe.
+      # The updater manifest is NOT attached here — publishing the draft
+      # triggers publish-updater.yml, which signs and commits latest.json
+      # to the `updater` branch.
+      - name: Create draft release with two assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          # cargo workspace root is the repo root, so builds land in ./target
+          # (src-tauri/target is a fallback for a non-workspace layout)
+          $root = @("target", "src-tauri/target") | Where-Object { Test-Path "$_/release/premium-radar.exe" } | Select-Object -First 1
+          if (-not $root) { throw "release build not found under target/ or src-tauri/target/" }
+          $setup = "$root/release/bundle/nsis/PREMIUM RADAR_$($ver)_x64-setup.exe"
+          $portable = "$root/release/premium-radar.exe"
+          if (-not (Test-Path $setup)) { throw "installer not found: $setup" }
+          if (-not (Test-Path $portable)) { throw "portable exe not found: $portable" }
+          Copy-Item $setup "PREMIUM-RADAR_$($ver)_x64-setup.exe"
+          Copy-Item $portable "PREMIUM-RADAR_$($ver)_x64-portable.exe"
 
-            การติดตั้ง (Install)
-            1. ดาวน์โหลดไฟล์ติดตั้งด้านล่าง — แนะนำไฟล์ชื่อจบด้วย -setup.exe (NSIS) หรือเลือกไฟล์ .msi ก็ได้
-            2. ถ้า Windows ขึ้นหน้าต่าง SmartScreen ("Windows protected your PC") ให้กด More info แล้วเลือก Run anyway — แอปยังไม่ได้เซ็นชื่อด้วย certificate จาก CA จึงขึ้นเตือนได้ตามปกติ
-            3. ขั้นตอนการติดตั้งโดยละเอียดอ่านได้ที่ README: https://github.com/b9b4ymiN/premium-radar#readme
+          # single-quoted here-string: the markdown backticks must survive
+          $notes = @'
+          PREMIUM RADAR v{0}
 
-            English: download the installer below — the NSIS file ending in -setup.exe is recommended, or use the .msi. If Windows SmartScreen appears, choose "More info" then "Run anyway" (the app is not yet signed by a CA certificate). See the README for full install steps: https://github.com/b9b4ymiN/premium-radar#readme
-          releaseDraft: true
-          prerelease: false
-          uploadUpdaterJson: true
+          ไฟล์ไหน (Which file):
+          - `-setup.exe` — ตัวติดตั้ง (แนะนำ) ติดตั้งแล้วอัปเดตในแอปได้ / installer (recommended, in-app auto-update)
+          - `-portable.exe` — แบบพกพา รันได้เลยไม่ต้องติดตั้ง แต่ไม่มีอัปเดตอัตโนมัติ / portable, no install, no auto-update
+
+          ถ้า Windows ขึ้น SmartScreen ("Windows protected your PC") ให้กด More info แล้วเลือก Run anyway / if SmartScreen appears, choose More info then Run anyway.
+
+          ขั้นตอนติดตั้งโดยละเอียด (full install steps): https://github.com/b9b4ymiN/premium-radar#readme
+          '@ -f $ver
+          $notes | Set-Content -Path release-notes.md
+
+          gh release create "v$ver" --draft `
+            --title "PREMIUM RADAR v$ver" `
+            --notes-file release-notes.md `
+            "PREMIUM-RADAR_$($ver)_x64-setup.exe" `
+            "PREMIUM-RADAR_$($ver)_x64-portable.exe"

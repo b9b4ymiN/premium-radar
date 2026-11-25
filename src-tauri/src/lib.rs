@@ -1634,6 +1634,19 @@ mod tests {
         assert_eq!(mask_account("12"), "12…12");
     }
 
+    /// install_kind: only the NSIS `uninstall.exe` marker makes a directory
+    /// "installed" — an empty dir (and anything else) is "portable".
+    #[test]
+    fn install_kind_follows_the_uninstall_marker() {
+        let dir =
+            std::env::temp_dir().join(format!("radar-kind-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        assert_eq!(install_kind_in(&dir), "portable");
+        std::fs::write(dir.join("uninstall.exe"), b"marker").expect("marker file");
+        assert_eq!(install_kind_in(&dir), "installed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Every timespan the chart may ask for maps to a plan whose count matches
     /// the live audit (tmp/bars-audit.txt, 2026-11-24: count=1200 accepted on
     /// all eight, no extended-hours bar), and nothing else is served — the old
@@ -1827,6 +1840,28 @@ fn needs_setup(state: tauri::State<'_, AppState>) -> bool {
     !lock(&state.settings).is_configured()
 }
 
+/// How the running copy was installed: the NSIS installer drops
+/// `uninstall.exe` next to the app; a portable copy has no such marker. An
+/// unknown directory (current_exe failed) reads as portable so the frontend
+/// never offers a portable copy a self-install.
+fn install_kind_in(dir: &std::path::Path) -> &'static str {
+    if dir.join("uninstall.exe").exists() {
+        "installed"
+    } else {
+        "portable"
+    }
+}
+
+#[tauri::command]
+fn install_kind() -> &'static str {
+    std::env::current_exe()
+        .ok()
+        .as_deref()
+        .and_then(std::path::Path::parent)
+        .map(install_kind_in)
+        .unwrap_or("portable")
+}
+
 // ---------- Tauri app entry ----------
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1881,6 +1916,7 @@ pub fn run() {
             test_connection,
             create_access_token,
             needs_setup,
+            install_kind,
             get_stock_history,
             get_instrument_profile,
             get_home_overview,

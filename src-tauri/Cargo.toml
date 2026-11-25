@@ -1,6 +1,6 @@
 [package]
 name = "premium-radar"
-version = "0.2.0"
+version = "0.2.1"
 description = "PREMIUM RADAR — CSP / Covered Call screener (Webull TH)"
 authors = ["THP"]
 edition = "2024"

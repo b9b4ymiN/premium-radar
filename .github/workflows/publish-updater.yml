@@ -1,0 +1,81 @@
+name: Publish updater manifest
+
+# Publishing a release signs the NSIS installer and commits the updater
+# manifest `latest.json` to the orphan `updater` branch — the endpoint the
+# app's updater reads (raw.githubusercontent.com/.../updater/latest.json).
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  publish-manifest:
+    name: Sign installer and publish latest.json
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # gh + jq are preinstalled on ubuntu runners. The signing key and its
+      # password are read from env by the tauri CLI — never passed on the
+      # command line, never echoed.
+      - name: Download, sign and build the manifest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          gh release download "$TAG" --pattern "*_x64-setup.exe" --output installer.exe
+          npx tauri signer sign --app-version "$VERSION" installer.exe
+          test -s installer.exe.sig
+
+          notes="$(gh release view "$TAG" --json name --jq '.name')"
+          pub_date="$(gh release view "$TAG" --json publishedAt --jq '.publishedAt')"
+          url="$(gh release view "$TAG" --json assets \
+            --jq '.assets[] | select(.name | test("_x64-setup\\.exe$")) | .browserDownloadUrl')"
+          signature="$(cat installer.exe.sig)"
+
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "$notes" \
+            --arg pub_date "$pub_date" \
+            --arg signature "$signature" \
+            --arg url "$url" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "windows-x86_64":     { signature: $signature, url: $url },
+                "windows-x86_64-nsis": { signature: $signature, url: $url }
+              }
+            }' > latest.json
+          cat latest.json
+
+      # Single-file orphan branch — a force-push from a throwaway orphan
+      # keeps it exact whether or not the branch already exists.
+      - name: Commit latest.json to the updater branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --orphan updater-publish
+          git add latest.json
+          git commit -m "Updater manifest for ${GITHUB_REF_NAME}"
+          git push --force origin updater-publish:updater
