@@ -37,7 +37,7 @@ export function SkelPanel({ lines = 5 }: { lines?: number }) {
   );
 }
 
-/** `n/total` in a scan progress message ("ดึงราคา snapshot 40/93"), or null. */
+/** `n/total` in a scan progress message ("กำลังดึงราคาสัญญา 40/93"), or null. */
 export function progressFraction(message: string): number | null {
   const m = /(\d+)\s*\/\s*(\d+)/.exec(message);
   if (!m) return null;

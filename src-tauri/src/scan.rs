@@ -181,7 +181,7 @@ fn run(
     progress(
         &app,
         "discovery",
-        format!("ค้นหา option contracts ของ {root} ..."),
+        format!("กำลังหารายการสัญญา option ของ {root} ..."),
     );
     timing("discovery-start", "");
     let mut on_progress = |msg: String| progress(&app, "discovery", msg);
@@ -224,7 +224,7 @@ fn run(
         &app,
         "seed",
         format!(
-            "พบ {} contracts · spot {:.2} — กำลังดึงราคา ...",
+            "พบ {} สัญญา · ราคาหุ้นตอนนี้ {:.2} — กำลังดึงราคาแต่ละสัญญา ...",
             symbols.len(),
             spot
         ),
@@ -299,7 +299,7 @@ fn run(
                                         progress(
                                             &app,
                                             "seed",
-                                            format!("ดึงราคา snapshot {n}/{total}"),
+                                            format!("กำลังดึงราคาสัญญา {n}/{total}"),
                                         );
                                         emit_snapshot(&app, &engine);
                                         timing("seed-batch", &format!(" {n}/{total}"));
@@ -328,7 +328,7 @@ fn run(
             progress(
                 &app,
                 "bars",
-                format!("ดึงราคาปิดย้อนหลัง {} contracts", empty.len()),
+                format!("ใช้ราคาปิดล่าสุดแทนสำหรับ {} สัญญาที่ยังไม่มีราคาวันนี้", empty.len()),
             );
         }
         {
@@ -383,7 +383,7 @@ fn run(
                 &app,
                 "live",
                 format!(
-                    "seed ครบ — เริ่ม real-time push ({} contracts ใกล้ spot) + REST fallback",
+                    "ได้ราคาครบแล้ว — เริ่มรับราคาสด ({} สัญญาที่ใกล้ราคาหุ้น) ที่เหลืออัปเดตเป็นรอบ",
                     ws_symbols.len()
                 ),
             );
@@ -410,7 +410,7 @@ fn run(
             progress(
                 &app,
                 "live",
-                format!("อัปเดต REST แล้ว — รอบถัดไปใน {interval} วิ"),
+                format!("อัปเดตราคาแล้ว — รอบถัดไปใน {interval} วิ"),
             );
         }
 
@@ -485,7 +485,7 @@ async fn ws_loop(
         progress(
             &app,
             "live",
-            format!("เชื่อมต่อ real-time (ครั้งที่ {attempt}) ..."),
+            format!("กำลังเชื่อมต่อราคาสด (ครั้งที่ {attempt}) ..."),
         );
 
         let config = StreamConfig::for_base_url(&base_url, session_id.clone());
@@ -518,10 +518,7 @@ async fn ws_loop(
                                 progress(
                                     &app,
                                     "realtime",
-                                    format!(
-                                        "🟢 เชื่อมต่อสดแล้ว — push real-time {} contracts",
-                                        ws_symbols.len()
-                                    ),
+                                    format!("🟢 รับราคาสดแล้ว — {} สัญญา", ws_symbols.len()),
                                 );
                             }
                             StreamEvent::Snapshot { payload } => {

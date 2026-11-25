@@ -899,7 +899,7 @@ export default function App() {
         <aside className="rightpanel">
           {/* Contract Analysis */}
           <section className="detailpanel">
-            <div className="panel-heading" style={{ minHeight: "36px" }}>Contract Analysis</div>
+            <div className="panel-heading" style={{ minHeight: "36px" }}>วิเคราะห์สัญญา</div>
             <div className="detail-body">
               {selectedRow ? (
                 <>
@@ -914,10 +914,10 @@ export default function App() {
                     <GradeBadge grade={selectedRow.grade} />
                   </div>
                   <div className="detail-stats">
-                    <div className="ds"><label>Premium / 1 ct</label><strong className="pos">+${selectedRow.credit?.toFixed(0)}</strong></div>
-                    <div className="ds"><label>Annualized</label><strong>{selectedRow.ann?.toFixed(1)}%</strong></div>
-                    <div className="ds"><label>Collateral</label><strong>${selectedRow.collateral?.toLocaleString()}</strong></div>
-                    <div className="ds"><label>Breakeven</label><strong>${selectedRow.be?.toFixed(2)}</strong></div>
+                    <div className="ds"><label>เงินที่ได้ / 1 สัญญา</label><strong className="pos">+${selectedRow.credit?.toFixed(0)}</strong></div>
+                    <div className="ds"><label>ผลตอบแทนต่อปี</label><strong>{selectedRow.ann?.toFixed(1)}%</strong></div>
+                    <div className="ds"><label>เงินค้ำประกัน</label><strong>${selectedRow.collateral?.toLocaleString()}</strong></div>
+                    <div className="ds"><label>จุดคุ้มทุน</label><strong>${selectedRow.be?.toFixed(2)}</strong></div>
                   </div>
                   <div style={{ fontSize: 9.5, color: "#9bacc7", marginBottom: 10 }}>
                     ราคา option ≈ ${selectedRow.prem?.toFixed(2)}/หุ้น × 100 หุ้น/contract

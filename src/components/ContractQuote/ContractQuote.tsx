@@ -143,11 +143,11 @@ export default function ContractQuote({
               </span>
             </div>
             <div>
-              <label>Open interest</label>
+              <label>สัญญาค้าง (OI)</label>
               <span>{count(quote.open_interest)}</span>
             </div>
             <div>
-              <label>Volume</label>
+              <label>ปริมาณซื้อขาย</label>
               <span>{count(quote.volume)}</span>
             </div>
             <div>
@@ -155,19 +155,19 @@ export default function ContractQuote({
               <span>{pct(quote.imp_vol)}</span>
             </div>
             <div>
-              <label>Delta</label>
+              <label title="ราคาหุ้นขึ้น $1 ราคา option เปลี่ยนเท่าไร">Delta · ไวต่อราคา</label>
               <span>{greek(quote.delta)}</span>
             </div>
             <div>
-              <label>Gamma</label>
+              <label title="Delta เปลี่ยนเร็วแค่ไหนเมื่อราคาหุ้นขยับ">Gamma · เร่ง Delta</label>
               <span>{greek(quote.gamma)}</span>
             </div>
             <div>
-              <label>Theta</label>
+              <label title="ราคา option ลดลงวันละเท่าไรเพราะเวลาผ่านไป (คนขายได้ประโยชน์)">Theta · ค่าเวลา/วัน</label>
               <span>{greek(quote.theta)}</span>
             </div>
             <div>
-              <label>Vega</label>
+              <label title="IV ขึ้น 1% ราคา option เปลี่ยนเท่าไร">Vega · ไวต่อ IV</label>
               <span>{greek(quote.vega)}</span>
             </div>
           </div>
