@@ -20,7 +20,7 @@ import { IdeasStep } from "./IdeasStep";
 import { FiveQuestions } from "./FiveQuestions";
 import { Checklist } from "./Checklist";
 import { WebullFieldMap, NotYet } from "./WebullFieldMap";
-import { EzIcon } from "./icons";
+import { EzIcon, EzSprite } from "./icons";
 import { daysUntil, usd } from "./util";
 import { SAMPLE_HELD, sampleIdeas, sampleProfile } from "./sample";
 import { easyInvoke } from "./invoke";
@@ -274,6 +274,7 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
 
   return (
     <div className="ez-main" ref={mainRef}>
+      <EzSprite />
       {flow && (
         <div className="ez-flowbar" aria-hidden="true">
           {[0, 1, 2, 3].map(i => (

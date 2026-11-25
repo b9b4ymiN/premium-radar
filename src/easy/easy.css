@@ -296,3 +296,17 @@
   .ez-screen { animation: none; }
   .ez-main * { transition: none !important; }
 }
+
+/* programmatic focus on a screen heading must not draw a ring */
+.ez-main [tabindex="-1"]:focus { outline: none; }
+
+/* easy mode on narrow windows: keep the mode switch and data badge visible */
+@media (max-width: 640px) {
+  .app.easy .global-search { display: none; }
+  .app.easy .brand { width: auto; padding: 0 8px 0 0; border-right: 0; }
+  .app.easy .brand-sub { display: none; }
+  .app.easy .brand-text { display: none; }
+  .app.easy .appbar { gap: 8px; padding-left: 10px; padding-right: 10px; }
+  .app.easy .tag-demo { font-size: 10px; padding: 2px 6px; margin-left: auto; }
+  .app.easy .statusbar { overflow: hidden; white-space: nowrap; }
+}

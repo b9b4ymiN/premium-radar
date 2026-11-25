@@ -19,7 +19,6 @@ export function StockStanceList({ stocks, onStance }: {
         <div className="ez-stockrow" key={s.symbol}>
           <div className="ez-ticker">
             {s.symbol}
-            <small>ราคาตอนนี้ —</small>
           </div>
           <div className="ez-seg2" role="group" aria-label={`ถ้าราคาลง อยากได้ ${s.symbol} ไว้ถือไหม`}>
             <button className="yes" aria-pressed={s.stance === "want"} onClick={() => onStance(s.symbol, "want")}>อยากถือ</button>
