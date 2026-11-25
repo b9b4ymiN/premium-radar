@@ -163,6 +163,28 @@ pub fn expiry_utc(expiry: NaiveDate) -> DateTime<Utc> {
         })
 }
 
+/// Trading days per year used to annualise realised volatility.
+pub const TRADING_DAYS: f64 = 252.0;
+
+/// Annualised realised volatility (√252 × sample stdev, n−1) of daily log
+/// returns over the last `window` returns of `closes`. `None` when `window`
+/// is zero, any close is non-finite/non-positive, or fewer than `window + 1`
+/// closes are supplied. Easy Mode (CR-001) uses this on 30+ daily closes.
+pub fn realized_vol(closes: &[f64], window: usize) -> Option<f64> {
+    if window == 0 || closes.len() < window + 1 {
+        return None;
+    }
+    if !closes.iter().all(|c| c.is_finite() && *c > 0.0) {
+        return None;
+    }
+    let tail = &closes[closes.len() - window - 1..];
+    let rets: Vec<f64> = tail.windows(2).map(|w| (w[1] / w[0]).ln()).collect();
+    let n = rets.len() as f64;
+    let mean = rets.iter().sum::<f64>() / n;
+    let var = rets.iter().map(|r| (r - mean) * (r - mean)).sum::<f64>() / (n - 1.0);
+    Some(var.sqrt() * TRADING_DAYS.sqrt())
+}
+
 /// Years remaining until NY 16:00 expiry, clamped to at least one hour —
 /// matches `years_to_expiry` in the Python original.
 pub fn years_to_expiry(expiry: NaiveDate, now: DateTime<Utc>) -> f64 {
@@ -263,5 +285,58 @@ mod tests {
         );
         assert!(g_put.delta < 0.0 && g_call.delta > 0.0);
         assert!((g_put.delta - g_call.delta + 1.0).abs() < 1e-7);
+    }
+
+    // ---------- Easy Mode (CR-001): realised volatility ----------
+
+    #[test]
+    fn realized_vol_known_two_return_series() {
+        // closes 100 → 110 → 99 give returns ln(1.1) and ln(0.9):
+        // sample stdev (n−1) then × √252.
+        let closes = [100.0, 110.0, 99.0];
+        let expected = {
+            let r1 = (110.0_f64 / 100.0).ln();
+            let r2 = (99.0_f64 / 110.0).ln();
+            let mean = (r1 + r2) / 2.0;
+            let var = ((r1 - mean).powi(2) + (r2 - mean).powi(2)) / 1.0;
+            var.sqrt() * (252.0_f64).sqrt()
+        };
+        let got = realized_vol(&closes, 2).expect("enough closes");
+        assert!(
+            (got - expected).abs() < 1e-12,
+            "got={got} expected={expected}"
+        );
+    }
+
+    #[test]
+    fn realized_vol_uses_only_the_tail_window() {
+        let mut closes = vec![7.0, 13.0, 29.0, 53.0]; // older valid closes
+        closes.extend_from_slice(&[100.0, 110.0, 99.0]);
+        let full = realized_vol(&closes, 2).expect("enough closes");
+        let tail_only = realized_vol(&[100.0, 110.0, 99.0], 2).expect("enough closes");
+        assert!((full - tail_only).abs() < 1e-12);
+    }
+
+    #[test]
+    fn realized_vol_flat_series_is_zero() {
+        let closes = vec![100.0; 31];
+        assert_eq!(realized_vol(&closes, 30), Some(0.0));
+    }
+
+    #[test]
+    fn realized_vol_rejects_short_or_invalid_input() {
+        assert_eq!(realized_vol(&[100.0, 101.0], 0), None, "zero window");
+        let thirty: Vec<f64> = (0..30).map(|i| 100.0 + i as f64).collect();
+        assert_eq!(realized_vol(&thirty, 30), None, "30 closes < 31 needed");
+        assert!(
+            realized_vol(&thirty, 29).is_some(),
+            "29 returns from 30 closes is fine"
+        );
+        let mut bad = thirty.clone();
+        bad[3] = 0.0;
+        assert_eq!(realized_vol(&bad, 29), None, "non-positive close");
+        let mut nan = thirty;
+        nan[3] = f64::NAN;
+        assert_eq!(realized_vol(&nan, 29), None, "non-finite close");
     }
 }

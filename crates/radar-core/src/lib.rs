@@ -2,6 +2,7 @@
 //! Everything here is golden-tested against the Python reference.
 
 pub mod copilot;
+pub mod easy;
 pub mod engine;
 pub mod lab;
 pub mod market_history;

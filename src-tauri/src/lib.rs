@@ -8,7 +8,9 @@ pub mod recorder_api;
 pub mod scan;
 pub mod settings;
 
+use radar_core::easy::{EasyIdeas, EasyProfile, build_ideas, normalise_profile, source_token};
 use radar_core::engine::{Engine, EngineSnapshot};
+use radar_core::quant::realized_vol;
 use radar_core::screener::{Filters, Mode};
 use radar_core::webull::sign::SignatureScheme;
 use radar_core::webull::transport::WebullClient;
@@ -1740,6 +1742,111 @@ async fn recorder_test_connection(
     off_ui_thread(move || Ok(recorder_test_connection_with(url, token, stored_token))).await
 }
 
+// ---------- Easy Mode (CR-001 / W3) ----------
+
+/// Plain-Thai sell-put ideas for the scanned symbol, computed from ALL
+/// enriched put rows of the engine snapshot — independent of the terminal's
+/// strategy/risk/budget filters (those only shape `candidates`). Requires the
+/// engine to already hold rows for `symbol`, so the UI can trigger/await the
+/// normal scan on the error. Realised vol reads ~45 daily bars off the UI
+/// thread; any failure there degrades to "no data" and never fails the call.
+#[tauri::command]
+async fn easy_ideas(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+) -> Result<EasyIdeas, String> {
+    use radar_core::webull::stocks::fetch_stock_bars;
+    let symbol = symbol.trim().to_uppercase();
+    // snapshot under the lock, then drop the guard before any await
+    let (rows, spot, source, atm_iv) = {
+        let snap = lock(&state.engine).snapshot();
+        let spot = snap.spot.unwrap_or(0.0);
+        if spot <= 0.0 || !snap.rows.iter().any(|r| r.q.underlying == symbol) {
+            return Err(format!("ยังไม่มีข้อมูลของ {symbol} — กำลังโหลด"));
+        }
+        (
+            snap.rows,
+            spot,
+            snap.stock
+                .as_ref()
+                .map(|s| source_token(s.src.as_str()))
+                .unwrap_or("API")
+                .to_string(),
+            snap.stats.as_ref().and_then(|s| s.atm_iv),
+        )
+    };
+    let profile = lock(&state.settings).easy_profile.clone();
+    let realized = with_client(&state, {
+        let symbol = symbol.clone();
+        move |client| {
+            let closes: Vec<f64> = fetch_stock_bars(client, &[symbol], "D", 45)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|b| b.close)
+                .collect();
+            Ok(realized_vol(&closes, 30))
+        }
+    })
+    .await
+    .unwrap_or(None);
+    Ok(build_ideas(
+        &symbol,
+        spot,
+        &source,
+        &rows,
+        &profile,
+        atm_iv,
+        realized,
+        Utc::now(),
+    ))
+}
+
+/// Save the Easy Mode onboarding answers: symbols are normalised and
+/// validated by [`normalise_profile`] (uppercase/trimmed/deduped, ≤ 10 stocks,
+/// cash ≥ 0, risk 1–3). Stages on a copy and swaps the shared state only
+/// after the keyring-path save commits, exactly like [`save_lab_source`].
+#[tauri::command]
+fn save_easy_profile(
+    state: tauri::State<'_, AppState>,
+    profile: EasyProfile,
+) -> Result<SettingsView, String> {
+    let profile = normalise_profile(profile)?;
+    let dir = state.app_data_dir.clone();
+    let mut s = lock(&state.settings);
+    let mut candidate = s.clone();
+    candidate.easy_profile = profile;
+    candidate.save_with_keyring(&dir)?;
+    *s = candidate;
+    Ok(s.view())
+}
+
+/// Stage a UI-mode switch on a copy of the settings: ONLY `ui_mode` moves,
+/// every other field stays byte-identical to the input.
+fn with_ui_mode(settings: &AppSettings, mode: &str) -> AppSettings {
+    let mut candidate = settings.clone();
+    candidate.ui_mode = settings::normalise_ui_mode(mode);
+    candidate
+}
+
+/// Switch Easy/Pro (CR-001). Unlike the lenient load path, this is a user
+/// action, so anything but the exact two values errors out instead of
+/// silently becoming "easy". The UI must use this instead of pushing a
+/// `SettingsView` through `save_settings` — the view is not an `AppSettings`
+/// and would reset every field it does not carry.
+#[tauri::command]
+fn set_ui_mode(state: tauri::State<'_, AppState>, mode: String) -> Result<SettingsView, String> {
+    let mode = mode.trim();
+    if !matches!(mode, "easy" | "pro") {
+        return Err("โหมดไม่ถูกต้อง".into());
+    }
+    let dir = state.app_data_dir.clone();
+    let mut s = lock(&state.settings);
+    let mut candidate = with_ui_mode(&s, mode);
+    candidate.save_with_keyring(&dir)?;
+    *s = candidate;
+    Ok(s.view())
+}
+
 /// Save the Lab data source from the setup screen. The API token follows the
 /// `save_credentials` pattern exactly: an EMPTY typed field keeps the stored
 /// value, the token is persisted only through the keyring path (fail closed)
@@ -1817,6 +1924,41 @@ fn home_lab_section(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// `set_ui_mode` stages on a copy: only `ui_mode` moves and the view
+    /// reports the normalised value. (The strict unknown ⇒ error check lives
+    /// in the command itself; the stored value it guards is normalised here.)
+    #[test]
+    fn ui_mode_switch_moves_only_ui_mode() {
+        let s = AppSettings {
+            last_symbol: "TSLA".into(),
+            last_budget: 2_500.0,
+            lab_source: settings::LabSource::Api,
+            easy_profile: EasyProfile {
+                onboarded: true,
+                cash: 5_000.0,
+                risk: 3,
+                ..EasyProfile::default()
+            },
+            ..AppSettings::default()
+        };
+        let switched = with_ui_mode(&s, " pro ");
+        assert_eq!(switched.ui_mode, "pro");
+        assert_eq!(switched.view().ui_mode, "pro");
+        // everything else is untouched
+        assert_eq!(switched.last_symbol, "TSLA");
+        assert_eq!(switched.last_budget, 2_500.0);
+        assert_eq!(switched.lab_source, settings::LabSource::Api);
+        assert_eq!(switched.easy_profile, s.easy_profile);
+        assert_eq!(switched.recorder_api_token, s.recorder_api_token);
+
+        assert_eq!(with_ui_mode(&s, "easy").ui_mode, "easy");
+        assert_eq!(
+            with_ui_mode(&s, "banana").ui_mode,
+            "easy",
+            "the load-path clamp still applies when staging"
+        );
+    }
 
     /// TtlCache: fresh hits only, and an entry expires by its own age.
     #[test]
@@ -2182,6 +2324,9 @@ pub fn run() {
             test_llm,
             save_lab_source,
             recorder_test_connection,
+            easy_ideas,
+            save_easy_profile,
+            set_ui_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

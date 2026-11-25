@@ -342,13 +342,12 @@ export default function App() {
     }
   }, [chat, chatInput, chatBusy]);
 
-  /** Switch easy/pro: the mode applies immediately and is pushed into the
-   *  settings prefs (`ui_mode`) — a prefs push can never touch credentials. */
+  /** Switch easy/pro: the mode applies immediately and is saved by the
+   *  dedicated `set_ui_mode` command, which changes only `ui_mode`. */
   const switchMode = useCallback((next: "easy" | "pro") => {
     setUiMode(next);
     if (!hasTauri) return;
-    tauriInvoke<Record<string, unknown>>("get_settings")
-      .then(st => tauriInvoke("save_settings", { newSettings: { ...st, ui_mode: next } }))
+    tauriInvoke("set_ui_mode", { mode: next })
       .catch(() => { /* mode still switches for this session */ });
   }, []);
 

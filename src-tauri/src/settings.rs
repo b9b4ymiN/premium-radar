@@ -5,6 +5,7 @@
 //! to disk as plaintext.
 
 use radar_core::copilot::LlmConfig;
+use radar_core::easy::EasyProfile;
 use radar_core::webull::rest::Credentials;
 use radar_core::webull::sign::SignatureScheme;
 use radar_core::webull::transport::WebullClient;
@@ -161,6 +162,13 @@ pub struct AppSettings {
     /// snapshot exactly like the Webull secrets).
     #[serde(default)]
     pub recorder_api_token: String,
+
+    // Easy Mode (CR-001) — UI mode + onboarding answers, both not secret.
+    /// "easy" (default) or "pro"; anything else loads as "easy".
+    #[serde(default = "default_ui_mode")]
+    pub ui_mode: String,
+    #[serde(default)]
+    pub easy_profile: EasyProfile,
 }
 
 fn default_symbol() -> String {
@@ -174,6 +182,19 @@ fn default_risk() -> String {
 }
 fn default_webull_url() -> String {
     WEBULL_PRODUCTION_BASE_URL.into()
+}
+fn default_ui_mode() -> String {
+    "easy".into()
+}
+
+/// Clamp a stored/typed UI mode to the two real values: only "pro" keeps pro,
+/// everything else (including unknown strings) behaves as "easy".
+pub fn normalise_ui_mode(value: &str) -> String {
+    if value.trim() == "pro" {
+        "pro".to_string()
+    } else {
+        "easy".to_string()
+    }
 }
 
 /// The only Webull REST host credentials may ever be sent to (owner
@@ -286,6 +307,8 @@ impl Default for AppSettings {
             lab_source: LabSource::Local,
             recorder_api_url: String::new(),
             recorder_api_token: String::new(),
+            ui_mode: default_ui_mode(),
+            easy_profile: EasyProfile::default(),
         }
     }
 }
@@ -318,6 +341,10 @@ pub struct SettingsView {
     pub lab_source: LabSource,
     pub recorder_api_url: String,
     pub has_recorder_api_token: bool,
+    /// Normalised UI mode ("easy" | "pro") — unknown stored values read back
+    /// as "easy".
+    pub ui_mode: String,
+    pub easy_profile: EasyProfile,
 }
 
 impl AppSettings {
@@ -344,6 +371,8 @@ impl AppSettings {
             lab_source: self.lab_source,
             recorder_api_url: self.recorder_api_url.clone(),
             has_recorder_api_token: !self.recorder_api_token.trim().is_empty(),
+            ui_mode: normalise_ui_mode(&self.ui_mode),
+            easy_profile: self.easy_profile.clone(),
         }
     }
 
@@ -841,6 +870,60 @@ mod tests {
         assert_eq!(empty.lab_source, LabSource::Local);
         assert_eq!(empty.recorder_api_url, "");
         assert!(!empty.has_recorder_api_token);
+    }
+
+    // ---------- Easy Mode (CR-001): ui_mode + easy_profile ----------
+
+    /// Old settings files (no easy fields) load in easy mode with the default
+    /// profile; an unknown `ui_mode` value also reads back as "easy" both in
+    /// the struct and the IPC view, and a saved profile survives the trip.
+    #[test]
+    fn old_settings_without_easy_fields_load_as_easy_mode() {
+        let legacy: AppSettings =
+            serde_json::from_str(r#"{"last_symbol":"TSLA","webull_app_key":"k"}"#).unwrap();
+        assert_eq!(legacy.ui_mode, "easy");
+        assert_eq!(legacy.easy_profile, EasyProfile::default());
+
+        let unknown: AppSettings = serde_json::from_str(r#"{"ui_mode":"banana"}"#).unwrap();
+        assert_eq!(unknown.view().ui_mode, "easy");
+
+        let pro: AppSettings = serde_json::from_str(r#"{"ui_mode":"pro"}"#).unwrap();
+        assert_eq!(pro.view().ui_mode, "pro");
+        assert_eq!(normalise_ui_mode(" pro "), "pro");
+        assert_eq!(normalise_ui_mode("PRO"), "easy", "exact match only");
+
+        let saved: AppSettings = serde_json::from_str(
+            r#"{"easy_profile":{"onboarded":true,"stocks":[{"symbol":"NVDA","stance":"avoid"}],"cash":18000,"risk":2}}"#,
+        )
+        .unwrap();
+        assert_eq!(saved.view().easy_profile, saved.easy_profile);
+        assert_eq!(saved.easy_profile.cash, 18_000.0);
+        assert_eq!(saved.easy_profile.risk, 2);
+        assert_eq!(saved.easy_profile.stocks.len(), 1);
+    }
+
+    /// The prefs push (`save_settings`) round-trips the easy fields like any
+    /// other preference — they are plain fields, not secrets.
+    #[test]
+    fn easy_fields_survive_a_prefs_push_roundtrip() {
+        let s = AppSettings {
+            ui_mode: "pro".into(),
+            easy_profile: EasyProfile {
+                onboarded: true,
+                stocks: vec![radar_core::easy::EasyStock {
+                    symbol: "NVDA".into(),
+                    stance: radar_core::easy::Stance::Want,
+                }],
+                cash: 5_000.0,
+                risk: 3,
+            },
+            ..AppSettings::default()
+        };
+        let guarded = copy_saved_secrets(&s, s.clone());
+        let json = serde_json::to_string(&guarded).unwrap();
+        let back: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.ui_mode, "pro");
+        assert_eq!(back.easy_profile, s.easy_profile);
     }
 
     #[test]
