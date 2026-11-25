@@ -1,82 +1,28 @@
-/** Easy Mode onboarding — the three opening questions (stocks → money →
- *  risk), ported from the approved prototype. The same stock/stance editor
- *  also backs step 1 of the decision flow ("หุ้นที่ฉันสนใจ"). */
+/** Easy Mode onboarding — the two opening questions (money → risk), ported
+ *  from the approved prototype with the stock-picking step removed: the
+ *  assistant now proposes ideas from the whole market, so onboarding only
+ *  collects the budget and how often the user accepts having to buy shares. */
 
 import { useEffect, useState } from "react";
-import type { EasyProfile, RiskLevel, Stance } from "../types/easy";
+import type { EasyProfile, RiskLevel } from "../types/easy";
 import { EzIcon } from "./icons";
 import { usd } from "./util";
 import { SAMPLE_THB } from "./sample";
 
-/** Per-stock "ถ้าราคาลง อยากได้หุ้นตัวนั้นไว้ถือไหม" toggle. `subline` supplies the
- *  small second line under the ticker (company · price); it returns null when
- *  the price is unknown — never a dash placeholder. */
-export function StockStanceList({ stocks, onStance, subline }: {
-  stocks: EasyProfile["stocks"];
-  onStance: (symbol: string, stance: Stance) => void;
-  subline?: (symbol: string) => string | null;
-}) {
-  return (
-    <>
-      {stocks.map(s => {
-        const sub = subline?.(s.symbol) ?? null;
-        return (
-          <div className="ez-stockrow" key={s.symbol}>
-            <div className="ez-ticker">
-              {s.symbol}
-              {sub && <small>{sub}</small>}
-            </div>
-            <div className="ez-seg2" role="group" aria-label={`ถ้าราคาลง อยากได้ ${s.symbol} ไว้ถือไหม`}>
-              <button className="yes" aria-pressed={s.stance === "want"} onClick={() => onStance(s.symbol, "want")}>อยากถือ</button>
-              <button className="no" aria-pressed={s.stance === "avoid"} onClick={() => onStance(s.symbol, "avoid")}>ไม่อยากถือ</button>
-            </div>
-          </div>
-        );
-      })}
-    </>
-  );
-}
-
-export function Onboarding({ step, profile, onPatch, onGo, browserPreview, subline }: {
-  step: 1 | 2 | 3;
+export function Onboarding({ step, profile, onPatch, onGo }: {
+  step: 1 | 2;
   profile: EasyProfile;
   onPatch: (patch: Partial<EasyProfile>) => void;
-  onGo: (screen: "ob1" | "ob2" | "ob3" | "home") => void;
-  browserPreview: boolean;
-  subline?: (symbol: string) => string | null;
+  onGo: (screen: "ob1" | "ob2" | "home") => void;
 }) {
   const [cashText, setCashText] = useState(profile.cash ? profile.cash.toLocaleString("en-US") : "");
   useEffect(() => { setCashText(profile.cash ? profile.cash.toLocaleString("en-US") : ""); }, [profile.cash]);
 
   if (step === 1) {
-    return (
-      <section className="ez-screen">
-        <h1>หุ้นตัวไหนที่คุณสนใจ</h1>
-        <p className="ez-lead">บอกด้วยว่า ถ้าราคาลงมา คุณ<strong>อยากได้หุ้นตัวนั้นไว้ถือ</strong>ไหม ผู้ช่วยจะใช้คำตอบนี้เลือกไอเดียให้เหมาะกับคุณ</p>
-        <div className="ez-panel ez-gap-l">
-          <StockStanceList
-            stocks={profile.stocks}
-            subline={subline}
-            onStance={(symbol, stance) =>
-              onPatch({ stocks: profile.stocks.map(s => (s.symbol === symbol ? { ...s, stance } : s)) })}
-          />
-        </div>
-        {browserPreview && (
-          <p className="ez-note ez-dim" style={{ marginTop: 14 }}>
-            <EzIcon name="info" />
-            <span>ตัวอย่างนี้ใส่ NVDA กับ VLO ไว้ให้แล้ว ในแอปจริงพิมพ์ชื่อหุ้นเพิ่มเอง หรือดึงจากลิสต์ใน Webull ได้</span>
-          </p>
-        )}
-        <div className="ez-actions"><button className="ez-btn primary" onClick={() => onGo("ob2")}>ต่อไป</button></div>
-      </section>
-    );
-  }
-
-  if (step === 2) {
     const n = parseInt(cashText.replace(/[^\d]/g, ""), 10) || 0;
+    const perShare = n % 100 === 0 ? (n / 100).toLocaleString("en-US") : (n / 100).toFixed(2);
     return (
       <section className="ez-screen">
-        <button className="ez-back" onClick={() => onGo("ob1")}><EzIcon name="back" />ย้อนกลับ</button>
         <h1>ตั้งใจใช้เงินเท่าไร</h1>
         <p className="ez-lead">เงินก้อนนี้ต้องพร้อมจ่ายจริง เพราะถ้าราคาหุ้นลงมาถึงราคาที่ตกลงไว้ คุณต้องใช้เงินนี้ซื้อหุ้น 100 หุ้น</p>
         <label className="ez-cash ez-gap-l">
@@ -93,9 +39,17 @@ export function Onboarding({ step, profile, onPatch, onGo, browserPreview, subli
           />
         </label>
         <p className="ez-muted" style={{ marginTop: 10 }}>
-          {n ? `ประมาณ ${Math.round(n * SAMPLE_THB).toLocaleString("en-US")} บาท (อัตราแลกเปลี่ยนตัวอย่าง)` : "ใส่จำนวนเงินเป็นดอลลาร์"}
+          {n ? `≈ ${Math.round(n * SAMPLE_THB).toLocaleString("en-US")} บาท (คิดที่ ${SAMPLE_THB} บาท/ดอลลาร์)` : "ใส่จำนวนเงินเป็นดอลลาร์"}
         </p>
-        <div className="ez-actions"><button className="ez-btn primary" onClick={() => onGo("ob3")}>ต่อไป</button></div>
+        <p className="ez-note ez-dim" style={{ marginTop: 14 }}>
+          <EzIcon name="info" />
+          <span>
+            {n
+              ? `1 สัญญา คือสัญญาว่าจะซื้อหุ้น 100 หุ้น ถ้าราคาลงมาถึงราคาที่ตกลงไว้ งบ ${usd(n)} จึงใช้ได้กับหุ้นที่ราคาตกลงไม่เกินราว $${perShare} ต่อหุ้น — ผู้ช่วยจะหาให้เฉพาะตัวที่งบนี้ทำได้`
+              : "1 สัญญา คือสัญญาว่าจะซื้อหุ้น 100 หุ้น งบยิ่งมาก ยิ่งเลือกหุ้นที่ราคาแพงขึ้นได้ — ผู้ช่วยจะหาให้เฉพาะตัวที่งบนี้ทำได้"}
+          </span>
+        </p>
+        <div className="ez-actions"><button className="ez-btn primary" onClick={() => onGo("ob2")}>ต่อไป</button></div>
       </section>
     );
   }
@@ -107,7 +61,7 @@ export function Onboarding({ step, profile, onPatch, onGo, browserPreview, subli
   ];
   return (
     <section className="ez-screen">
-      <button className="ez-back" onClick={() => onGo("ob2")}><EzIcon name="back" />ย้อนกลับ</button>
+      <button className="ez-back" onClick={() => onGo("ob1")}><EzIcon name="back" />ย้อนกลับ</button>
       <h1>ยอมให้ต้องซื้อหุ้นได้บ่อยแค่ไหน</h1>
       <p className="ez-lead">ยิ่งยอมบ่อย เงินที่ได้ต่อครั้งยิ่งมาก แต่ก็มีโอกาสต้องซื้อหุ้นจริงมากขึ้นตามไปด้วย</p>
       <div className="ez-list ez-gap-l">

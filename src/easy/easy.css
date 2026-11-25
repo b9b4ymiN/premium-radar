@@ -112,6 +112,24 @@
 .ez-chance.warn { background: #3a2e1a; color: var(--amber); }
 .ez-skip { display: grid; grid-template-columns: 24px 1fr; gap: 12px; color: var(--secondary); }
 
+/* ---------- universe pick cards (home) ---------- */
+.ez-pick { border: 1px solid var(--border); background: var(--surface2); border-radius: 14px; padding: 20px 22px; }
+.ez-pick.top { border-color: #2f5aa0; }
+.ez-pick-head { display: grid; grid-template-columns: 1fr auto; gap: 8px 20px; align-items: end; }
+.ez-pick .ez-what { font-size: 15px; color: var(--secondary); }
+.ez-pick .ez-big { font-size: 36px; line-height: 1.1; }
+.ez-pick .ez-sub { font-size: 15px; color: var(--secondary); margin-top: 4px; }
+.ez-pick .ez-tag {
+  font-size: 13px; font-weight: 600; padding: 2px 10px; border-radius: 999px;
+  background: var(--blue-soft); color: #a9c8ff; margin-left: 8px; vertical-align: middle; white-space: nowrap;
+}
+.ez-why { margin: 14px 0 0; display: grid; gap: 6px; list-style: none; padding: 0; }
+.ez-why li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: start; color: var(--secondary); font-size: 15px; }
+.ez-why li .ez-i { width: 16px; height: 16px; margin-top: 4px; color: var(--green); }
+.ez-why.caution li .ez-i { color: var(--amber); }
+.ez-pick-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px 16px; flex-wrap: wrap; }
+.ez-stance p { font-size: 16px; margin: 0 0 8px; }
+
 /* no flex-wrap: the dot must never sit alone on a line — the text wraps
    inside its own span instead */
 .ez-clock { display: flex; align-items: center; gap: 10px; color: var(--secondary); font-size: 15px; }
@@ -293,6 +311,11 @@
   .ez-q5 { grid-template-columns: 1fr; gap: 8px; padding: 20px 0; }
   .ez-opt { grid-template-columns: 1fr; }
   .ez-opt .ez-amt, .ez-opt .ez-per { text-align: left; }
+  .ez-pick { padding: 18px; }
+  .ez-pick-head { grid-template-columns: 1fr; }
+  .ez-pick .ez-chance { justify-self: start; }
+  .ez-pick .ez-big { font-size: 32px; }
+  .ez-pick-foot .ez-btn { width: 100%; }
   .ez-outcome { grid-template-columns: 1fr; }
   .ez-outcome .ez-money { font-size: 34px; }
   .ez-stockrow { grid-template-columns: 1fr; }

@@ -27,11 +27,24 @@ export function daysUntil(iso: string): number {
   return Math.round((target - now) / 86_400_000);
 }
 
-/** Data-source badge shared with pro mode: LIVE / API / ราคาปิด (CLOSE) / ตัวอย่าง (DEMO). */
+/** "25 พ.ย. 20:15 น." from an RFC3339 timestamp, converted to Bangkok time
+ *  (UTC+7, no DST) the same way the market clock labels Thai time. */
+export function asOfTh(iso: string | null): string {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const bkk = new Date(t + 7 * 3_600_000);
+  const hm = `${String(bkk.getUTCHours()).padStart(2, "0")}:${String(bkk.getUTCMinutes()).padStart(2, "0")}`;
+  return `${bkk.getUTCDate()} ${THAI_MONTHS[bkk.getUTCMonth()]} ${hm} น.`;
+}
+
+/** Data-source badge shared with pro mode: LIVE / API / ราคาปิด (CLOSE) /
+ *  ข้อมูลในเครื่อง (LOCAL) / ตัวอย่าง (DEMO). */
 export function sourceLabel(source: string): string {
   const key = (source ?? "").toUpperCase();
   if (key === "LIVE") return "LIVE";
   if (key === "API") return "API";
+  if (key === "LOCAL") return "ข้อมูลในเครื่อง";
   if (key === "CLOSE" || key === "ราคาปิด") return "ราคาปิด";
   return "ตัวอย่าง";
 }

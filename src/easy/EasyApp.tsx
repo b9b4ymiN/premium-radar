@@ -1,35 +1,44 @@
 /** EasyApp — the Easy Mode screen state machine (CR-001 / W3).
  *
- *  onboarding 1–3 → home → step1 stocks → step2 ideas → step3 five questions
- *  + what-if + ask → step4 checklist → step5 Webull field map / not-yet.
+ *  onboarding 1–2 (money → risk) → home (assistant proposes ideas from the
+ *  whole market) → opening a pick focuses that symbol and reuses the decision
+ *  flow: ideas → five questions + what-if + ask → checklist → Webull field
+ *  map / not-yet.
  *
  *  Data flow: App hands over the scan state (`symbol`/`setSymbol` drive the
  *  engine scan, `loading`/`scanMsg` report progress) and the current quote.
- *  Opening a stock idea sets the app symbol (which starts the normal scan),
- *  then calls `easy_ideas(symbol)`; while the engine has not finished
+ *  Home renders `easy_universe_ideas` (no arguments; Rust reads the saved
+ *  profile). Opening a pick sets the app symbol (which starts the normal
+ *  scan), then calls `easy_ideas(symbol)`; while the engine has not finished
  *  scanning, Rust answers with the "…กำลังโหลด" error and this component
  *  retries calmly every 1.5 s (up to ~60 s) and immediately when the scan
  *  settles. Browser preview (no Tauri) renders the prototype's sample data.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { EasyIdeas, EasyProfile, Stance } from "../types/easy";
-import { Onboarding, StockStanceList } from "./Onboarding";
+import type { EasyIdeas, EasyProfile, Stance, UniverseIdeas } from "../types/easy";
+import { Onboarding } from "./Onboarding";
 import { EasyHome, type HeldContract } from "./EasyHome";
 import { IdeasStep } from "./IdeasStep";
 import { FiveQuestions } from "./FiveQuestions";
 import { Checklist } from "./Checklist";
 import { WebullFieldMap, NotYet } from "./WebullFieldMap";
-import { EzIcon, EzSprite } from "./icons";
-import { daysUntil, usd } from "./util";
-import { SAMPLE_HELD, SAMPLE_STOCKS, sampleIdeas, sampleProfile } from "./sample";
+import { EzSprite } from "./icons";
+import { daysUntil } from "./util";
+import { SAMPLE_HELD, sampleIdeas, sampleProfile, sampleUniverse } from "./sample";
 import { easyInvoke } from "./invoke";
 import "./easy.css";
 
-type Screen = "boot" | "ob1" | "ob2" | "ob3" | "home" | "s1" | "s2" | "s3" | "s4" | "s5" | "notyet";
+type Screen = "boot" | "ob1" | "ob2" | "home" | "s2" | "s3" | "s4" | "s5" | "notyet";
 
 interface IdeasState {
   data: EasyIdeas | null;
+  loading: boolean;
+  error: string | null;
+}
+
+interface UniverseState {
+  data: UniverseIdeas | null;
   loading: boolean;
   error: string | null;
 }
@@ -101,6 +110,8 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
   const [profile, setProfile] = useState<EasyProfile>(() => sampleProfile(false));
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [ideasState, setIdeasState] = useState<Record<string, IdeasState>>({});
+  const [universe, setUniverse] = useState<UniverseState>({ data: null, loading: false, error: null });
+  const [focused, setFocused] = useState<string | null>(null);
   const [pickedOcc, setPickedOcc] = useState<string | null>(null);
   const [positions, setPositions] = useState<PfPos[] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -109,11 +120,13 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
   const toastTimer = useRef(0);
   const profileRef = useRef(profile);
   const ideasStateRef = useRef(ideasState);
+  const universeRef = useRef(universe);
   const bag = useRef<RetryBag>({ timers: {}, tries: {} });
 
   // mirrors for async callbacks (never written during render)
   useEffect(() => { profileRef.current = profile; }, [profile]);
   useEffect(() => { ideasStateRef.current = ideasState; }, [ideasState]);
+  useEffect(() => { universeRef.current = universe; }, [universe]);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -129,6 +142,21 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
       bag: bag.current,
     }), [hasTauri]);
 
+  // ---------- the assistant's whole-market picks ----------
+  const fetchUniverse = useCallback(async () => {
+    if (!hasTauri) {
+      setUniverse({ data: sampleUniverse(profileRef.current), loading: false, error: null });
+      return;
+    }
+    setUniverse(prev => ({ data: prev.data, loading: true, error: null }));
+    try {
+      const data = await easyInvoke<UniverseIdeas>("easy_universe_ideas");
+      setUniverse({ data, loading: false, error: null });
+    } catch (e) {
+      setUniverse(prev => ({ data: prev.data, loading: false, error: e instanceof Error ? e.message : String(e) }));
+    }
+  }, [hasTauri]);
+
   useEffect(() => () => {
     Object.values(bag.current.timers).forEach(t => window.clearTimeout(t));
     window.clearTimeout(toastTimer.current);
@@ -143,7 +171,9 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
         const st = await easyInvoke<Record<string, unknown>>("get_settings");
         if (!live) return;
         const ep = st?.easy_profile as Partial<EasyProfile> | null | undefined;
-        if (ep && Array.isArray(ep.stocks) && ep.stocks.length) {
+        // an empty stock list is normal now — the answers are given on the
+        // home idea cards, so cash/risk/onboarded still count as a profile
+        if (ep && Array.isArray(ep.stocks)) {
           setProfile({
             onboarded: !!ep.onboarded,
             stocks: ep.stocks.map(s => ({ symbol: String(s.symbol).toUpperCase(), stance: (s.stance === "avoid" ? "avoid" : "want") as Stance })),
@@ -175,31 +205,26 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
     easyInvoke("save_easy_profile", { profile }).catch(() => { /* keep the session going */ });
   }, [profile, profileLoaded, hasTauri]);
 
-  // ---------- the stock the agent works on ----------
-  const primary = (profile.stocks.find(s => s.stance === "want") ?? profile.stocks[0])?.symbol?.toUpperCase() ?? "NVDA";
-  const second = profile.stocks.map(s => s.symbol.toUpperCase()).find(s => s !== primary) ?? null;
-
-  // entering home/s1/s2 points the engine at the primary stock and makes sure
-  // its ideas are loaded (home also wants the second stock's skip reason).
-  // Profile edits change what the agent should recommend, so once the cached
-  // ideas were computed for a different profile they are refetched.
-  const profileSig = `${profile.cash}|${profile.risk}|${profile.stocks.map(s => `${s.symbol}:${s.stance}`).join(",")}`;
-  const fetchedSig = useRef<string | null>(null);
+  // entering home loads the universe picks; profile cash/risk edits change
+  // what the agent should propose, so once the cached picks were computed for
+  // a different cash/risk they are refetched (stance answers do not)
+  const uniSig = `${profile.cash}|${profile.risk}`;
+  const uniFetchedSig = useRef<string | null>(null);
   useEffect(() => {
-    if (screen !== "home" && screen !== "s1" && screen !== "s2") return;
-    const stale = fetchedSig.current !== null && fetchedSig.current !== profileSig;
-    const need = screen === "home" && second ? [primary, second] : [primary];
-    let fetchedAny = false;
-    need.forEach(S => {
-      const st = ideasStateRef.current[S];
-      if ((!st?.data || stale) && !st?.loading) {
-        void fetchIdeas(S);
-        fetchedAny = true;
-      }
-    });
-    if (fetchedAny || fetchedSig.current == null) fetchedSig.current = profileSig;
-    if (symbol.toUpperCase() !== primary) setSymbol(primary);
-  }, [screen, primary, second, fetchIdeas, symbol, setSymbol, profileSig]);
+    if (screen !== "home") return;
+    const stale = uniFetchedSig.current !== null && uniFetchedSig.current !== uniSig;
+    const st = universeRef.current;
+    if ((!st.data || stale) && !st.loading) void fetchUniverse();
+    uniFetchedSig.current = uniSig;
+  }, [screen, uniSig, fetchUniverse]);
+
+  // point the engine at the assistant's top pick while on home, so opening it
+  // usually finds the scan already done (same pre-warm the old home did)
+  useEffect(() => {
+    if (screen !== "home") return;
+    const top = universeRef.current.data?.picks[0]?.idea.symbol.toUpperCase();
+    if (top && symbol.toUpperCase() !== top) setSymbol(top);
+  }, [screen, symbol, setSymbol, universe]);
 
   // the scan settled: retry any ideas still waiting on the engine, now
   const prevLoading = useRef(loading);
@@ -245,30 +270,19 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
       .filter((h): h is HeldContract => h != null);
   }, [browserPreview, positions, stock, profile]);
 
-  // ---------- ticker sub-lines (onboarding + step 1) ----------
-  // The second line under each ticker: the live quote when the app knows it
-  // (App tracks one symbol at a time), the prototype's demo lines in browser
-  // preview — and nothing at all when the price is unknown.
-  const stockSubline = useCallback((sym: string): string | null => {
-    const S = sym.toUpperCase();
-    if (browserPreview) {
-      const info = SAMPLE_STOCKS[S];
-      return info ? `${info.name} · ราคาตอนนี้ ${usd(info.spot, 2)}` : null;
-    }
-    if (stock && stock.symbol.toUpperCase() === S) return `ราคาตอนนี้ ${usd(stock.price, 2)}`;
-    return null;
-  }, [browserPreview, stock]);
-
   // ---------- navigation ----------
-  const primaryState = ideasState[primary] ?? { data: null, loading: false, error: null };
-  const secondState = second ? ideasState[second] : undefined;
-  const pickedIdea = primaryState.data?.ideas.find(i => i.occ === pickedOcc) ?? null;
+  const focusedState = focused
+    ? (ideasState[focused] ?? { data: null, loading: false, error: null })
+    : { data: null, loading: false, error: null };
+  const pickedIdea = focusedState.data?.ideas.find(i => i.occ === pickedOcc) ?? null;
 
   const go = (s: Screen) => setScreen(s);
   const patchProfile = (patch: Partial<EasyProfile>) => setProfile(cur => ({ ...cur, ...patch }));
-  const retryPrimary = () => {
-    bag.current.tries[primary] = 0;
-    void fetchIdeas(primary);
+  const retryUniverse = () => { void fetchUniverse(); };
+  const retryFocused = () => {
+    if (!focused) return;
+    bag.current.tries[focused] = 0;
+    void fetchIdeas(focused);
   };
 
   const finishOnboarding = () => {
@@ -276,24 +290,37 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
     go("home");
   };
 
-  const openIdeas = () => {
+  const openPick = (sym: string) => {
+    const S = sym.toUpperCase();
+    setFocused(S);
     setPickedOcc(null);
-    if (symbol.toUpperCase() !== primary) setSymbol(primary);
-    retryPrimary();
+    if (symbol.toUpperCase() !== S) setSymbol(S);
+    bag.current.tries[S] = 0;
+    void fetchIdeas(S);
     go("s2");
   };
 
-  const onStance = (sym: string, stance: Stance) =>
-    patchProfile({ stocks: profile.stocks.map(s => (s.symbol === sym ? { ...s, stance } : s)) });
+  // the stance answers given on the home idea cards — upsert, never hide the card
+  const onStance = (sym: string, stance: Stance) => {
+    const S = sym.toUpperCase();
+    setProfile(cur => {
+      const has = cur.stocks.some(s => s.symbol.toUpperCase() === S);
+      return {
+        ...cur,
+        stocks: has
+          ? cur.stocks.map(s => (s.symbol.toUpperCase() === S ? { ...s, stance } : s))
+          : [...cur.stocks, { symbol: S, stance }],
+      };
+    });
+  };
 
   // ---------- flow bar ----------
   const flow = (() => {
-    if (screen === "ob1") return { total: 3, step: 1, label: "ตั้งค่า 1 จาก 3" };
-    if (screen === "ob2") return { total: 3, step: 2, label: "ตั้งค่า 2 จาก 3" };
-    if (screen === "ob3") return { total: 3, step: 3, label: "ตั้งค่า 3 จาก 3" };
-    const dec: Partial<Record<Screen, number>> = { s1: 1, s2: 2, s3: 3, s4: 4, s5: 4 };
+    if (screen === "ob1") return { total: 2, step: 1, label: "ตั้งค่า 1 จาก 2" };
+    if (screen === "ob2") return { total: 2, step: 2, label: "ตั้งค่า 2 จาก 2" };
+    const dec: Partial<Record<Screen, number>> = { s2: 1, s3: 2, s4: 3, s5: 3 };
     const step = dec[screen];
-    return step ? { total: 4, step, label: `ขั้น ${step} จาก 4` } : null;
+    return step ? { total: 3, step, label: `ขั้น ${step} จาก 3` } : null;
   })();
 
   return (
@@ -316,60 +343,45 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
           </div>
         )}
 
-        {(screen === "ob1" || screen === "ob2" || screen === "ob3") && (
+        {(screen === "ob1" || screen === "ob2") && (
           <Onboarding
-            step={screen === "ob1" ? 1 : screen === "ob2" ? 2 : 3}
+            step={screen === "ob1" ? 1 : 2}
             profile={profile}
             onPatch={patchProfile}
             onGo={s => (s === "home" ? finishOnboarding() : go(s))}
-            browserPreview={browserPreview}
-            subline={stockSubline}
           />
         )}
 
         {screen === "home" && (
           <EasyHome
             profile={profile}
-            ideas={primaryState.data}
-            ideasBusy={primaryState.loading}
-            ideasError={primaryState.error}
-            skip={secondState?.data?.skip_reason_th ? secondState.data : null}
+            universe={universe.data}
+            universeError={universe.error}
             held={held}
             browserPreview={browserPreview}
-            onRetry={retryPrimary}
-            onOpenIdeas={openIdeas}
+            onRetry={retryUniverse}
+            onOpenPick={openPick}
+            onStance={onStance}
             onGo={s => go(s)}
           />
         )}
 
-        {screen === "s1" && (
-          <section className="ez-screen">
-            <button className="ez-back" onClick={() => go("home")}><EzIcon name="back" />หน้าแรก</button>
-            <h1>หุ้นที่ฉันสนใจ</h1>
-            <p className="ez-lead">เลือกหุ้นที่อยากให้ผู้ช่วยหาไอเดีย ตอนนี้ตั้งเงินไว้ <strong>{usd(profile.cash)}</strong></p>
-            <div className="ez-panel ez-gap-l">
-              <StockStanceList stocks={profile.stocks} onStance={onStance} subline={stockSubline} />
-            </div>
-            <div className="ez-actions"><button className="ez-btn primary" onClick={openIdeas}>ให้ผู้ช่วยหาไอเดีย</button></div>
-          </section>
-        )}
-
         {screen === "s2" && (
           <IdeasStep
-            ideas={primaryState.data}
-            ideasBusy={primaryState.loading}
-            ideasError={primaryState.error}
+            ideas={focusedState.data}
+            ideasBusy={focusedState.loading}
+            ideasError={focusedState.error}
             browserPreview={browserPreview}
-            onRetry={retryPrimary}
+            onRetry={retryFocused}
             onBack={() => go("home")}
             onPick={idea => { setPickedOcc(idea.occ); go("s3"); }}
           />
         )}
 
-        {screen === "s3" && primaryState.data && pickedIdea && (
+        {screen === "s3" && focusedState.data && pickedIdea && (
           <FiveQuestions
             idea={pickedIdea}
-            ideas={primaryState.data}
+            ideas={focusedState.data}
             profile={profile}
             browserPreview={browserPreview}
             onBack={() => go("s2")}
@@ -377,10 +389,10 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
           />
         )}
 
-        {screen === "s4" && primaryState.data && pickedIdea && (
+        {screen === "s4" && focusedState.data && pickedIdea && (
           <Checklist
             idea={pickedIdea}
-            ideas={primaryState.data}
+            ideas={focusedState.data}
             profile={profile}
             onBack={() => go("s3")}
             onReady={() => go("s5")}
@@ -388,10 +400,10 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
           />
         )}
 
-        {screen === "s5" && primaryState.data && pickedIdea && (
+        {screen === "s5" && focusedState.data && pickedIdea && (
           <WebullFieldMap
             idea={pickedIdea}
-            ideas={primaryState.data}
+            ideas={focusedState.data}
             onBack={() => go("s4")}
             onDone={() => {
               if (browserPreview) showToast("บันทึกไว้แล้ว ผู้ช่วยจะติดตามสัญญานี้ให้ในหน้าแรก (ตัวอย่าง)");

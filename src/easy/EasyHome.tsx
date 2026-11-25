@@ -1,12 +1,13 @@
-/** Easy Mode home — the market clock, the agent's one idea for tonight, the
- *  contracts already sold, and the links into the flow. Ported from the
- *  prototype; every dynamic sentence comes from the EasyIdeas contract. */
+/** Easy Mode home — the market clock, the assistant's ranked ideas picked from
+ *  the whole market, the contracts already sold, and the link into the flow.
+ *  Every dynamic sentence comes from the UniverseIdeas contract; the only
+ *  numbers rendered here are the ones it carries. */
 
 import { useEffect, useState } from "react";
-import type { EasyIdeas, EasyProfile } from "../types/easy";
+import type { EasyProfile, Stance, UniverseIdeas, UniversePick } from "../types/easy";
 import { marketClockText, usSession } from "../components/shared/usSession";
 import { EzIcon } from "./icons";
-import { badgeText, daysUntil, expiryTh, usd } from "./util";
+import { asOfTh, badgeText, daysUntil, expiryTh, usd } from "./util";
 
 export interface HeldContract {
   symbol: string;
@@ -20,16 +21,14 @@ export interface HeldContract {
 
 interface Props {
   profile: EasyProfile;
-  ideas: EasyIdeas | null;
-  ideasBusy: boolean;
-  ideasError: string | null;
-  /** Another stock the profile tracks, with its plain-Thai skip reason. */
-  skip: EasyIdeas | null;
+  universe: UniverseIdeas | null;
+  universeError: string | null;
   held: HeldContract[];
   browserPreview: boolean;
   onRetry: () => void;
-  onOpenIdeas: () => void;
-  onGo: (screen: "s1" | "ob1") => void;
+  onOpenPick: (symbol: string) => void;
+  onStance: (symbol: string, stance: Stance) => void;
+  onGo: (screen: "ob1") => void;
 }
 
 /** Beginner wording over the pro clock: same DST-correct times, but no
@@ -63,28 +62,18 @@ export function EasyHome(p: Props) {
     return () => window.clearInterval(t);
   }, []);
 
-  // the agent's pick is exactly the recommended idea — no silent fallback
-  const rec = p.ideas?.ideas.find(i => i.recommended) ?? null;
-  const sample = p.browserPreview || p.ideas?.source === "DEMO";
-  const badge = p.ideas ? (
-    <span className={`ez-src${sample ? " amber" : ""}`}>{badgeText(p.ideas.source, sample)}</span>
-  ) : null;
+  const u = p.universe;
+  const sample = p.browserPreview || u?.source === "DEMO";
 
-  // The home sentence is UI copy built here from the profile and the
-  // recommended idea, exactly as the prototype's renderHome; the contract's
-  // agent_say_th is the IDEAS-step (3-choices) sentence and stays on step 2.
-  const homeSay = (() => {
-    const d = p.ideas;
-    if (!d) return null;
-    if (d.ideas.length === 0) return `${d.symbol} ยังไม่มีไอเดียที่ดีพอสำหรับคืนนี้`;
-    if (rec == null) {
-      const minCost = Math.min(...d.ideas.map(i => i.cost));
-      return `คืนนี้ยังไม่มีไอเดีย ${d.symbol} ที่ใช้เงินไม่เกิน <strong>${usd(p.profile.cash)}</strong> เพราะต้องกันเงินไว้อย่างน้อย ${usd(minCost)} ต่อ 1 สัญญา`;
-    }
-    const want = p.profile.stocks.find(s => s.symbol.toUpperCase() === d.symbol.toUpperCase())?.stance !== "avoid";
-    const tail = p.skip ? ` ส่วน ${p.skip.symbol} ยังไม่มีไอเดียที่ดีพอ` : "";
-    return `คืนนี้มี <strong>1 ไอเดีย</strong>ที่ตรงกับที่คุณตั้งไว้ คือ ${d.symbol}${want ? " ซึ่งคุณอยากถืออยู่แล้ว" : " (คุณตั้งไว้ว่าไม่อยากถือ ผมจึงเลือกทางที่โอกาสต้องซื้อหุ้นต่ำ)"}${tail}`;
-  })();
+  // the small dim meta line under the agent's sentence: market note, data
+  // time (Bangkok) and how many stocks the assistant looked at
+  const meta = u
+    ? [
+        u.market_note_th,
+        asOfTh(u.as_of) ? `ข้อมูลของ ${asOfTh(u.as_of)}` : "",
+        `ผู้ช่วยดูหุ้น ${u.scanned_symbols} ตัว`,
+      ].filter(Boolean).join(" · ")
+    : "";
 
   return (
     <section className="ez-screen">
@@ -100,90 +89,68 @@ export function EasyHome(p: Props) {
       <div className="ez-agent ez-gap-l">
         <span className="ez-avatar"><EzIcon name="radar" /></span>
         <div>
-          <div className="ez-agent-name">ผู้ช่วย</div>
-          {p.ideasError ? (
+          <div className="ez-agent-name">
+            ผู้ช่วย
+            {u && <span className={`ez-src${sample ? " amber" : ""}`}>{badgeText(u.source, sample)}</span>}
+          </div>
+          {p.universeError ? (
             <p className="ez-say">
-              ดึงไอเดียไม่สำเร็จ — {p.ideasError}
+              ดึงไอเดียไม่สำเร็จ — {p.universeError}
               <br />
               <button className="ez-back" style={{ marginBottom: 0 }} onClick={p.onRetry}>ลองใหม่</button>
             </p>
-          ) : p.ideas == null ? (
-            <p className="ez-say ez-muted">ผู้ช่วยกำลังคำนวณไอเดียของคืนนี้ รอสักครู่</p>
+          ) : u == null ? (
+            <p className="ez-say ez-muted">ผู้ช่วยกำลังดูหุ้นทั้งตลาดเพื่อหาไอเดียของคืนนี้ รอสักครู่</p>
           ) : (
-            homeSay && <p className="ez-say" dangerouslySetInnerHTML={{ __html: homeSay }} />
+            <>
+              <p className="ez-say">{u.agent_say_th}</p>
+              {meta && <p className="ez-dim" style={{ fontSize: 14, marginTop: 6 }}>{meta}</p>}
+            </>
           )}
         </div>
       </div>
 
-      {p.ideas && !p.ideasError && (
-        <div className="ez-panel" style={{ marginTop: 20 }}>
-          <div className="ez-idea">
-            {rec ? (
-              <>
-                <div>
-                  <div className="ez-what">
-                    {p.ideas.symbol} · รับเงินตอนนี้ ถ้ายอมซื้อหุ้นที่ ${rec.strike}
-                    {badge}
-                  </div>
-                  <div className="ez-big ez-money ez-pos">{usd(rec.credit)}</div>
-                </div>
-                <span className={`ez-chance ${rec.warn ? "warn" : ""}`}>
-                  {rec.warn && <EzIcon name="alert" className="ez-warn" />}โอกาสต้องซื้อหุ้น {Math.round(rec.assign_pct)}%
-                </span>
-                <div className="ez-sub">
-                  รอ {rec.days} วัน ถึง{expiryTh(rec.expiry)} · ถูกกว่าราคาตอนนี้ {rec.below_spot_pct.toFixed(1)}%
-                </div>
-              </>
-            ) : p.ideas.ideas.length > 0 ? (
-              // cash too short for every idea — the prototype's not-enough-cash state
-              <>
-                <div>
-                  <div className="ez-what">
-                    {p.ideas.symbol} · เงินที่ตั้งไว้ยังไม่พอ
-                    {badge}
-                  </div>
-                  <div className="ez-big ez-money">—</div>
-                </div>
-                <span className="ez-chance">ต้องกันไว้ {usd(Math.min(...p.ideas.ideas.map(i => i.cost)))}</span>
-                <div className="ez-sub">ลองเพิ่มเงินที่ตั้งไว้ หรือเพิ่มหุ้นที่ราคาต่ำกว่านี้</div>
-              </>
-            ) : (
-              <>
-                <div>
-                  <div className="ez-what">
-                    {p.ideas.symbol} · คืนนี้ยังไม่มีไอเดียที่พอดีกับที่คุณตั้งไว้
-                    {badge}
-                  </div>
-                  <div className="ez-big ez-money">—</div>
-                </div>
-                <div className="ez-sub">{p.ideas.skip_reason_th}</div>
-              </>
-            )}
-          </div>
-          {rec && (
-            <div className="ez-actions" style={{ marginTop: 20 }}>
-              <button className="ez-btn primary" onClick={p.onOpenIdeas}>ดูไอเดียนี้<EzIcon name="chev" /></button>
-            </div>
-          )}
-          {p.skip?.skip_reason_th && (
-            <>
-              <div className="ez-rule" />
-              <div className="ez-skip">
-                <EzIcon name="pause" className="ez-warn" />
-                <span>
-                  <strong style={{ color: "var(--text)" }}>{p.skip.symbol} · ยังไม่แนะนำคืนนี้</strong>
-                  <br />
-                  {p.skip.skip_reason_th}
-                </span>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-      {p.ideasBusy && p.ideas == null && !p.ideasError && (
+      {p.universeError == null && u == null && (
         <div className="ez-panel ez-loading" style={{ marginTop: 20 }} role="status">
           <span className="ez-spin" />
-          <span>กำลังรอข้อมูลของ {p.profile.stocks[0]?.symbol ?? "หุ้นที่สนใจ"} — ผู้ช่วยจะแสดงไอเดียเมื่อคำนวณเสร็จ</span>
+          <span>กำลังไล่ดูหุ้นทั้งตลาด — ผู้ช่วยจะแสดงไอเดียที่คัดมาแล้วเมื่อคำนวณเสร็จ</span>
+        </div>
+      )}
+
+      {u && p.universeError == null && u.budget_short && u.picks.length === 0 && (
+        <div className="ez-panel" style={{ marginTop: 20 }}>
+          <div className="ez-skip">
+            <EzIcon name="pause" className="ez-warn" />
+            <span>
+              <strong style={{ color: "var(--text)" }}>งบที่ตั้งไว้ยังไม่พอ</strong>
+              <br />
+              {u.budget_short.text_th}
+            </span>
+          </div>
+          <div className="ez-actions" style={{ marginTop: 20 }}>
+            <button className="ez-btn primary" onClick={() => p.onGo("ob1")}>ปรับงบ</button>
+          </div>
+        </div>
+      )}
+
+      {u && p.universeError == null && !u.budget_short && u.picks.length === 0 && (
+        <div className="ez-panel" style={{ marginTop: 20 }}>
+          <p className="ez-muted">คืนนี้ยังไม่มีไอเดียที่ดีพอ</p>
+          <p className="ez-dim" style={{ fontSize: 14, marginTop: 6 }}>{u.market_note_th}</p>
+        </div>
+      )}
+
+      {u && p.universeError == null && u.picks.length > 0 && (
+        <div className="ez-list ez-gap-l">
+          {u.picks.map(pick => (
+            <PickCard
+              key={pick.idea.occ}
+              pick={pick}
+              stance={p.profile.stocks.find(s => s.symbol.toUpperCase() === pick.idea.symbol.toUpperCase())?.stance ?? null}
+              onStance={p.onStance}
+              onOpen={() => p.onOpenPick(pick.idea.symbol)}
+            />
+          ))}
         </div>
       )}
 
@@ -210,18 +177,72 @@ export function EasyHome(p: Props) {
       </div>
 
       <div className="ez-panel quiet ez-gap-l" style={{ paddingTop: 8, paddingBottom: 8 }}>
-        <button className="ez-linkrow" onClick={() => p.onGo("s1")}>
-          <span>
-            หุ้นที่ฉันสนใจ <span className="ez-dim">· {p.profile.stocks.length} ตัว · เงิน {usd(p.profile.cash)}</span>
-          </span>
-          <EzIcon name="chev" className="ez-chev" />
-        </button>
         <button className="ez-linkrow" onClick={() => p.onGo("ob1")}>
-          <span>ตั้งค่าใหม่ <span className="ez-dim">· เริ่มคำถาม 3 ข้อใหม่</span></span>
+          <span>
+            ตั้งค่าใหม่ <span className="ez-dim">· เงิน {usd(p.profile.cash)} · ยอมให้ต้องซื้อหุ้นราว {p.profile.risk} ใน 10 ครั้ง</span>
+          </span>
           <EzIcon name="chev" className="ez-chev" />
         </button>
       </div>
     </section>
+  );
+}
+
+/** One ranked idea from the universe scan: the money in plain sight first, the
+ *  reasons and cautions under it, the OI note small and dim (unproven signal),
+ *  then the single stance question and the way into the detail flow. */
+function PickCard({ pick, stance, onStance, onOpen }: {
+  pick: UniversePick;
+  stance: Stance | null;
+  onStance: (symbol: string, stance: Stance) => void;
+  onOpen: () => void;
+}) {
+  const i = pick.idea;
+  return (
+    <article className={`ez-pick${pick.rank === 1 ? " top" : ""}`}>
+      <div className="ez-pick-head">
+        <div>
+          <div className="ez-what">
+            {i.symbol} · ยอมซื้อที่ ${i.strike} (ถูกกว่าราคาตอนนี้ {i.below_spot_pct.toFixed(1)}%)
+            {pick.rank === 1 && <span className="ez-tag">ผู้ช่วยแนะนำ</span>}
+          </div>
+          <div className="ez-big ez-money ez-pos">{usd(i.credit)}</div>
+          <div className="ez-sub">
+            รับเงินตอนนี้ · กันเงินไว้ {usd(i.cost)} · รอ {i.days} วัน ถึง{expiryTh(i.expiry)}
+          </div>
+        </div>
+        <span className={`ez-chance ${i.warn ? "warn" : ""}`}>
+          {i.warn && <EzIcon name="alert" className="ez-warn" />}โอกาสต้องซื้อหุ้น {Math.round(i.assign_pct)}%
+        </span>
+      </div>
+
+      {pick.reasons_th.length > 0 && (
+        <ul className="ez-why">
+          {pick.reasons_th.map((r, k) => <li key={k}><EzIcon name="check" />{r}</li>)}
+        </ul>
+      )}
+      {pick.cautions_th.length > 0 && (
+        <ul className="ez-why caution">
+          {pick.cautions_th.map((r, k) => <li key={k}><EzIcon name="alert" />{r}</li>)}
+        </ul>
+      )}
+      <p className="ez-note ez-dim" style={{ fontSize: 13, marginTop: 10 }}>
+        <EzIcon name="info" />
+        <span>{pick.oi.note_th}</span>
+      </p>
+
+      <div className="ez-rule" />
+      <div className="ez-pick-foot">
+        <div className="ez-stance">
+          <p>ถ้าราคาลงจนต้องซื้อ {i.symbol} 100 หุ้น คุณโอเคจะถือไหม</p>
+          <div className="ez-seg2" role="group" aria-label={`ถ้าราคาลงจนต้องซื้อ ${i.symbol} 100 หุ้น คุณโอเคจะถือไหม`}>
+            <button className="yes" aria-pressed={stance === "want"} onClick={() => onStance(i.symbol, "want")}>ถือได้</button>
+            <button className="no" aria-pressed={stance === "avoid"} onClick={() => onStance(i.symbol, "avoid")}>ไม่อยากถือ</button>
+          </div>
+        </div>
+        <button className="ez-btn primary" onClick={onOpen}>ดูไอเดียนี้<EzIcon name="chev" /></button>
+      </div>
+    </article>
   );
 }
 
@@ -279,8 +300,8 @@ function HeldRow({ h, first }: { h: HeldContract; first: boolean }) {
             />
             <span className="ez-mk strike" style={{ left: `${sp}%` }} />
             <span className="ez-mk now" style={{ left: `${np}%` }} />
-            <span className="ez-lb top" style={{ left: `${sp}%` }}>ต้องซื้อหุ้นถ้าต่ำกว่า ${h.strike}</span>
-            <span className="ez-lb bot" style={{ left: `${np}%` }}>ตอนนี้ ${h.spot.toFixed(2)}</span>
+            <span className="ez-lb top" style={{ left: `${sp}%` }}>ต้องซื้อหุ้นถ้าต่ำกว่า {h.strike}</span>
+            <span className="ez-lb bot" style={{ left: `${np}%` }}>ตอนนี้ {h.spot.toFixed(2)}</span>
             <span className="ez-lb bot" style={{ left: `${(sp + np) / 2}%`, color: st.color }}>ห่าง {Math.abs(away).toFixed(1)}%</span>
           </div>
         )}

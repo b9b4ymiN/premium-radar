@@ -98,3 +98,62 @@ export interface EasyIdeas {
   /** RFC3339 time the ideas were computed. */
   computed_at: string;
 }
+
+// ---------- universe ideas (the assistant proposes from the whole market) ----------
+// Rust command `easy_universe_ideas` (no arguments; it reads the saved profile)
+// returns `UniverseIdeas` in exactly this shape and rejects with a Thai string.
+
+/** The 0–100 score breakdown behind a pick; null parts were not computable. */
+export interface ScoreParts {
+  vrp: number | null;
+  premium: number | null;
+  fit: number | null;
+  cushion: number | null;
+  liquidity: number | null;
+  event_penalty: number;
+}
+
+/** Open-interest context for a pick — unproven signal, shown small and dim. */
+export interface OiContext {
+  put_wall_strike: number | null;
+  put_wall_oi: number | null;
+  oi_change_pct: number | null;
+  note_th: string;
+}
+
+/** One ranked idea the assistant picked out of the scanned universe. */
+export interface UniversePick {
+  rank: number;
+  idea: EasyIdea;
+  /** 0..100 */
+  score: number;
+  parts: ScoreParts;
+  reasons_th: string[];
+  cautions_th: string[];
+  iv_pct: number | null;
+  realized_30d_pct: number | null;
+  earnings_date: string | null;
+  oi: OiContext;
+}
+
+/** When the budget cannot afford even the cheapest candidate. */
+export interface BudgetShort {
+  min_cash_usd: number;
+  cheapest_symbol: string;
+  text_th: string;
+}
+
+export interface UniverseIdeas {
+  session_date: string | null;
+  /** RFC3339 */
+  as_of: string | null;
+  /** "API" | "LOCAL" */
+  source: string;
+  scanned_symbols: number;
+  candidate_symbols: number;
+  market_note_th: string;
+  picks: UniversePick[];
+  budget_short: BudgetShort | null;
+  agent_say_th: string;
+  computed_at: string;
+}
