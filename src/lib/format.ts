@@ -1,7 +1,11 @@
-/** Display helpers shared by the pages. Market times are shown in New York
- *  time because that is the clock the contracts trade on. */
+/** Display helpers shared by the pages. Times are shown in Thai time
+ *  (Asia/Bangkok) because the users sit in Bangkok; where the New York clock
+ *  matters for a trade, the ET time rides along as a secondary hint. Expiry
+ *  arithmetic (daysUntil) stays on the New York calendar — expiry dates are
+ *  NY dates. */
 
 const ET = "America/New_York";
+const TH = "Asia/Bangkok";
 const DAY_MS = 86_400_000;
 
 export const fmt = (n: number, d = 2) =>
@@ -13,18 +17,17 @@ const valid = (ms: number | null | undefined): ms is number =>
 const et = (ms: number, options: Intl.DateTimeFormatOptions) =>
   new Intl.DateTimeFormat("en-GB", { timeZone: ET, ...options }).format(new Date(ms));
 
-/** "13:45:07 ET" */
-export const timeEt = (ms: number | null | undefined) =>
-  valid(ms) ? `${et(ms, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })} ET` : "--";
+const th = (ms: number, options: Intl.DateTimeFormatOptions) =>
+  new Intl.DateTimeFormat("en-GB", { timeZone: TH, ...options }).format(new Date(ms));
 
-/** "20 Nov" */
-export const dayEt = (ms: number | null | undefined) =>
-  valid(ms) ? et(ms, { day: "2-digit", month: "short" }) : "--";
+/** "02:45:07 น." — Thai wall clock, 24-hour. */
+export const timeTh = (ms: number | null | undefined) =>
+  valid(ms) ? `${th(ms, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })} น.` : "--";
 
-/** "20 Nov · 13:45 ET" */
-export const dateTimeEt = (ms: number | null | undefined) =>
+/** "02:45:07 น. (13:45 ET)" — Thai clock with the New York clock as a hint. */
+export const timeThEt = (ms: number | null | undefined) =>
   valid(ms)
-    ? `${et(ms, { day: "2-digit", month: "short" })} · ${et(ms, { hour: "2-digit", minute: "2-digit", hour12: false })} ET`
+    ? `${th(ms, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })} น. (${et(ms, { hour: "2-digit", minute: "2-digit", hour12: false })} ET)`
     : "--";
 
 /** "2.5K" / "184.7K" / "3.0M" / "3.0B" / "3.0T" */
@@ -52,6 +55,13 @@ export const thaiDate = (iso: string | null | undefined) => {
   const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
   if (!y || !m || !d) return iso;
   return `${d} ${THAI_MONTHS[m - 1] ?? ""} ${String(y + 543).slice(-2)}`;
+};
+
+/** "21 พ.ย. · 02:45 น." — Thai date and wall clock of one instant. */
+export const dateTimeTh = (ms: number | null | undefined) => {
+  if (!valid(ms)) return "--";
+  const [, month, day] = new Intl.DateTimeFormat("en-CA", { timeZone: TH }).format(new Date(ms)).split("-").map(Number);
+  return `${day} ${THAI_MONTHS[month - 1] ?? ""} · ${th(ms, { hour: "2-digit", minute: "2-digit", hour12: false })} น.`;
 };
 
 /** Whole days from today (New York) until an ISO date; negative when past. */

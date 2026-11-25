@@ -34,6 +34,23 @@ const WATCH_STATUS_TEXT: Record<string, string> = {
   setup_required: "ตั้งค่าก่อน",
 };
 
+/** One recommendation card: real money leads, the per-year figure is a muted footnote. */
+interface OppCard {
+  label: string;
+  tag: string;
+  /** true → the assignment-chance tag renders as an amber ⚠ warning */
+  tagWarn?: boolean;
+  contract: string;
+  /** OCC symbol of the contract, set only for cards built from real rows */
+  symbol?: string;
+  /** dollars earned per contract, e.g. "$415" */
+  gain?: string;
+  /** period return, e.g. "2.37% ใน 26 วัน" */
+  period?: string;
+  /** per-year footnote, e.g. "ต่อปี 33.3%" */
+  ann?: string;
+}
+
 // Tauri bridge (graceful fallback when running without the Tauri shell)
 const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -76,14 +93,14 @@ const MOCK_STOCK: StockUpdate = {
 };
 
 const MOCK_ROWS: Partial<EnrichedRow>[] = [
-  { q: { symbol: "NVDA261218P00175000", strike: 175, option_type: "P", expiry: "2026-12-18", bid: 4.15, ask: 4.25, oi: 3120, volume: 1842, price: 4.20, underlying: "NVDA", src: "DEMO", change: 0, change_ratio: 0 }, grade: "B", delta: -0.18, credit: 415, collateral: 17500, ann: 26.0, pop: 0.76, cushion: 6.4, p_itm: 0.22, score: 19.6, dte: 26, iv: 0.48, be: 170.85, prem: 4.15, spread_pct: 2.4 },
-  { q: { symbol: "NVDA261218P00165000", strike: 165, option_type: "P", expiry: "2026-12-18", bid: 2.20, ask: 2.30, oi: 5480, volume: 2100, price: 2.25, underlying: "NVDA", src: "DEMO", change: 0, change_ratio: 0 }, grade: "A", delta: -0.10, credit: 220, collateral: 16500, ann: 15.0, pop: 0.85, cushion: 11.8, p_itm: 0.13, score: 12.8, dte: 26, iv: 0.48, be: 162.80, prem: 2.20, spread_pct: 4.4 },
-  { q: { symbol: "NVDA261218C00195000", strike: 195, option_type: "C", expiry: "2026-12-18", bid: 2.15, ask: 2.25, oi: 2910, volume: 1200, price: 2.20, underlying: "NVDA", src: "DEMO", change: 0, change_ratio: 0 }, grade: "A", delta: 0.16, credit: 215, collateral: 18245, ann: 13.0, pop: 0.82, cushion: 6.9, p_itm: 0.16, score: 10.7, dte: 26, iv: 0.48, be: 180.30, prem: 2.15, spread_pct: 4.5 },
-  { q: { symbol: "NVDA261218P00172500", strike: 172.5, option_type: "P", expiry: "2026-12-18", bid: 3.45, ask: 3.55, oi: 4204, volume: 1600, price: 3.50, underlying: "NVDA", src: "DEMO", change: 0, change_ratio: 0 }, grade: "B", delta: -0.22, credit: 345, collateral: 17250, ann: 22.0, pop: 0.72, cushion: 5.1, p_itm: 0.25, score: 15.8, dte: 26, iv: 0.48, be: 169.05, prem: 3.45, spread_pct: 2.9 },
-  { q: { symbol: "NVDA261218C00192500", strike: 192.5, option_type: "C", expiry: "2026-12-18", bid: 2.60, ask: 2.70, oi: 1876, volume: 900, price: 2.65, underlying: "NVDA", src: "DEMO", change: 0, change_ratio: 0 }, grade: "B", delta: 0.21, credit: 260, collateral: 18245, ann: 16.0, pop: 0.78, cushion: 5.5, p_itm: 0.19, score: 12.5, dte: 26, iv: 0.48, be: 179.85, prem: 2.60, spread_pct: 3.8 },
-  { q: { symbol: "NVDA261218P00170000", strike: 170, option_type: "P", expiry: "2026-12-18", bid: 3.05, ask: 3.15, oi: 6730, volume: 2800, price: 3.10, underlying: "NVDA", src: "DEMO", change: 0, change_ratio: 0 }, grade: "B", delta: -0.13, credit: 305, collateral: 17000, ann: 20.0, pop: 0.81, cushion: 9.1, p_itm: 0.17, score: 16.2, dte: 26, iv: 0.48, be: 166.95, prem: 3.05, spread_pct: 3.2 },
-  { q: { symbol: "NVDA261204P00178000", strike: 178, option_type: "P", expiry: "2026-12-04", bid: 2.85, ask: 2.95, oi: 2046, volume: 800, price: 2.90, underlying: "NVDA", src: "DEMO", change: 0, change_ratio: 0 }, grade: "C", delta: -0.28, credit: 285, collateral: 17800, ann: 35.0, pop: 0.68, cushion: 3.2, p_itm: 0.30, score: 23.8, dte: 12, iv: 0.48, be: 175.15, prem: 2.85, spread_pct: 3.4 },
-  { q: { symbol: "NVDA261218C00187500", strike: 187.5, option_type: "C", expiry: "2026-12-18", bid: 3.75, ask: 3.85, oi: 1390, volume: 600, price: 3.80, underlying: "NVDA", src: "API", change: 0, change_ratio: 0 }, grade: "C", delta: 0.27, credit: 375, collateral: 18245, ann: 22.0, pop: 0.71, cushion: 2.8, p_itm: 0.24, score: 15.6, dte: 26, iv: 0.48, be: 178.70, prem: 3.75, spread_pct: 2.6 },
+  { q: { symbol: "NVDA261218P00175000", strike: 175, option_type: "P", expiry: "2026-12-18", bid: 4.15, ask: 4.25, oi: 3120, volume: 1842, price: 4.20, underlying: "NVDA", src: "DEMO", change: 0, change_ratio: 0 }, grade: "B", delta: -0.18, credit: 415, collateral: 17500, yld: 2.3714, ann: 33.3, pop: 0.76, cushion: 6.4, p_itm: 0.22, score: 19.6, dte: 26, iv: 0.48, be: 170.85, prem: 4.15, spread_pct: 2.4 },
+  { q: { symbol: "NVDA261218P00165000", strike: 165, option_type: "P", expiry: "2026-12-18", bid: 2.20, ask: 2.30, oi: 5480, volume: 2100, price: 2.25, underlying: "NVDA", src: "DEMO", change: 0, change_ratio: 0 }, grade: "A", delta: -0.10, credit: 220, collateral: 16500, yld: 1.3333, ann: 18.7, pop: 0.85, cushion: 11.8, p_itm: 0.13, score: 12.8, dte: 26, iv: 0.48, be: 162.80, prem: 2.20, spread_pct: 4.4 },
+  { q: { symbol: "NVDA261218C00195000", strike: 195, option_type: "C", expiry: "2026-12-18", bid: 2.15, ask: 2.25, oi: 2910, volume: 1200, price: 2.20, underlying: "NVDA", src: "DEMO", change: 0, change_ratio: 0 }, grade: "A", delta: 0.16, credit: 215, collateral: 18245, yld: 1.1784, ann: 16.5, pop: 0.82, cushion: 6.9, p_itm: 0.16, score: 10.7, dte: 26, iv: 0.48, be: 180.30, prem: 2.15, spread_pct: 4.5 },
+  { q: { symbol: "NVDA261218P00172500", strike: 172.5, option_type: "P", expiry: "2026-12-18", bid: 3.45, ask: 3.55, oi: 4204, volume: 1600, price: 3.50, underlying: "NVDA", src: "DEMO", change: 0, change_ratio: 0 }, grade: "B", delta: -0.22, credit: 345, collateral: 17250, yld: 2.0, ann: 28.1, pop: 0.72, cushion: 5.1, p_itm: 0.25, score: 15.8, dte: 26, iv: 0.48, be: 169.05, prem: 3.45, spread_pct: 2.9 },
+  { q: { symbol: "NVDA261218C00192500", strike: 192.5, option_type: "C", expiry: "2026-12-18", bid: 2.60, ask: 2.70, oi: 1876, volume: 900, price: 2.65, underlying: "NVDA", src: "DEMO", change: 0, change_ratio: 0 }, grade: "B", delta: 0.21, credit: 260, collateral: 18245, yld: 1.425, ann: 20.0, pop: 0.78, cushion: 5.5, p_itm: 0.19, score: 12.5, dte: 26, iv: 0.48, be: 179.85, prem: 2.60, spread_pct: 3.8 },
+  { q: { symbol: "NVDA261218P00170000", strike: 170, option_type: "P", expiry: "2026-12-18", bid: 3.05, ask: 3.15, oi: 6730, volume: 2800, price: 3.10, underlying: "NVDA", src: "DEMO", change: 0, change_ratio: 0 }, grade: "B", delta: -0.13, credit: 305, collateral: 17000, yld: 1.7941, ann: 25.2, pop: 0.81, cushion: 9.1, p_itm: 0.17, score: 16.2, dte: 26, iv: 0.48, be: 166.95, prem: 3.05, spread_pct: 3.2 },
+  { q: { symbol: "NVDA261204P00178000", strike: 178, option_type: "P", expiry: "2026-12-04", bid: 2.85, ask: 2.95, oi: 2046, volume: 800, price: 2.90, underlying: "NVDA", src: "DEMO", change: 0, change_ratio: 0 }, grade: "C", delta: -0.28, credit: 285, collateral: 17800, yld: 1.6011, ann: 48.7, pop: 0.68, cushion: 3.2, p_itm: 0.30, score: 23.8, dte: 12, iv: 0.48, be: 175.15, prem: 2.85, spread_pct: 3.4 },
+  { q: { symbol: "NVDA261218C00187500", strike: 187.5, option_type: "C", expiry: "2026-12-18", bid: 3.75, ask: 3.85, oi: 1390, volume: 600, price: 3.80, underlying: "NVDA", src: "API", change: 0, change_ratio: 0 }, grade: "C", delta: 0.27, credit: 375, collateral: 18245, yld: 2.0554, ann: 28.9, pop: 0.71, cushion: 2.8, p_itm: 0.24, score: 15.6, dte: 26, iv: 0.48, be: 178.70, prem: 3.75, spread_pct: 2.6 },
 ];
 
 const MOCK_STATS: ChainStats = { atm_iv: 0.482, em: 14.9, skew: 3.1 };
@@ -215,7 +232,7 @@ export default function App() {
         uns.push(await tauriListen<ScanProgress>("scan://progress", (p) => {
           setScanPhase(p.phase);
           setScanMsg(p.message);
-          // real-time push liveness: the backend emits phase "realtime" once
+          // push-feed liveness: the backend emits phase "realtime" once
           // the MQTT subscribe lands; any other real-time message (reconnecting,
           // dropped, no entitlement) means the push feed is down again.
           if (p.phase === "realtime") setWsLive(true);
@@ -412,6 +429,8 @@ export default function App() {
   );
 
   // top-3 opportunity cards from the screener output
+  // (units from the engine: yld = % return over the holding period, ann = % per
+  //  year, p_itm = 0–1 fraction of finishing in the money)
   const opps = useMemo(() => {
     const cand = rows.filter(r => r.delta != null && r.credit != null);
     if (cand.length === 0) return null;
@@ -421,23 +440,37 @@ export default function App() {
       ?? byAbsDelta[Math.min(1, byAbsDelta.length - 1)];
     const topAnn = [...cand].sort((a, b) => (b.ann ?? 0) - (a.ann ?? 0))[0];
     const fc = (r: EnrichedRow) => `${symbol} ${r.q.strike}${r.q.option_type} · ${r.q.expiry.slice(5).replace("-", "/")}`;
-    const fm = (r: EnrichedRow) => `+$${r.credit?.toFixed(0)} premium · ${(r.ann ?? 0).toFixed(1)}% annualized · δ ${Math.abs(r.delta ?? 0).toFixed(2)}`;
+    const card = (r: EnrichedRow, label: string, warn: boolean): OppCard => {
+      const yldPct = r.yld ?? (r.credit != null && r.collateral ? (r.credit / r.collateral) * 100 : null);
+      const assign = r.p_itm != null ? `โอกาสโดนซื้อหุ้น ~${Math.round(r.p_itm * 100)}%` : "—";
+      return {
+        label,
+        tag: warn ? `⚠ ${assign}` : assign,
+        tagWarn: warn,
+        contract: fc(r),
+        symbol: r.q.symbol,
+        gain: r.credit != null ? `$${Math.round(r.credit)}` : undefined,
+        period: yldPct != null ? `${yldPct.toFixed(2)}% ใน ${Math.round(r.dte)} วัน` : undefined,
+        ann: r.ann != null ? `ต่อปี ${r.ann.toFixed(1)}%` : undefined,
+      };
+    };
     return [
-      { label: "LOWEST DELTA", tag: "Defensive", contract: fc(defensive), meta: fm(defensive) },
-      { label: "BALANCED SETUP", tag: "Balanced", contract: fc(balanced), meta: fm(balanced) },
-      { label: "HIGHEST ANNUALIZED", tag: "High yield", contract: fc(topAnn), meta: fm(topAnn) },
+      card(defensive, "ปลอดภัยสุด", (defensive.p_itm ?? 0) >= 0.30),
+      card(balanced, "สมดุล", (balanced.p_itm ?? 0) >= 0.30),
+      // ผลตอบแทนสูงสุดเสี่ยงกว่าเสมอเมื่อโอกาสถูก assign สูงกว่าตัวปลอดภัยสุด
+      card(topAnn, "ผลตอบแทนสูงสุด", (topAnn.p_itm ?? 0) >= 0.30 || (topAnn.p_itm ?? 0) > (defensive.p_itm ?? 0)),
     ];
   }, [rows, symbol]);
-  const oppCards = opps ?? (!mockOn
+  const oppCards: OppCard[] = opps ?? (!mockOn
     ? [
-        { label: "LOWEST DELTA", tag: "—", contract: "รอข้อมูลจริง", meta: " " },
-        { label: "BALANCED SETUP", tag: "—", contract: "รอข้อมูลจริง", meta: " " },
-        { label: "HIGHEST ANNUALIZED", tag: "—", contract: "รอข้อมูลจริง", meta: " " },
+        { label: "ปลอดภัยสุด", tag: "—", contract: "รอข้อมูลจริง" },
+        { label: "สมดุล", tag: "—", contract: "รอข้อมูลจริง" },
+        { label: "ผลตอบแทนสูงสุด", tag: "—", contract: "รอข้อมูลจริง" },
       ]
     : [
-        { label: "LOWEST DELTA", tag: "Defensive", contract: `${symbol} 165P · 12 ก.พ.`, meta: `+$220 premium · ${fmt(15.0, 1)}% annualized · δ 0.10` },
-        { label: "BALANCED SETUP", tag: "Balanced", contract: `${symbol} 175P · 12 ก.พ.`, meta: `+$415 premium · ${fmt(26.0, 1)}% annualized · δ 0.18` },
-        { label: "HIGHEST ANNUALIZED", tag: "High yield", contract: `${symbol} 178P · 04 ธ.ค.`, meta: `+$285 premium · ${fmt(35.0, 1)}% annualized · δ 0.28` },
+        { label: "ปลอดภัยสุด", tag: "โอกาสโดนซื้อหุ้น ~13%", contract: `${symbol} 165P · 12 ก.พ.`, gain: "$220", period: "1.33% ใน 26 วัน", ann: "ต่อปี 18.7%" },
+        { label: "สมดุล", tag: "โอกาสโดนซื้อหุ้น ~22%", contract: `${symbol} 175P · 12 ก.พ.`, gain: "$415", period: "2.37% ใน 26 วัน", ann: "ต่อปี 33.3%" },
+        { label: "ผลตอบแทนสูงสุด", tag: "⚠ โอกาสโดนซื้อหุ้น ~30%", tagWarn: true, contract: `${symbol} 178P · 04 ธ.ค.`, gain: "$285", period: "1.60% ใน 12 วัน", ann: "ต่อปี 48.7%" },
       ]);
 
   const feed = !tauriReady
@@ -509,17 +542,17 @@ export default function App() {
       <div className="workspace">
         {/* ---- Icon Rail ---- */}
         <nav className="iconbar">
-          <button className={`iconbtn ${mainTab === "home" ? "on" : ""}`} title="หน้าแรก" onClick={() => setMainTab("home")}>⌂</button>
-          <button className={`iconbtn ${mainTab === "market" ? "on" : ""}`} title="Market · ภาพรวมตลาด (หุ้นขึ้นแรง ลงแรง ซื้อขายหนาแน่น และ sector)" onClick={() => setMainTab("market")}>◔</button>
-          <button className={`iconbtn ${mainTab === "monitor" ? "on" : ""}`} title="Options Monitor" onClick={() => setMainTab("monitor")}>|||</button>
-          <button className={`iconbtn ${mainTab === "lab" ? "on" : ""}`} title="Option Lab" onClick={() => setMainTab("lab")}>⚗</button>
-          <button className={`iconbtn ${mainTab === "watchlist" ? "on" : ""}`} title="Watchlists" onClick={() => setMainTab("watchlist")}>≡</button>
-          <button className={`iconbtn ${mainTab === "portfolio" ? "on" : ""}`} title="Portfolio · พอร์ตจริง (อ่านอย่างเดียว)" onClick={() => setMainTab("portfolio")}>◫</button>
+          <button className={`iconbtn ${mainTab === "home" ? "on" : ""}`} title="หน้าแรก" onClick={() => setMainTab("home")}><span className="ic">⌂</span><span className="iclabel">หน้าแรก</span></button>
+          <button className={`iconbtn ${mainTab === "market" ? "on" : ""}`} title="Market · ภาพรวมตลาด (หุ้นขึ้นแรง ลงแรง ซื้อขายหนาแน่น และ sector)" onClick={() => setMainTab("market")}><span className="ic">◔</span><span className="iclabel">ตลาด</span></button>
+          <button className={`iconbtn ${mainTab === "monitor" ? "on" : ""}`} title="Options Monitor" onClick={() => setMainTab("monitor")}><span className="ic">|||</span><span className="iclabel">ออปชัน</span></button>
+          <button className={`iconbtn ${mainTab === "lab" ? "on" : ""}`} title="Option Lab" onClick={() => setMainTab("lab")}><span className="ic">⚗</span><span className="iclabel">แล็บ</span></button>
+          <button className={`iconbtn ${mainTab === "watchlist" ? "on" : ""}`} title="Watchlists" onClick={() => setMainTab("watchlist")}><span className="ic">≡</span><span className="iclabel">ลิสต์</span></button>
+          <button className={`iconbtn ${mainTab === "portfolio" ? "on" : ""}`} title="Portfolio · พอร์ตจริง (อ่านอย่างเดียว)" onClick={() => setMainTab("portfolio")}><span className="ic">◫</span><span className="iclabel">พอร์ต</span></button>
           <button
             className="iconbar bottom iconbtn"
             title="Settings / API keys"
             onClick={() => { setSetupMode("edit"); setShowSetup(true); }}
-          >⚙</button>
+          ><span className="ic">⚙</span><span className="iclabel">ตั้งค่า</span></button>
         </nav>
 
         {/* ---- Left Panel ---- */}
@@ -624,7 +657,7 @@ export default function App() {
 
           <div className="leftfoot">
             <div><b>DATA MODE</b> <span style={{ float: "right", color: isLive ? "#3ddc97" : isError ? "#f4788c" : "#e0b15f" }}>{isLive ? "Live · Webull TH" : isError ? "Feed error" : hasTauri ? "รอข้อมูล" : "Synthetic"}</span></div>
-            <div>{isLive ? `Feed: ${wsLive ? "📡 real-time push" : "REST snapshot"} · ${new Date().toLocaleDateString()}` : "REST snapshot · 3 นาที/รอบ"}</div>
+            <div>{isLive && wsLive ? "อัปเดตสดทันที" : "อัปเดตทุก 3 นาที"}</div>
           </div>
         </aside>
 
@@ -696,10 +729,14 @@ export default function App() {
                   </div>
                 ))
               : oppCards.map((o, i) => (
-              <button key={o.label} className={`opportunity ${i === 1 ? "on" : ""} ${opps ? "" : "muted-card"}`} onClick={() => { const hit = rows.find(r => r.q.symbol === (o as { contract?: string }).contract); if (hit) setSelected(hit.q.symbol); }}>
-                <div className="otop"><span>{o.label}</span><span style={{ color: "#9caec3" }}>{o.tag}</span></div>
+              <button key={o.label} className={`opportunity ${i === 1 ? "on" : ""} ${opps ? "" : "muted-card"}`} onClick={() => { if (o.symbol) setSelected(o.symbol); }}>
+                <div className="otop"><span>{o.label}</span><span className={`otag ${o.tagWarn ? "warn" : ""}`}>{o.tag}</span></div>
                 <div className="ocontract">{o.contract}</div>
-                <div className="ometas"><b className="pos">{o.meta.split("·")[0]}</b> · {o.meta.split("·").slice(1).join("·")}</div>
+                <div className="ometas">
+                  {o.gain != null && o.period != null
+                    ? <><b className="pos">ได้ {o.gain}</b> · {o.period}{o.ann != null && <span className="oann"> · {o.ann}</span>}</>
+                    : " "}
+                </div>
               </button>
             ))}
           </div>
@@ -716,7 +753,7 @@ export default function App() {
               </div>
             </div>
             <div className="table-status">
-              <span>{hasTauri ? scanMsg : "Funnel: OTM → delta → DTE → spread → premium → budget"}</span>
+              <span>{hasTauri ? scanMsg : "ข้อมูลตัวอย่าง (ยังไม่ได้เชื่อม Webull)"}</span>
               <span>Rows <strong>{rows.length}</strong> · USD</span>
             </div>
             <div className="tblscroll">
@@ -983,10 +1020,10 @@ export default function App() {
       <footer className="statusbar">
         <span><b>{tauriReady ? (isLive ? "LIVE · WEBULL TH FEED" : scanMsg) : "OFFLINE · BROWSER PREVIEW"}</b></span>
         <span>{symbol} {stock ? fmt(stock.price) : loading ? <Skel w="3.5em" /> : "--"} <b className={chgCls}>{chg != null && chgPct != null ? `${chg >= 0 ? "+" : ""}${chgPct.toFixed(2)}%` : loading ? <Skel w="2.5em" /> : "--"}</b></span>
-        <span>{isLive ? (wsLive ? "📡 real-time push" : "REST snapshot · รอบถัดไป 3 นาที") : "REST snapshot feed"}</span>
+        <span>{isLive && wsLive ? "อัปเดตสด" : "อัปเดตทุก 3 นาที"}</span>
         <span className="statusright">
-          <span>Contracts: {rows.length}</span>
-          <span>Feed: <b className={feed.cls}>{feed.t}</b></span>
+          <span>สัญญา {rows.length} ตัว</span>
+          <span>ข้อมูล: <b className={feed.cls}>{feed.t}</b></span>
           <span>PREMIUM RADAR · v0.1</span>
         </span>
       </footer>

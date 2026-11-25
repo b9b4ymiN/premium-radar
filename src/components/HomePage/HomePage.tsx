@@ -3,7 +3,8 @@
 
 import { useEffect, useState } from "react";
 import type { MoverList, MoverRow } from "../../types/webull";
-import { compact, fmt, signOf, signedPct, timeEt } from "../../lib/format";
+import { compact, fmt, signOf, signedPct, timeTh, timeThEt } from "../../lib/format";
+import { marketClockText } from "../shared/usSession";
 
 const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -99,6 +100,12 @@ export default function HomePage({
   const [loading, setLoading] = useState(false);
   // bumped by the refresh button; the effect below owns the request
   const [nonce, setNonce] = useState(0);
+  // market clock line: one refresh a minute is plenty for a minute-resolution countdown
+  const [clockText, setClockText] = useState(marketClockText);
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockText(marketClockText()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!hasTauri) {
@@ -125,6 +132,7 @@ export default function HomePage({
 
   return (
     <div className="homepage">
+      <div className="mk-session">{clockText}</div>
       <div className="lab-summary">
         <div className="lab-cell">
           <label>{o?.watchlist_name ?? "Watchlist"} · หุ้นขึ้นเด่น</label>
@@ -158,8 +166,8 @@ export default function HomePage({
                     {x.change_pct != null ? `${x.change_pct > 0 ? "+" : ""}${x.change_pct.toFixed(2)}%` : "--"}
                   </td>
                   <td className="num">{x.volume?.toLocaleString() ?? "--"}</td>
-                  <td title={`แหล่งข้อมูล ${x.source} (session ปกติ) · ดึงเมื่อ ${timeEt(Date.parse(x.received_at))}`}>
-                    {x.source_timestamp ? `ซื้อขายล่าสุด ${timeEt(Date.parse(x.source_timestamp))}` : "ไม่ทราบเวลาซื้อขายล่าสุด"}
+                  <td title={`แหล่งข้อมูล ${x.source} (session ปกติ) · ดึงเมื่อ ${timeTh(Date.parse(x.received_at))}`}>
+                    {x.source_timestamp ? `ซื้อขายล่าสุด ${timeThEt(Date.parse(x.source_timestamp))}` : "ไม่ทราบเวลาซื้อขายล่าสุด"}
                   </td>
                 </> : <>
                   <td className="num">--</td><td className="num">--</td><td className="num">--</td>
@@ -192,7 +200,7 @@ export default function HomePage({
         <button onClick={reload} disabled={loading}>↻ รีเฟรช</button>
       </div>
       <small className="pc-note">
-        Webull REST · เวลาซื้อขายปกติ (ET) · ดึงข้อมูลเสร็จ {o?.fetched_at ? timeEt(Date.parse(o.fetched_at)) : "--"} · แสดงสูงสุด 20 ตัว
+        ข้อมูลจาก Webull · อัปเดต {o?.fetched_at ? timeTh(Date.parse(o.fetched_at)) : "--"}
       </small>
     </div>
   );

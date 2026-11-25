@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BrokerInstrument, BrokerWatchlist } from "../../types/webull";
-import { timeEt } from "../../lib/format";
+import { timeTh } from "../../lib/format";
 
 const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -101,7 +101,7 @@ function BrokerWatchlists({
       <div className="bwl-head">
         <div className="section-title">
           WATCHLIST ใน WEBULL · อ่านอย่างเดียว
-          {fetchedAt && <span>ดึง {timeEt(Date.parse(fetchedAt))}</span>}
+          {fetchedAt && <span>ดึง {timeTh(Date.parse(fetchedAt))}</span>}
         </div>
         {hasTauri && (
           <button type="button" className="wl-open" onClick={() => setNonce(value => value + 1)} disabled={loading}>

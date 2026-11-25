@@ -18,8 +18,10 @@ import {
   signedPct,
   signOf,
   thaiDate,
-  timeEt,
+  timeTh,
+  timeThEt,
 } from "../../lib/format";
+import { marketClockText } from "../shared/usSession";
 import type { OverviewState } from "../../lib/useStockOverview";
 import { Skel } from "../shared/Skeleton";
 
@@ -53,6 +55,12 @@ export default function QuoteHeader({
   const [quoteAt, setQuoteAt] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [companyOpen, setCompanyOpen] = useState(false);
+  // market clock line: one refresh a minute is plenty for a minute-resolution countdown
+  const [clockText, setClockText] = useState(marketClockText);
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockText(marketClockText()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // The session and the extended-hours trade move during pre/after hours:
   // one cheap request a minute, and an answer for a symbol already left is dropped.
@@ -116,12 +124,12 @@ export default function QuoteHeader({
       ? "สถานะตลาด: ไม่ทราบ"
       : quote
         ? extended
-          ? `${sessionLabel(status)} · ${num(extended.last_price)} ${signedPct(extended.change_ratio)} · ${timeEt(extended.last_trade_time_ms)}`
+          ? `${sessionLabel(status)} · ${num(extended.last_price)} ${signedPct(extended.change_ratio)} · ${timeThEt(extended.last_trade_time_ms)}`
           : kind === "extended"
-            ? `${sessionLabel(status)} · ยังไม่มีราคา · ล่าสุด ${timeEt(quote.last_trade_time_ms)}`
+            ? `${sessionLabel(status)} · ยังไม่มีราคา · ล่าสุด ${timeThEt(quote.last_trade_time_ms)}`
             : kind === "overnight"
-              ? `${sessionLabel(status)} · แพ็กเกจนี้ไม่มีราคาช่วงนี้ · ล่าสุด ${timeEt(quote.last_trade_time_ms)}`
-              : `${sessionLabel(status)} · ล่าสุด ${timeEt(quote.last_trade_time_ms)}`
+              ? `${sessionLabel(status)} · แพ็กเกจนี้ไม่มีราคาช่วงนี้ · ล่าสุด ${timeThEt(quote.last_trade_time_ms)}`
+              : `${sessionLabel(status)} · ล่าสุด ${timeThEt(quote.last_trade_time_ms)}`
         : "กำลังดึงสถานะตลาด …";
   const dot = quoteError ? "err" : extended ? "ext" : kind === "regular" ? "rth" : "off";
 
@@ -168,11 +176,12 @@ export default function QuoteHeader({
           </div>
           <div
             className={`qh-session num ${extended ? "ext" : ""}`}
-            title={quoteError ?? (quoteAt ? `ดึงจาก Webull ${timeEt(Date.parse(quoteAt))}` : undefined)}
+            title={quoteError ?? (quoteAt ? `ดึงจาก Webull ${timeTh(Date.parse(quoteAt))}` : undefined)}
           >
             {hasTauri && <i className={`session-dot ${dot}`} />}
             {sessionLine}
           </div>
+          <div className="qh-session num">{clockText}</div>
         </div>
 
         <div className="head-quote-stats">
@@ -224,7 +233,7 @@ export default function QuoteHeader({
           <div className="cp-head">
             <b>{profile?.company_name ?? symbol}</b>
             <span className="cp-source">
-              Webull fundamentals{overview.fetchedAt ? ` · ดึงเมื่อ ${timeEt(Date.parse(overview.fetchedAt))}` : ""}
+              Webull fundamentals{overview.fetchedAt ? ` · ดึงเมื่อ ${timeTh(Date.parse(overview.fetchedAt))}` : ""}
             </span>
             <button type="button" className="qh-info on" aria-label="ปิดข้อมูลบริษัท" onClick={() => setCompanyOpen(false)}>
               ✕

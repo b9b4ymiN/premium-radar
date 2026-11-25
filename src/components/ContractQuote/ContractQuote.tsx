@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { OptionQuote, OptionTick } from "../../types/webull";
-import { count, dateTimeEt, fmt, pct, signedPct, timeEt } from "../../lib/format";
+import { count, fmt, pct, signedPct, timeTh, timeThEt } from "../../lib/format";
 
 const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -100,7 +100,7 @@ export default function ContractQuote({
     <div className="wq">
       <div className="section-title">
         WEBULL QUOTE
-        {quote && fetchedAt && <span>ดึง {timeEt(Date.parse(fetchedAt))}</span>}
+        {quote && fetchedAt && <span>ดึง {timeTh(Date.parse(fetchedAt))}</span>}
       </div>
       {status === "loading" && <div className="wq-status">กำลังดึงราคาจาก Webull …</div>}
       {status === "error" && <div className="wq-status neg">⚠ {error}</div>}
@@ -176,7 +176,7 @@ export default function ContractQuote({
             {modelDelta == null ? "--" : modelDelta.toFixed(3)}
           </div>
           <div className="wq-foot">
-            ซื้อขายล่าสุด {dateTimeEt(quote.last_trade_time_ms)}
+            ซื้อขายล่าสุด {timeThEt(quote.last_trade_time_ms)}
             {delayed != null && <span className="warn"> · ข้อมูลดีเลย์ {delayed} นาที</span>}
           </div>
           {!ticksOpen ? (
@@ -198,7 +198,7 @@ export default function ContractQuote({
                 <table className="wq-tape num">
                   <thead>
                     <tr>
-                      <th>เวลา (ET)</th>
+                      <th>เวลา (ไทย)</th>
                       <th className="num">ราคา</th>
                       <th className="num">จำนวน</th>
                       <th className="num">Side</th>
@@ -207,7 +207,7 @@ export default function ContractQuote({
                   <tbody>
                     {ticks.map((tick, index) => (
                       <tr key={`${tick.time_ms ?? index}`}>
-                        <td>{timeEt(tick.time_ms)}</td>
+                        <td>{timeTh(tick.time_ms)}</td>
                         <td className="num">{num(tick.price)}</td>
                         <td className="num">{count(tick.volume)}</td>
                         <td className="num">{tick.side ?? "--"}</td>

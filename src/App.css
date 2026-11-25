@@ -90,10 +90,14 @@ button:focus-visible, input:focus-visible {
   display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 5px;
 }
 .iconbtn {
-  width: 37px; height: 37px; border: 0; border-left: 3px solid transparent;
-  background: transparent; color: #8895a8; display: grid; place-items: center;
+  align-self: stretch; min-height: 40px; padding: 5px 0 4px;
+  border: 0; border-left: 3px solid transparent;
+  background: transparent; color: #8895a8;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   border-radius: 0 8px 8px 0; transition: background 0.16s ease, color 0.16s ease;
 }
+.iconbtn .ic { line-height: 1; }
+.iconbtn .iclabel { font-size: 10px; line-height: 1.2; white-space: nowrap; }
 .iconbtn:hover { background: #202b38; color: #e6eeff; }
 .iconbtn.on { background: #192c46; border-left-color: #5395fc; color: #91bbff; }
 .iconbar .bottom { margin-top: auto; }
@@ -273,7 +277,10 @@ button:focus-visible, input:focus-visible {
   font-size: 9.7px; letter-spacing: 0.015em; color: #96a6b8;
   display: flex; justify-content: space-between; font-weight: 650;
 }
+.otop > span { white-space: nowrap; }
+.otop > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .otag { font-size: 9px; color: #9caec3; }
+.oann { color: var(--dim); font-size: 9.5px; }
 .ocontract {
   font-size: 13px; font-weight: 720; margin-top: 7px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #f3f6fb;

@@ -4,9 +4,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MoverList, MoverRow, SectorRow } from "../../types/webull";
-import { compact, count, fmt, pct, signedPct, signOf, timeEt } from "../../lib/format";
+import { compact, count, fmt, pct, signedPct, signOf, timeTh } from "../../lib/format";
 import { SortHeader, type SortSpec } from "../shared/SortHeader";
-import { US_SESSION_TEXT, usSession } from "../shared/usSession";
+import { usSession, usSessionText } from "../shared/usSession";
 
 const hasTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -191,7 +191,7 @@ export default function MarketPage({ onOpenRadar }: { onOpenRadar: (symbol: stri
       : (current?.basis ?? "");
   const columns = tab === "high_dividend" ? 11 : 10;
   // which US session the numbers cover, read off the New York clock
-  const sessionNote = US_SESSION_TEXT[usSession()];
+  const sessionNote = usSessionText(usSession());
   // click: descending first, click again: ascending
   const toggleMoverSort = (key: MoverSortKey) =>
     setSort(current => (current?.key !== key ? { key, dir: -1 } : { key, dir: current.dir === -1 ? 1 : -1 }));
@@ -327,7 +327,7 @@ export default function MarketPage({ onOpenRadar }: { onOpenRadar: (symbol: stri
       )}
 
       <small className="pc-note">
-        Webull screener{fetchedAt ? ` · ดึงเมื่อ ${timeEt(Date.parse(fetchedAt))}` : ""}
+        Webull screener{fetchedAt ? ` · ดึงเมื่อ ${timeTh(Date.parse(fetchedAt))}` : ""}
         {" · "}อัปเดตได้ทุก 1 นาที · กดแถวเพื่อเปิดใน Options Monitor
       </small>
     </div>
