@@ -14,7 +14,7 @@ use crate::engine::{DataSource, StockUpdate, parse_stock_update};
 use crate::lab::capture::{
     Anchor, WindowCapture, option_observations, plan_capture, stock_observation,
 };
-use crate::lab::quality::session_date_of;
+use crate::lab::quality::{bar_available_at, session_date_of};
 use crate::lab::storage::{LabStorage, WriteStats};
 use crate::lab::types::{CaptureEvent, DiscoveryCoverage};
 use crate::webull::discovery::fetch_window;
@@ -96,11 +96,17 @@ pub struct RecordOptions {
     pub scope: CaptureScope,
 }
 
-/// Session NY ที่ปิดล่าสุดจากเวลาปัจจุบัน — สุดสัปดาห์ถอยกลับไปศุกร์
+/// Session NY ที่ปิดล่าสุดจากเวลาปัจจุบัน — ยังไม่ถึงเวลาปิด (16:00 NY
+/// เทียบเป็น instant ผ่าน `bar_available_at`) ถือว่าวันก่อนหน้าคือ
+/// session ล่าสุดที่ปิดแล้ว (ไม่งั้น `Anchor::post_close` ตั้ง event_time
+/// อนาคตแล้ว storage ปฏิเสธทุกแถว) แล้วสุดสัปดาห์ถอยกลับไปศุกร์
 /// (ไม่งั้นราคาปิดวันศุกร์ วันหมดอายุสำคัญที่สุดของ options รายสัปดาห์
-/// จะไม่ถูกเก็บเลย)
+/// จะไม่ถูกเก็บเลย) — วันหยุดยังไม่รู้ (เหมือนเดิม)
 pub fn last_closed_session(now: DateTime<Utc>) -> NaiveDate {
     let mut session = session_date_of(now);
+    if now < bar_available_at(session) {
+        session -= Duration::days(1);
+    }
     while matches!(session.weekday(), Weekday::Sat | Weekday::Sun) {
         session -= Duration::days(1);
     }
@@ -680,18 +686,44 @@ mod tests {
     }
 
     #[test]
-    fn last_closed_session_walks_weekend_back_to_friday() {
-        // เสาร์ 21 พ.ย. 2026 12:00 UTC (07:00 NY) → session NY = เสาร์ → ศุกร์ 20
+    fn last_closed_session_steps_back_before_close_and_over_weekend() {
+        // พุธ 25 พ.ย. 2026 06:54 NY (11:54Z — ก่อนปิด 16:00) → อังคาร 24
+        let wed_before: DateTime<Utc> = "2026-11-25T11:54:00Z".parse().unwrap();
+        assert_eq!(
+            last_closed_session(wed_before),
+            NaiveDate::from_ymd_opt(2026, 11, 24).unwrap()
+        );
+        // พุธ 16:30 NY (21:30Z — หลังปิด) → วันเดียวกัน
+        let wed_after: DateTime<Utc> = "2026-11-25T21:30:00Z".parse().unwrap();
+        assert_eq!(
+            last_closed_session(wed_after),
+            NaiveDate::from_ymd_opt(2026, 11, 25).unwrap()
+        );
+        // จันทร์ 09:00 NY ก่อนปิด → ถอยข้ามหางสัปดาห์ไปศุกร์ 20 พ.ย.
+        let monday: DateTime<Utc> = "2026-11-23T14:00:00Z".parse().unwrap();
+        assert_eq!(last_closed_session(monday), friday_session());
+        // เสาร์/อาทิตย์ทุกเวลา → ศุกร์ 20 พ.ย.
         let saturday: DateTime<Utc> = "2026-11-21T12:00:00Z".parse().unwrap();
         assert_eq!(last_closed_session(saturday), friday_session());
-        // จันทร์เช้าเวลาไทย 02:00 UTC = อาทิตย์ 21:00 NY → ถอยข้ามเสาร์-อาทิตย์
-        let monday: DateTime<Utc> = "2026-11-23T02:00:00Z".parse().unwrap();
-        assert_eq!(last_closed_session(monday), friday_session());
-        // วันธรรมดาธรรมดา — session = วันเดียวกัน (อังคาร 10:00 NY)
-        let tuesday: DateTime<Utc> = "2026-11-24T15:00:00Z".parse().unwrap();
+        let sunday: DateTime<Utc> = "2026-11-22T12:00:00Z".parse().unwrap();
+        assert_eq!(last_closed_session(sunday), friday_session());
+    }
+
+    #[test]
+    fn last_closed_session_uses_ny_close_instant_across_dst() {
+        // พุธ 15 ก.ค. 2026 เป็น EDT — ปิด 16:00 NY = 20:00Z ไม่ใช่ 21:00Z:
+        // 20:30Z (16:30 NY) หลังปิดแล้ว → วันเดียวกัน (เช็ค offset ตายตัว
+        // 21:00Z จะถอยผิดไปอังคาร)
+        let summer_after: DateTime<Utc> = "2026-07-15T20:30:00Z".parse().unwrap();
         assert_eq!(
-            last_closed_session(tuesday),
-            NaiveDate::from_ymd_opt(2026, 11, 24).unwrap()
+            last_closed_session(summer_after),
+            NaiveDate::from_ymd_opt(2026, 7, 15).unwrap()
+        );
+        // 10:54Z (06:54 NY) ก่อนปิด → อังคาร 14 ก.ค.
+        let summer_before: DateTime<Utc> = "2026-07-15T10:54:00Z".parse().unwrap();
+        assert_eq!(
+            last_closed_session(summer_before),
+            NaiveDate::from_ymd_opt(2026, 7, 14).unwrap()
         );
     }
 

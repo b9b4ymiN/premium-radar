@@ -38,19 +38,13 @@ struct UniverseFile {
     symbols: Vec<UniverseSymbol>,
 }
 
+/// symbol หนึ่งตัวในไฟล์ — เราสนใจแค่ `symbol` เท่านั้น (field อื่น
+/// name/sector/market_cap/rank_value อาจเป็น null หรือหายตาม source;
+/// field ที่ไม่ประกาศ serde มองไม่เห็นอยู่แล้ว จึงอ่านได้ไม่ว่าค่าจะเป็นอะไร)
 #[derive(serde::Deserialize)]
 struct UniverseSymbol {
     #[serde(default)]
     symbol: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    name: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    sector: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    market_cap: Option<f64>,
 }
 
 /// ผลการอ่าน universe — warning เป็นข้อความให้ log ฝั่ง caller
@@ -330,6 +324,31 @@ mod tests {
         let load = load_universe(&p);
         assert!(load.warning.is_none());
         assert_eq!(load.symbols, vec!["AAPL", "MSFT", "BRK.B"]); // trim+upper, ตัดว่าง
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn null_and_unknown_symbol_fields_still_load_all_symbols() {
+        let dir = tmp_dir("nulls");
+        let p = dir.join("universe.json");
+        // cache จริง (write_cache ฝั่ง radar-core) เขียน sector/market_cap
+        // เป็น null ได้ มี rank_value เพิ่ม และบาง entry อาจไม่มี name เลย
+        std::fs::write(
+            &p,
+            r#"{
+                "fetched_at": "2026-11-24T23:00:00Z",
+                "source": "wikipedia",
+                "symbols": [
+                    {"symbol": "AAPL", "name": "Apple", "sector": null, "market_cap": null},
+                    {"symbol": "MSFT", "sector": null, "rank_value": 42.0},
+                    {"symbol": "BRK.B", "name": null}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let load = load_universe(&p);
+        assert!(load.warning.is_none());
+        assert_eq!(load.symbols, vec!["AAPL", "MSFT", "BRK.B"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
