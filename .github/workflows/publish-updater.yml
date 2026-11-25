@@ -47,8 +47,9 @@ jobs:
           notes="$(gh release view "$TAG" --json name --jq '.name')"
           pub_date="$(gh release view "$TAG" --json publishedAt --jq '.publishedAt')"
           url="$(gh release view "$TAG" --json assets \
-            --jq '.assets[] | select(.name | test("_x64-setup\\.exe$")) | .browserDownloadUrl')"
+            --jq '.assets[] | select(.name | test("_x64-setup\\.exe$")) | .url')"
           signature="$(cat installer.exe.sig)"
+          test -n "$url" || { echo "installer asset URL not found"; exit 1; }
 
           jq -n \
             --arg version "$VERSION" \
