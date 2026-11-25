@@ -236,7 +236,7 @@ export function sampleUniverse(profile: EasyProfile): UniverseIdeas {
       1,
       mkIdea("NVDA", NVDA_SPOT, "safe", 165, 2.2, 23, EXPIRY, 13, 18.7),
       78,
-      { vrp: 0.32, premium: 0.71, fit: 0.82, cushion: 0.69, liquidity: 0.95, event_penalty: 0 },
+      { vrp: 0.32, premium: 0.71, fit: 0.82, cushion: 0.69, liquidity: 0.95, event_penalty: 1 },
       [
         "ค่าประกันราคาหุ้นช่วงนี้แพงกว่าความผันผวนจริงของราคา ขายได้ราคาดี",
         "จุดที่ยอมซื้อต่ำกว่าราคาปัจจุบันราว 10% มีที่ยืนก่อนถึงจุดที่ต้องซื้อ",
@@ -255,7 +255,7 @@ export function sampleUniverse(profile: EasyProfile): UniverseIdeas {
       2,
       mkIdea("BAC", SAMPLE_STOCKS.BAC.spot, "balanced", 40, 0.85, 30, EXPIRY, 18, 25.9),
       72,
-      { vrp: 0.18, premium: 0.63, fit: 0.75, cushion: 0.72, liquidity: 0.88, event_penalty: 0 },
+      { vrp: 0.18, premium: 0.63, fit: 0.75, cushion: 0.72, liquidity: 0.88, event_penalty: 1 },
       [
         "ธนาคารใหญ่มีกำไรสม่ำเสมอ ถ้าราคาลงมาถือไว้ได้สบายใจ",
         "จุดที่ยอมซื้อต่ำกว่าราคาปัจจุบันราว 10%",
@@ -270,7 +270,7 @@ export function sampleUniverse(profile: EasyProfile): UniverseIdeas {
       3,
       mkIdea("F", SAMPLE_STOCKS.F.spot, "balanced", 10, 0.3, 23, EXPIRY, 22, 47.6),
       69,
-      { vrp: 0.22, premium: 0.66, fit: 0.7, cushion: 0.64, liquidity: 0.8, event_penalty: 0 },
+      { vrp: 0.22, premium: 0.66, fit: 0.7, cushion: 0.64, liquidity: 0.8, event_penalty: 1 },
       [
         "หุ้นราคาถูก งบเล็กก็ทำได้ เหมาะกับงบที่ตั้งไว้",
         "ค่าประกันราคาหุ้นแพงกว่าความผันผวนจริงพอสมควร",
@@ -304,9 +304,14 @@ export function sampleUniverse(profile: EasyProfile): UniverseIdeas {
     };
   }
 
+  // like Rust: only affordable picks, re-ranked from 1
+  const fit = picks
+    .filter(p => p.idea.cost <= profile.cash)
+    .map((p, i) => ({ ...p, rank: i + 1, idea: { ...p.idea, recommended: i === 0 } }));
+  const top = fit[0].idea;
   const agent_say_th =
-    `ผมดูหุ้นทั้งตลาด 104 ตัวแล้ว คืนนี้มี <strong>3 ไอเดีย</strong>ที่เข้ากับงบ ${usd(profile.cash)} ` +
-    `อันดับแรกคือ <strong>NVDA</strong> ถ้าราคาลงจนต้องซื้อ คุณจะได้หุ้นในราคาที่ถูกกว่าตอนนี้ราว 10% (ตัวอย่าง)`;
+    `ผมดูหุ้นทั้งตลาด 104 ตัวแล้ว คืนนี้มี ${fit.length} ไอเดียที่เข้ากับงบ ${usd(profile.cash)} ` +
+    `อันดับแรกคือ ${top.symbol} ถ้าราคาลงจนต้องซื้อ คุณจะได้หุ้นในราคาที่ถูกกว่าตอนนี้ราว ${Math.round(top.below_spot_pct)}% (ตัวอย่าง)`;
   return {
     session_date: today,
     as_of: now,
@@ -314,7 +319,7 @@ export function sampleUniverse(profile: EasyProfile): UniverseIdeas {
     scanned_symbols: 104,
     candidate_symbols: 12,
     market_note_th: marketNote,
-    picks,
+    picks: fit,
     budget_short: null,
     agent_say_th,
     computed_at: now,
