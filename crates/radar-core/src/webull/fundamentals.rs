@@ -329,6 +329,14 @@ pub fn fetch_stock_overview<F: HttpFetch>(f: &mut F, symbol: &str) -> StockOverv
     overview
 }
 
+/// Only the financial-alert family of [`fetch_stock_overview`]: the next
+/// earnings window, for callers (universe ranking) that need nothing else.
+/// One paced call; any failure or "no window published yet" reads as `None`.
+pub fn fetch_next_earnings<F: HttpFetch>(f: &mut F, symbol: &str) -> Option<EarningsWindow> {
+    let data = get_object(f, PATH_FINANCIAL_ALERT, symbol).ok()?;
+    parse_earnings_window(&data)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,5 +518,32 @@ mod tests {
                 .iter()
                 .all(|u| u.reason == "HTTP 401 · INVALID_TOKEN")
         );
+    }
+
+    /// `fetch_next_earnings` hits ONLY the financial-alert endpoint: a published
+    /// window parses, an echo body and a transport failure both read as `None`.
+    #[test]
+    fn next_earnings_uses_only_the_financial_alert_endpoint() {
+        let mut f = QueueFetch {
+            bodies: VecDeque::from(vec![Ok(json!({
+                "start_date": "2027-02-23", "end_date": "2027-03-01",
+                "fiscal_year": 2027, "fiscal_period": 4,
+            }))]),
+            paths: Vec::new(),
+        };
+        let window = fetch_next_earnings(&mut f, "NVDA").expect("window parses");
+        assert_eq!(window.start_date, "2027-02-23");
+        assert_eq!(window.fiscal_year, Some(2027));
+        assert_eq!(f.paths, vec![PATH_FINANCIAL_ALERT.to_string()]);
+
+        let mut echo = QueueFetch {
+            bodies: VecDeque::from(vec![Ok(json!({"symbol": "NVDA"}))]),
+            paths: Vec::new(),
+        };
+        assert_eq!(fetch_next_earnings(&mut echo, "NVDA"), None);
+
+        let mut dead = QueueFetch::default();
+        assert_eq!(fetch_next_earnings(&mut dead, "NVDA"), None);
+        assert_eq!(dead.paths, vec![PATH_FINANCIAL_ALERT.to_string()]);
     }
 }

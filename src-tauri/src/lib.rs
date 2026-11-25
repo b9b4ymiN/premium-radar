@@ -4,11 +4,13 @@
 use std::sync::Mutex;
 
 use chrono::Utc;
+pub mod easy_universe;
 pub mod recorder_api;
 pub mod scan;
 pub mod settings;
 
 use radar_core::easy::{EasyIdeas, EasyProfile, build_ideas, normalise_profile, source_token};
+use radar_core::easy_rank::{UniverseIdeas, rank_universe};
 use radar_core::engine::{Engine, EngineSnapshot};
 use radar_core::quant::realized_vol;
 use radar_core::screener::{Filters, Mode};
@@ -1801,6 +1803,22 @@ async fn easy_ideas(
     ))
 }
 
+/// Whole-universe Easy Mode ideas for the saved profile: reads one day of
+/// recorder observations (API or local per settings), enriches a shortlist
+/// with Webull and ranks. The assembled input is cached 30 minutes; ranking
+/// itself is recomputed on every call, so profile edits (cash/risk/stance)
+/// apply instantly without refetching. All blocking work — recorder reads
+/// and the paced Webull calls — happens off the UI thread.
+#[tauri::command]
+async fn easy_universe_ideas(state: tauri::State<'_, AppState>) -> Result<UniverseIdeas, String> {
+    let settings = settings_of(&state);
+    let profile = settings.easy_profile.clone();
+    let app_data_dir = state.app_data_dir.clone();
+    let input =
+        off_ui_thread(move || easy_universe::load_rank_input(&settings, &app_data_dir)).await?;
+    Ok(rank_universe(&input, &profile, Utc::now()))
+}
+
 /// Save the Easy Mode onboarding answers: symbols are normalised and
 /// validated by [`normalise_profile`] (uppercase/trimmed/deduped, ≤ 10 stocks,
 /// cash ≥ 0, risk 1–3). Stages on a copy and swaps the shared state only
@@ -2325,6 +2343,7 @@ pub fn run() {
             save_lab_source,
             recorder_test_connection,
             easy_ideas,
+            easy_universe_ideas,
             save_easy_profile,
             set_ui_mode,
         ])
