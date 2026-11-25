@@ -4,7 +4,7 @@
 //! ไฟล์หาย/พัง ⇒ universe ว่าง + warning (Core ยังเก็บตามปกติ)
 //!
 //! ฝั่งเขียน (weekly): `refresh_loop` — เริ่มถ้า cache หาย/เก่า > 7 วัน
-//! แล้วทุดาอาทิตย์ 12:00 NY: fetch NASDAQ → OEF fallback → `choose`
+//! แล้วทุดาอาทิตย์ 12:00 NY: fetch NASDAQ → Wikipedia fallback → `choose`
 //! top 130 → กรอง liquidity จากวันที่เก็บล่าสุด → เขียน top 100
 
 use std::collections::HashSet;
@@ -190,7 +190,7 @@ fn latest_liquidity(cfg: &Config) -> Result<LiquidityInfo, String> {
 }
 
 /// รัน refresh หนึ่งครั้ง (blocking — เรียกใน `spawn_blocking`):
-/// fetch NASDAQ → OEF fallback → choose top 130 → กรอง liquidity → เขียน 100
+/// fetch NASDAQ → Wikipedia fallback → choose top 130 → กรอง liquidity → เขียน 100
 ///
 /// กรณีทั้งสอง source พังและ `choose` เสิร์ฟ cache — ไม่เขียนทับ
 /// (fetched_at เดิมทำให้ `refresh_needed` ยัง true → retry รอบถัดไปเอง)
@@ -198,9 +198,17 @@ pub fn refresh_universe(cfg: &Config) -> Result<(&'static str, usize), String> {
     let now = Utc::now();
     let primary = radar_core::universe::fetch_nasdaq()
         .and_then(|json| radar_core::universe::parse_nasdaq(&json));
-    let fallback = radar_core::universe::fetch_oef_csv()
-        .and_then(|csv| radar_core::universe::parse_oef_csv(&csv));
     let cache = radar_core::universe::read_cache(&cfg.universe_path());
+    // Wikipedia ไม่มี market cap — ยืม rank จาก cache รอบก่อน (ถ้ามี)
+    // ให้เรียงตาม cap ล่าสุดที่รู้จักแทนลำดับในตาราง
+    let fallback = radar_core::universe::fetch_wikipedia_sp100()
+        .and_then(|json| radar_core::universe::parse_wikipedia_sp100(&json))
+        .map(|mut entries| {
+            if let Some(c) = cache.as_ref() {
+                radar_core::universe::rank_from_cache(&mut entries, &c.symbols);
+            }
+            entries
+        });
     let (snap, warnings) =
         radar_core::universe::choose(primary, fallback, cache, REFRESH_TOP_N, now)
             .map_err(|e| format!("universe unavailable: {e}"))?;

@@ -3,33 +3,37 @@
 //!
 //! Source chain (owner-approved):
 //! 1. NASDAQ screener JSON (primary) — undocumented endpoint, may break
-//! 2. iShares OEF (S&P 100) holdings CSV (fallback) — parser tolerant,
+//! 2. Wikipedia "S&P 100" constituents table (fallback) — แทน iShares
+//!    OEF CSV ที่ URL คืน bot-wall HTML แทน CSV (verified live 2026-11-25),
 //!    fetch failure เป็น normal fallback path
 //! 3. last good cache file (last resort) — อายุ report ใน warnings
 //!
-//! OEF decision: Market Value ใช้เป็น "ranking proxy" เท่านั้น เก็บใน
-//! [`UniverseEntry::rank_value`] และเว้น `market_cap = None` เพื่อไม่ให้
-//! cache file อ้าง market cap ปลอม; NASDAQ rows เก็บ `market_cap` จริงและ
-//!ไม่มี `rank_value` (serialise เฉพาะตอนมีค่า จึงตรง contract
-//! `{"symbol","name","sector","market_cap"}` พอดี ส่วน OEF snapshot จะมี
-//! key `rank_value` เพิ่ม — serde consumers ปกติ ignore unknown fields)
+//! Wikipedia decision: ตารางไม่มี market cap — เก็บ ranking proxy ใน
+//! [`UniverseEntry::rank_value`] (market cap ยืมจาก cache รอบก่อนผ่าน
+//! [`rank_from_cache`] ถ้ามี ไม่งั้นเรียงตามลำดับในตาราง) และเว้น
+//! `market_cap = None` เพื่อไม่ให้ cache file อ้าง market cap ปลอม;
+//! NASDAQ rows เก็บ `market_cap` จริงและไม่มี `rank_value` (serialise
+//! เฉพาะตอนมีค่า จึงตรง contract
+//! `{"symbol","name","sector","market_cap"}` พอดี ส่วน Wikipedia snapshot
+//! จะมี key `rank_value` เพิ่ม — serde consumers ปกติ ignore unknown
+//! fields)
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
 /// หุ้นตัวเดียวใน universe — `market_cap` เป็น cap จริง (NASDAQ) หรือ
-/// `None` (OEF) โดยใช้ `rank_value` เป็นตัวเรียงแทน
+/// `None` (Wikipedia) โดยใช้ `rank_value` เป็นตัวเรียงแทน
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UniverseEntry {
     pub symbol: String,
     pub name: String,
     pub sector: Option<String>,
     pub market_cap: Option<f64>,
-    /// Ranking proxy สำหรับ source ที่ไม่มี market cap จริง (OEF Market
-    /// Value) — serialise เฉพาะเมื่อมีค่า
+    /// Ranking proxy สำหรับ source ที่ไม่มี market cap จริง (Wikipedia —
+    /// ลำดับในตาราง หรือ cap ยืมจาก cache ก่อนหน้า) — serialise เฉพาะเมื่อมีค่า
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rank_value: Option<f64>,
 }
@@ -38,7 +42,10 @@ pub struct UniverseEntry {
 #[serde(rename_all = "lowercase")]
 pub enum UniverseSource {
     Nasdaq,
-    Oef,
+    /// Fallback — เดิมชื่อ `Oef`; cache เก่าที่เขียน `"oef"` ยังโหลดได้
+    /// ผ่าน serde alias
+    #[serde(alias = "oef")]
+    Wikipedia,
     Cache,
 }
 
@@ -46,7 +53,7 @@ impl UniverseSource {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Nasdaq => "nasdaq",
-            Self::Oef => "oef",
+            Self::Wikipedia => "wikipedia",
             Self::Cache => "cache",
         }
     }
@@ -65,14 +72,18 @@ pub struct UniverseSnapshot {
 pub const NASDAQ_SCREENER_URL: &str =
     "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&download=true";
 
-/// iShares OEF (S&P 100) holdings CSV — URL ยังไม่เคย verify, parser
-/// ต้อง tolerant
-pub const OEF_HOLDINGS_URL: &str = "https://www.ishares.com/us/products/239723/ishares-sp-100-etf/1467271812596.ajax?fileType=csv&fileName=OEF_holdings&dataType=fund";
+/// Wikipedia API ของหน้า "S&P 100" — action=parse คืน HTML ของทั้งหน้าใน
+/// `parse.text` (formatversion=2 ทำให้ `text` เป็น string ตรงๆ)
+pub const WIKIPEDIA_SP100_API_URL: &str = "https://en.wikipedia.org/w/api.php?action=parse&page=S%26P_100&prop=text&format=json&formatversion=2";
+
+/// UA ตาม Wikimedia policy — ระบุ tool + contact, ไม่มี personal data
+pub const WIKIPEDIA_UA: &str =
+    "PremiumRadarRecorder/0.1 (+https://github.com/b9b4ymiN/premium-radar)";
 
 /// Generic desktop Chrome UA — ไม่มี personal data
 pub const CHROME_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
-/// ตัวเรียงอันดับ: market cap จริง ถ้าไม่มีใช้ rank proxy (OEF)
+/// ตัวเรียงอันดับ: market cap จริง ถ้าไม่มีใช้ rank proxy (Wikipedia)
 fn rank_key(entry: &UniverseEntry) -> Option<f64> {
     entry.market_cap.or(entry.rank_value)
 }
@@ -162,7 +173,7 @@ pub fn top_n(entries: &[UniverseEntry], n: usize) -> Vec<UniverseEntry> {
     kept
 }
 
-/// เลือก universe ตาม chain: NASDAQ → OEF → cache → Err
+/// เลือก universe ตาม chain: NASDAQ → Wikipedia → cache → Err
 ///
 /// Primary ผ่านเมื่อได้ ≥ 80% ของ n หลัง filter; fallback ผ่านเมื่อ parse
 /// ได้และมี entry เหลืออย่างน้อย 1 (spec ผูก threshold กับ primary
@@ -207,18 +218,18 @@ pub fn choose(
                 return Ok((
                     UniverseSnapshot {
                         fetched_at: now,
-                        source: UniverseSource::Oef,
+                        source: UniverseSource::Wikipedia,
                         symbols: top,
                     },
                     vec![format!(
-                        "{}; using OEF fallback ({count} entries)",
+                        "{}; using Wikipedia S&P 100 fallback ({count} entries)",
                         reasons.join("; ")
                     )],
                 ));
             }
-            reasons.push("oef yielded 0 entries after filter".to_string());
+            reasons.push("wikipedia yielded 0 entries after filter".to_string());
         }
-        Err(e) => reasons.push(format!("oef failed: {e}")),
+        Err(e) => reasons.push(format!("wikipedia failed: {e}")),
     }
 
     if let Some(cache) = cache {
@@ -338,96 +349,147 @@ pub fn parse_nasdaq(json: &serde_json::Value) -> Result<Vec<UniverseEntry>, Stri
     Ok(out)
 }
 
-/// CSV parser มือ (ไม่เพิ่ม crate): รองรับ quoted fields ที่มี comma,
-/// `""` escape, quoted field ข้ามบรรทัด, และ `\r\n`
-fn split_csv_records(text: &str) -> Vec<Vec<String>> {
-    let mut records: Vec<Vec<String>> = Vec::new();
-    let mut record: Vec<String> = Vec::new();
-    let mut field = String::new();
-    let mut in_quotes = false;
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        if in_quotes {
-            if c == '"' {
-                if chars.peek() == Some(&'"') {
-                    chars.next();
-                    field.push('"');
-                } else {
-                    in_quotes = false;
-                }
-            } else {
-                field.push(c);
-            }
-        } else if c == '"' {
-            in_quotes = true;
-        } else if c == ',' {
-            record.push(std::mem::take(&mut field));
-        } else if c == '\n' {
-            if field.ends_with('\r') {
-                field.pop();
-            }
-            record.push(std::mem::take(&mut field));
-            records.push(std::mem::take(&mut record));
-        } else {
-            field.push(c);
+/// ถอด tag ออกจาก HTML fragment เหลือ text เปล่า แล้ว decode entity ที่
+/// เจอในตาราง constituents (`&amp;`, `&#39;`, `&quot;`, `&nbsp;`) —
+/// `&amp;` ต้องทำเป็นตัวสุดท้าย ไม่งั้น `&amp;quot;` จะถูก decode ซ้ำ
+fn cell_text(html: &str) -> String {
+    let mut text = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for c in html.chars() {
+        if c == '<' {
+            in_tag = true;
+        } else if c == '>' {
+            in_tag = false;
+        } else if !in_tag {
+            text.push(c);
         }
     }
-    if field.ends_with('\r') {
-        field.pop();
-    }
-    if !field.is_empty() || !record.is_empty() {
-        record.push(field);
-        records.push(record);
-    }
-    records
+    text.replace("&nbsp;", " ")
+        .replace("&#39;", "'")
+        .replace("&quot;", "\"")
+        .replace("&amp;", "&")
+        .trim()
+        .to_string()
 }
 
-/// แปลง iShares OEF holdings CSV — ข้าม preamble (~9 บรรทัด) จนเจอ
-/// header ที่เริ่มด้วย `Ticker,`, เก็บเฉพาะ `Asset Class == "Equity"`
-/// (cash row / footer ตกไปเอง), Market Value ไปอยู่ใน `rank_value`
-pub fn parse_oef_csv(text: &str) -> Result<Vec<UniverseEntry>, String> {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let records = split_csv_records(text);
-    let header_idx = records
-        .iter()
-        .position(|r| r.first().is_some_and(|f| f.trim() == "Ticker"))
-        .ok_or_else(|| "no header row starting with Ticker".to_string())?;
-    let header = &records[header_idx];
-    let col = |name: &str| header.iter().position(|h| h.trim() == name);
-    let (Some(i_ticker), Some(i_class), Some(i_mv)) =
-        (col("Ticker"), col("Asset Class"), col("Market Value"))
-    else {
-        return Err("header missing Ticker/Asset Class/Market Value columns".to_string());
-    };
-    let i_name = col("Name");
-    let i_sector = col("Sector");
+/// เก็บ text ของ cell `<td …>…</td>` ทุกอันในแถว — header row ที่ใช้
+/// `<th>` จะได้ 0 cells จึงหลุดไปเอง
+fn row_cells(row: &str) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut rest = row;
+    while let Some(open) = rest.find("<td") {
+        let at = &rest[open..];
+        let Some(tag_gt) = at.find('>') else { break };
+        let inner = tag_gt + 1;
+        let Some(close) = at[inner..].find("</td>") else {
+            break;
+        };
+        cells.push(cell_text(&at[inner..inner + close]));
+        rest = &at[inner + close + "</td>".len()..];
+    }
+    cells
+}
 
-    let mut out = Vec::new();
-    for row in &records[header_idx + 1..] {
-        let cell = |i: usize| row.get(i).map(|s| s.trim());
-        if cell(i_class) != Some("Equity") {
+/// เก็บ inner HTML ของแถว `<tr …>…</tr>` ทุกแถวใน table — เช็คตัวตาม
+/// `<tr` กัน tag อื่นที่ขึ้นต้นเหมือนกัน (เช่น `<track>`)
+fn table_rows(table: &str) -> Vec<&str> {
+    let mut rows = Vec::new();
+    let mut rest = table;
+    while let Some(open) = rest.find("<tr") {
+        let at = &rest[open..];
+        let after = &at[3..];
+        if !after.starts_with('>') && !after.starts_with(|c: char| c.is_ascii_whitespace()) {
+            rest = after;
             continue;
         }
-        let Some(symbol) = cell(i_ticker).filter(|s| !s.is_empty()) else {
-            continue;
+        let Some(tag_gt) = at.find('>') else { break };
+        let inner = tag_gt + 1;
+        let Some(close) = at[inner..].find("</tr>") else {
+            break;
         };
-        let Some(name) = i_name.and_then(cell).filter(|s| !s.is_empty()) else {
+        rows.push(&at[inner..inner + close]);
+        rest = &at[inner + close + "</tr>".len()..];
+    }
+    rows
+}
+
+/// แปลง Wikipedia "S&P 100" constituents จาก action=parse API JSON —
+/// มือเลือก (ไม่เพิ่ม crate): หาตาราง `id="constituents"`, เก็บ 3 cells
+/// แรกของแถว `<td>` เป็น (symbol, name, sector)
+///
+/// ตารางไม่มี market cap: `market_cap = None` และ `rank_value` เป็นเลข
+/// เรียงมาก→น้อยตามลำดับแถว (แถวบนสุด = จำนวนแถว) เพื่อให้ `top_n`
+/// เก็บทุกตัวไว้และเรียงตามลำดับในตาราง — จะ override ด้วย market cap
+/// จริงจาก cache รอบก่อนได้ที่ [`rank_from_cache`]
+pub fn parse_wikipedia_sp100(api_json: &serde_json::Value) -> Result<Vec<UniverseEntry>, String> {
+    let text = api_json
+        .get("parse")
+        .and_then(|p| p.get("text"))
+        .and_then(|t| t.as_str())
+        .ok_or_else(|| "parse.text missing or not a string".to_string())?;
+
+    let id_pos = text
+        .find("id=\"constituents\"")
+        .ok_or_else(|| "constituents table not found".to_string())?;
+    let table_start = text[..id_pos]
+        .rfind("<table")
+        .ok_or_else(|| "constituents table missing <table> tag".to_string())?;
+    let tag_gt = text[table_start..]
+        .find('>')
+        .ok_or_else(|| "constituents <table> tag unterminated".to_string())?;
+    let open_tag_end = table_start + tag_gt + 1;
+    let close_rel = text[id_pos..]
+        .find("</table>")
+        .ok_or_else(|| "constituents table missing </table>".to_string())?;
+    let table_end = id_pos + close_rel;
+
+    let mut entries: Vec<UniverseEntry> = Vec::new();
+    for row in table_rows(&text[open_tag_end..table_end]) {
+        let cells = row_cells(row);
+        if cells.len() < 3 || cells[0].is_empty() {
             continue;
-        };
-        let sector = i_sector.and_then(cell).filter(|s| !s.is_empty());
-        let rank_value = cell(i_mv).and_then(parse_loose_number);
-        out.push(UniverseEntry {
-            symbol: symbol.to_string(),
-            name: name.to_string(),
-            sector: sector.map(str::to_string),
+        }
+        let sector = cells[2].as_str();
+        entries.push(UniverseEntry {
+            symbol: cells[0].clone(),
+            name: cells[1].clone(),
+            sector: if sector.is_empty() {
+                None
+            } else {
+                Some(sector.to_string())
+            },
             market_cap: None,
-            rank_value,
+            rank_value: None,
         });
     }
-    if out.is_empty() {
-        return Err("no Equity rows parsed".to_string());
+    if entries.is_empty() {
+        return Err("constituents table has no data rows".to_string());
     }
-    Ok(out)
+    let total = entries.len() as f64;
+    for (i, e) in entries.iter_mut().enumerate() {
+        e.rank_value = Some(total - i as f64);
+    }
+    Ok(entries)
+}
+
+/// ยืม rank จาก cache รอบก่อนมาเป็น `rank_value` ของ entry ที่ symbol
+/// ตรงกัน (cache NASDAQ ให้ `market_cap` จริง, cache Wikipedia รอบก่อน
+/// ให้ `rank_value`) — ทำให้ Wikipedia fallback เรียงตาม market cap
+/// ล่าสุดที่รู้จักแทนลำดับในตาราง; ตัวที่ไม่มีใน cache (เพิ่งเข้า index)
+/// คงอันดับตามตารางไว้ (ค่า table order เล็กกว่า cap จริงจึงตกท้าย)
+pub fn rank_from_cache(entries: &mut [UniverseEntry], cache: &[UniverseEntry]) {
+    let caps: HashMap<String, f64> = cache
+        .iter()
+        .filter_map(|e| {
+            let v = rank_key(e).filter(|v| v.is_finite() && *v > 0.0)?;
+            Some((e.symbol.trim().to_ascii_uppercase(), v))
+        })
+        .collect();
+    for e in entries {
+        if let Some(v) = caps.get(e.symbol.trim().to_ascii_uppercase().as_str()) {
+            e.rank_value = Some(*v);
+        }
+    }
 }
 
 /// Fetch NASDAQ screener JSON (browser-like headers, 20 s timeout)
@@ -454,26 +516,27 @@ pub fn fetch_nasdaq() -> Result<serde_json::Value, String> {
         .map_err(|e| format!("nasdaq json decode: {e}"))
 }
 
-/// Fetch iShares OEF holdings CSV (20 s timeout) — failure เป็น normal
-/// fallback path ไม่ใช่ panic
+/// Fetch Wikipedia "S&P 100" constituents JSON (20 s timeout) — failure
+/// เป็น normal fallback path ไม่ใช่ panic
 #[cfg(feature = "client")]
-pub fn fetch_oef_csv() -> Result<String, String> {
+pub fn fetch_wikipedia_sp100() -> Result<serde_json::Value, String> {
     use reqwest::header::{ACCEPT, USER_AGENT};
     let http = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .map_err(|e| format!("build http client: {e}"))?;
     let resp = http
-        .get(OEF_HOLDINGS_URL)
-        .header(USER_AGENT, CHROME_UA)
-        .header(ACCEPT, "text/csv")
+        .get(WIKIPEDIA_SP100_API_URL)
+        .header(USER_AGENT, WIKIPEDIA_UA)
+        .header(ACCEPT, "application/json")
         .send()
-        .map_err(|e| format!("oef request failed: {e}"))?;
+        .map_err(|e| format!("wikipedia request failed: {e}"))?;
     let status = resp.status();
     if !status.is_success() {
-        return Err(format!("oef holdings HTTP {status}"));
+        return Err(format!("wikipedia HTTP {status}"));
     }
-    resp.text().map_err(|e| format!("oef csv decode: {e}"))
+    resp.json::<serde_json::Value>()
+        .map_err(|e| format!("wikipedia json decode: {e}"))
 }
 
 #[cfg(test)]
@@ -524,35 +587,103 @@ mod tests {
         assert!(err.contains("data.rows"), "{err}");
     }
 
-    const OEF_CSV: &str = "\"iShares S&P 100 ETF, US\",OEF,Large Blend\n\
-As of,\"01/02/2026\",,\n\
-\n\
-Ticker,Name,Sector,Asset Class,Market Value,Weight (%),Notional Value,Shares,Price,Exchange\n\
-AAPL,Apple Inc.,Information Technology,Equity,\"1,234,567.89\",6.50,\"1,234,567.89\",12345,\"100.00\",NASDAQ\n\
-MSFT,Microsoft Corporation,Information Technology,Equity,\"987,654.32\",5.10,\"987,654.32\",9876,\"99.90\",NASDAQ\n\
-BRK-B,Berkshire Hathaway Inc.,Financials,Equity,\"500,000.00\",2.50,\"500,000.00\",5000,\"100.00\",NYSE\n\
-,Cash and/or Derivatives,,Cash,\"12,345.67\",0.06,\"12,345.67\",,,\n\
-GOOG,Alphabet Inc. Class C,Communication Services,Equity,\"450,000.00\",2.30,\"450,000.00\",4500,\"100.00\",NASDAQ\n\
-Total,,,,\"2,984,567.88\"";
+    /// ตัดจาก Wikipedia "S&P 100" action=parse response — header `<th>` +
+    /// 6 แถวข้อมูล `<td>` (link ครอบ cell, `BRK.B` แบบ dot, GOOG/GOOGL
+    /// คู่กัน, ชื่อมี `&amp;`, whitespace ติดใน cell)
+    const WIKI_SP100_HTML: &str = r#"<div class="mw-parser-output">
+<table class="wikitable sortable" id="constituents">
+<tbody>
+<tr>
+<th>Symbol</th>
+<th>Name</th>
+<th>Sector</th>
+</tr>
+<tr>
+<td><a href="/wiki/Apple_Inc." title="Apple Inc.">AAPL</a>
+</td>
+<td><a href="/wiki/Apple_Inc." title="Apple Inc.">Apple Inc.</a>
+</td>
+<td>Information technology</td>
+</tr>
+<tr>
+<td><a href="/wiki/Alphabet_Inc." title="Alphabet Inc.">GOOGL</a>
+</td>
+<td><a href="/wiki/Alphabet_Inc." title="Alphabet Inc.">Alphabet</a>
+</td>
+<td>Communication services</td>
+</tr>
+<tr>
+<td>GOOG</td>
+<td>Alphabet
+</td>
+<td>Communication services</td>
+</tr>
+<tr>
+<td><a href="/wiki/Berkshire_Hathaway" title="Berkshire Hathaway">BRK.B</a>
+</td>
+<td>Berkshire Hathaway
+</td>
+<td>Financials</td>
+</tr>
+<tr>
+<td><a href="/wiki/AT%26T" title="AT&amp;T">T</a>
+</td>
+<td>AT&amp;T Inc.
+</td>
+<td>Communication services</td>
+</tr>
+<tr>
+<td>MCK</td>
+<td>McKesson Corporation</td>
+<td>Health care
+</td>
+</tr>
+</tbody></table>
+</div>"#;
 
-    #[test]
-    fn parse_oef_csv_equity_only_quoted_numbers() {
-        let entries = parse_oef_csv(OEF_CSV).unwrap();
-        let symbols: Vec<&str> = entries.iter().map(|e| e.symbol.as_str()).collect();
-        assert_eq!(symbols, vec!["AAPL", "MSFT", "BRK-B", "GOOG"]);
-        let aapl = &entries[0];
-        assert_eq!(aapl.sector.as_deref(), Some("Information Technology"));
-        assert_eq!(aapl.market_cap, None);
-        assert_eq!(aapl.rank_value, Some(1_234_567.89));
-        // quoted field with comma survived as one preamble record (header found anyway)
-        let brk = &entries[2];
-        assert_eq!(brk.rank_value, Some(500_000.0));
+    fn wikipedia_fixture() -> serde_json::Value {
+        serde_json::json!({ "parse": { "title": "S&P 100", "text": WIKI_SP100_HTML } })
     }
 
     #[test]
-    fn parse_oef_csv_err_without_header() {
-        let err = parse_oef_csv("no header here\n1,2,3\n").unwrap_err();
-        assert!(err.contains("Ticker"), "{err}");
+    fn parse_wikipedia_sp100_extracts_rows_in_table_order() {
+        let entries = parse_wikipedia_sp100(&wikipedia_fixture()).unwrap();
+        let symbols: Vec<&str> = entries.iter().map(|e| e.symbol.as_str()).collect();
+        assert_eq!(symbols, vec!["AAPL", "GOOGL", "GOOG", "BRK.B", "T", "MCK"]);
+        let aapl = &entries[0];
+        assert_eq!(aapl.name, "Apple Inc.");
+        assert_eq!(aapl.sector.as_deref(), Some("Information technology"));
+        assert_eq!(aapl.market_cap, None);
+        assert_eq!(entries[3].symbol, "BRK.B"); // คง dot-style ตามตาราง
+        assert_eq!(entries[4].name, "AT&T Inc."); // &amp; decoded
+        assert_eq!(entries[5].sector.as_deref(), Some("Health care")); // trim
+        // rank_value เรียงมาก→น้อยตามลำดับแถว — แถวแรก = จำนวนแถว
+        let ranks: Vec<f64> = entries.iter().map(|e| e.rank_value.unwrap()).collect();
+        assert_eq!(ranks, vec![6.0, 5.0, 4.0, 3.0, 2.0, 1.0]);
+    }
+
+    #[test]
+    fn parse_wikipedia_sp100_err_on_missing_table_or_rows() {
+        let err = parse_wikipedia_sp100(&serde_json::json!({})).unwrap_err();
+        assert!(err.contains("parse.text"), "{err}");
+        let err = parse_wikipedia_sp100(&serde_json::json!({"parse": {"text": "<p>no table</p>"}}))
+            .unwrap_err();
+        assert!(err.contains("constituents table not found"), "{err}");
+        // มีตารางแต่เหลือแต่ header `<th>` — ไม่มีแถวข้อมูล
+        let err = parse_wikipedia_sp100(&serde_json::json!({
+            "parse": {"text": "<table id=\"constituents\"><tr><th>Symbol</th><th>Name</th><th>Sector</th></tr></table>"}
+        }))
+        .unwrap_err();
+        assert!(err.contains("no data rows"), "{err}");
+    }
+
+    #[test]
+    fn top_n_ranks_wikipedia_by_table_order() {
+        let entries = parse_wikipedia_sp100(&wikipedia_fixture()).unwrap();
+        let top = top_n(&entries, 3);
+        let symbols: Vec<&str> = top.iter().map(|e| e.symbol.as_str()).collect();
+        assert_eq!(symbols, vec!["AAPL", "GOOGL", "GOOG"]);
+        assert!(top.iter().all(|e| e.market_cap.is_none()));
     }
 
     #[test]
@@ -625,12 +756,31 @@ Total,,,,\"2,984,567.88\"";
     }
 
     #[test]
-    fn top_n_ranks_oef_by_rank_value() {
-        let entries = parse_oef_csv(OEF_CSV).unwrap();
-        let top = top_n(&entries, 2);
-        assert_eq!(top[0].symbol, "AAPL");
-        assert_eq!(top[1].symbol, "MSFT");
-        assert_eq!(top[0].market_cap, None);
+    fn rank_from_cache_borrows_caps_over_table_order() {
+        let mut entries = parse_wikipedia_sp100(&wikipedia_fixture()).unwrap();
+        let entry =
+            |symbol: &str, market_cap: Option<f64>, rank_value: Option<f64>| UniverseEntry {
+                symbol: symbol.into(),
+                name: String::new(),
+                sector: None,
+                market_cap,
+                rank_value,
+            };
+        let cache = vec![
+            entry("BRK.B", Some(9e12), None),
+            entry("aapl", Some(1e10), None), // match แบบ case-insensitive
+            entry("GOOGL", Some(5e12), None),
+            // cache รอบก่อนเป็น Wikipedia เอง — rank_value ก็ยืมได้
+            entry("T", None, Some(900.0)),
+        ];
+        rank_from_cache(&mut entries, &cache);
+        // ตัวที่ไม่มีใน cache คง table order ไว้
+        let goog = entries.iter().find(|e| e.symbol == "GOOG").unwrap();
+        assert_eq!(goog.rank_value, Some(4.0));
+        // cap จาก cache มาก→น้อย ก่อน แล้วเศษที่ไม่มีใน cache ตาม table order
+        let top = top_n(&entries, 6);
+        let symbols: Vec<&str> = top.iter().map(|e| e.symbol.as_str()).collect();
+        assert_eq!(symbols, vec!["BRK.B", "GOOGL", "AAPL", "T", "GOOG", "MCK"]);
     }
 
     #[test]
@@ -672,7 +822,7 @@ Total,,,,\"2,984,567.88\"";
     }
 
     #[test]
-    fn choose_falls_back_to_oef_with_warning() {
+    fn choose_falls_back_to_wikipedia_with_warning() {
         let now = Utc.with_ymd_and_hms(2026, 3, 2, 14, 0, 0).unwrap();
         // 5 of 10 < threshold 8 -> fallback
         let (snap, warnings) = choose(
@@ -683,10 +833,14 @@ Total,,,,\"2,984,567.88\"";
             now,
         )
         .unwrap();
-        assert_eq!(snap.source, UniverseSource::Oef);
+        assert_eq!(snap.source, UniverseSource::Wikipedia);
         assert_eq!(snap.symbols.len(), 10);
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("OEF fallback"), "{}", warnings[0]);
+        assert!(
+            warnings[0].contains("Wikipedia S&P 100 fallback"),
+            "{}",
+            warnings[0]
+        );
         assert!(warnings[0].contains("nasdaq"), "{}", warnings[0]);
     }
 
@@ -700,7 +854,7 @@ Total,,,,\"2,984,567.88\"";
         };
         let (snap, warnings) = choose(
             Err("http 403".into()),
-            Err("no header row".into()),
+            Err("constituents table not found".into()),
             Some(cache),
             10,
             now,
@@ -712,7 +866,7 @@ Total,,,,\"2,984,567.88\"";
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("12 day"), "{}", warnings[0]);
         assert!(warnings[0].contains("nasdaq failed"), "{}", warnings[0]);
-        assert!(warnings[0].contains("oef failed"), "{}", warnings[0]);
+        assert!(warnings[0].contains("wikipedia failed"), "{}", warnings[0]);
     }
 
     #[test]
@@ -765,20 +919,31 @@ Total,,,,\"2,984,567.88\"";
         keys.sort_unstable();
         assert_eq!(keys, vec!["market_cap", "name", "sector", "symbol"]);
 
-        // OEF entry: market_cap null + extra rank_value key
-        let oef_snap = UniverseSnapshot {
+        // Wikipedia snapshot: market_cap null + extra rank_value key
+        let wiki_snap = UniverseSnapshot {
             fetched_at: snap.fetched_at,
-            source: UniverseSource::Oef,
+            source: UniverseSource::Wikipedia,
             symbols: vec![UniverseEntry {
                 symbol: "AAPL".into(),
                 name: "Apple Inc.".into(),
-                sector: Some("Information Technology".into()),
+                sector: Some("Information technology".into()),
                 market_cap: None,
-                rank_value: Some(1_234_567.89),
+                rank_value: Some(101.0),
             }],
         };
-        write_cache(&path, &oef_snap).unwrap();
-        assert_eq!(read_cache(&path), Some(oef_snap));
+        write_cache(&path, &wiki_snap).unwrap();
+        assert_eq!(read_cache(&path), Some(wiki_snap.clone()));
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["source"], "wikipedia");
+
+        // legacy cache สมัย fallback ชื่อ Oef ("source": "oef") ยังโหลดได้
+        let legacy = format!(
+            "{{\"fetched_at\":\"{}\",\"source\":\"oef\",\"symbols\":[]}}",
+            snap.fetched_at.to_rfc3339()
+        );
+        std::fs::write(&path, legacy).unwrap();
+        assert_eq!(read_cache(&path).unwrap().source, UniverseSource::Wikipedia);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
