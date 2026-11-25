@@ -317,7 +317,7 @@ fn pick_levels<'a>(cands: &[&'a EnrichedRow]) -> [Option<&'a EnrichedRow>; 3] {
     [safe, balanced, high]
 }
 
-fn make_idea(
+pub(crate) fn make_idea(
     level: IdeaLevel,
     r: &EnrichedRow,
     symbol: &str,
@@ -369,7 +369,7 @@ fn make_idea(
 }
 
 /// Comma-grouped whole dollars for the Thai sentences ("$18,000").
-fn fmt_usd(v: f64) -> String {
+pub(crate) fn fmt_usd(v: f64) -> String {
     let whole = v.round() as i64;
     let sign = if whole < 0 { "-" } else { "" };
     let digits = whole.unsigned_abs().to_string();

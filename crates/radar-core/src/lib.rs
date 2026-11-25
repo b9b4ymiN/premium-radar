@@ -3,6 +3,7 @@
 
 pub mod copilot;
 pub mod easy;
+pub mod easy_rank;
 pub mod engine;
 pub mod lab;
 pub mod market_history;
