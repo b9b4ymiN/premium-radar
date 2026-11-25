@@ -1,0 +1,22 @@
+# Keep the image build context minimal: only what `cargo build -p
+# recorder-server` needs. Allow-list style so nothing unexpected (frontend,
+# docs, git metadata, local secrets) can leak into the image.
+#
+# Excluded on purpose:
+#   target/ node_modules/ src/ dist/ design/ docs/ .git/ *.log .env*
+#   .github/ deploy/ rust-toolchain.toml (pins a Windows MSVC toolchain)
+
+# Exclude everything ...
+*
+
+# ... then re-include the workspace manifests, lockfile and server crates.
+!Cargo.toml
+!Cargo.lock
+!crates
+!crates/**
+
+# src-tauri: cargo must parse every member manifest, so re-include the
+# directory and its Cargo.toml stub, but keep all other contents out.
+!src-tauri
+src-tauri/**
+!src-tauri/Cargo.toml

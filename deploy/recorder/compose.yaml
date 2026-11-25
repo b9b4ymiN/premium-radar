@@ -1,0 +1,39 @@
+# Example deployment for the recorder-server Docker image.
+#
+# Quick start:
+#   1. cp .env.example .env   (fill in placeholders — never commit .env)
+#   2. docker compose up -d
+#   3. Webull access token: create one in the desktop app (SMS verification),
+#      then copy it into the volume (it expires after ~15 days, re-do then):
+#        docker run --rm -i -v recorder-data:/data alpine \
+#          sh -c 'cat > /data/secrets/access_token' < access_token.txt
+#      (or, while the container runs:
+#        docker compose exec recorder sh -c 'cat > /data/secrets/access_token' < access_token.txt)
+#   4. Sanity-check the schedule: docker compose run --rm recorder plan
+
+services:
+  recorder:
+    # GHCR requires lowercase repository names (owner "b9b4ymiN" -> "b9b4ymin").
+    # Change the owner if you fork / publish from another account.
+    image: ghcr.io/b9b4ymin/premium-radar-recorder:latest
+    # Fallback: build locally instead of pulling from GHCR
+    # (docker compose up --build).
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      TZ: ${TZ:-UTC}
+    # Bind to localhost only — the HTTP API has no TLS of its own. Expose it
+    # over HTTPS via Tailscale or a Cloudflare Tunnel instead of opening the
+    # port to the network.
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - recorder-data:/data
+    restart: unless-stopped
+
+volumes:
+  recorder-data:
+    # Stable name so the token-copy command above keeps working.
+    name: recorder-data
