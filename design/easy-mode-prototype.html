@@ -1,0 +1,817 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PREMIUM RADAR · โหมดง่าย (prototype)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --canvas: #0b0d11;
+  --header: #14171d;
+  --surface: #10141a;
+  --surface2: #171c24;
+  --surface3: #1c2633;
+  --hover: #202938;
+  --border: #292f39;
+  --border-soft: #222832;
+  --border-strong: #384251;
+  --text: #f0f3f8;
+  --secondary: #a2adbc;
+  --dim: #8592a3;
+  --blue: #4b8cf7;
+  --blue-soft: #1d3455;
+  --green: #24c99a;
+  --green-soft: #12332b;
+  --red: #f4788c;
+  --red-soft: #3a1c24;
+  --amber: #f0bd70;
+  --amber-soft: #3a2e1a;
+  --sans: 'Inter', 'IBM Plex Sans Thai', 'Noto Sans Thai', 'Segoe UI', Tahoma, sans-serif;
+  --ease: cubic-bezier(.16, 1, .3, 1);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { background: var(--canvas); color-scheme: dark; }
+body {
+  min-height: 100dvh; background: var(--canvas); color: var(--text);
+  font-family: var(--sans); font-size: 16px; line-height: 1.6;
+  font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
+  display: grid; grid-template-rows: auto auto 1fr auto;
+}
+::selection { background: #315fa8; color: #fff; }
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: var(--canvas); }
+::-webkit-scrollbar-thumb { background: #394354; border-radius: 9px; }
+html { scrollbar-color: #394354 var(--canvas); }
+input { caret-color: var(--blue); }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 6px; }
+[tabindex="-1"]:focus { outline: none; }
+svg.i { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+/* ---------- appbar ---------- */
+.appbar {
+  position: sticky; top: 0; z-index: 10; height: 56px;
+  display: flex; align-items: center; gap: 16px; padding: 0 24px;
+  background: var(--header); border-bottom: 1px solid var(--border);
+}
+.brand { white-space: nowrap; display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: .02em; font-size: 15px; }
+.brand-mark { width: 28px; height: 28px; border-radius: 7px; background: var(--blue-soft); display: grid; place-items: center; color: #91bbff; }
+.brand small { display: block; font-weight: 500; letter-spacing: 0; color: var(--dim); font-size: 12px; line-height: 1.1; }
+.sample .short { display: none; }
+.sample { margin-left: auto; font-size: 13px; color: var(--amber); border: 1px solid #5a4724; background: var(--amber-soft); padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+.modes { display: flex; border: 1px solid var(--border-strong); border-radius: 9px; padding: 3px; background: var(--surface); }
+.modes button { white-space: nowrap; border: 0; background: transparent; padding: 5px 12px; border-radius: 6px; font-size: 14px; color: var(--secondary); }
+.modes button[aria-pressed="true"] { background: var(--blue-soft); color: #cfe0ff; }
+
+/* ---------- progress (decision flow) ---------- */
+.flowbar { display: none; max-width: 760px; margin: 0 auto; width: 100%; padding: 18px 24px 0; gap: 8px; align-items: center; }
+.flowbar.on { display: flex; }
+.flowbar .seg { flex: 1; height: 4px; border-radius: 4px; background: var(--surface3); transition: background .4s var(--ease); }
+.flowbar .seg.done { background: var(--blue); }
+.flowbar .count { font-size: 13px; color: var(--dim); white-space: nowrap; margin-left: 6px; }
+
+/* ---------- main column ---------- */
+main { width: 100%; max-width: 760px; margin: 0 auto; padding: 28px 24px 64px; }
+.screen { display: none; }
+.screen.on { display: block; animation: rise .5s var(--ease); }
+@keyframes rise { from { opacity: .001; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .screen.on { animation: none; } * { transition: none !important; } }
+
+h1 { font-size: 30px; line-height: 1.3; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 21px; line-height: 1.4; font-weight: 700; text-wrap: balance; }
+.lead { color: var(--secondary); margin-top: 8px; max-width: 62ch; }
+.money { font-weight: 800; letter-spacing: -0.02em; }
+.pos { color: var(--green); } .neg { color: var(--red); } .warn { color: var(--amber); }
+.muted { color: var(--secondary); } .dim { color: var(--dim); }
+.stack > * + * { margin-top: 16px; }
+.gap-l { margin-top: 40px; }
+
+.panel { background: var(--surface2); border: 1px solid var(--border); border-radius: 14px; padding: 22px 24px; }
+.panel.quiet { background: var(--surface); }
+.rule { height: 1px; background: var(--border-soft); margin: 18px 0; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 48px; padding: 0 22px; border-radius: 10px; font-weight: 600; font-size: 16px;
+  border: 1px solid var(--border-strong); background: var(--surface3); color: var(--text);
+  transition: background .2s, border-color .2s, transform .2s var(--ease);
+}
+.btn:hover { background: var(--hover); }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: #2563d8; border-color: #2563d8; color: #fff; }
+.btn.primary:hover { background: #1f55bd; border-color: #1f55bd; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--secondary); }
+.btn.ghost:hover { color: var(--text); background: var(--surface2); }
+.btn[disabled] { opacity: .4; cursor: not-allowed; }
+.actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 28px; }
+.back { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; color: var(--secondary); font-size: 15px; margin-bottom: 18px; padding: 4px 0; }
+.back:hover { color: var(--text); }
+
+/* ---------- agent voice ---------- */
+.agent { display: grid; grid-template-columns: 40px 1fr; gap: 14px; align-items: start; }
+.avatar { width: 40px; height: 40px; border-radius: 12px; background: var(--blue-soft); color: #91bbff; display: grid; place-items: center; }
+.agent .say { font-size: 18px; line-height: 1.65; }
+.agent .say strong { font-weight: 700; }
+.agent-name { font-size: 14px; color: var(--dim); margin-bottom: 2px; }
+
+/* ---------- home idea ---------- */
+.idea { display: grid; grid-template-columns: 1fr auto; gap: 8px 20px; align-items: end; }
+.idea .what { font-size: 15px; color: var(--secondary); }
+.idea .big { font-size: 44px; line-height: 1.05; }
+.idea .sub { font-size: 16px; color: var(--secondary); grid-column: 1 / -1; }
+.chance { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; padding: 4px 12px; border-radius: 999px; background: var(--surface3); color: #d3dbe7; white-space: nowrap; }
+.status-ok { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; color: #d3dbe7; }
+.status-ok::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.chance.warn { background: var(--amber-soft); color: var(--amber); }
+.skip { display: grid; grid-template-columns: 24px 1fr; gap: 12px; color: var(--secondary); }
+
+.clock { display: flex; align-items: center; gap: 10px; color: var(--secondary); font-size: 15px; }
+.clock b { color: var(--text); font-weight: 600; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
+.dot.open { background: var(--green); }
+
+.held { display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; align-items: center; }
+.held .name { font-weight: 600; }
+.pline { grid-column: 1 / -1; position: relative; height: 58px; margin-top: 14px; }
+.pline .track { position: absolute; left: 0; right: 0; top: 24px; height: 2px; background: var(--border-strong); }
+.pline .gap { position: absolute; top: 22px; height: 6px; background: var(--green-soft); box-shadow: inset 0 0 0 1px #1f6b55; }
+.pline .mk { position: absolute; top: 16px; width: 2px; height: 18px; transform: translateX(-1px); }
+.pline .mk.strike { background: var(--amber); }
+.pline .mk.now { background: var(--text); }
+.pline .lb { position: absolute; font-size: 13px; color: var(--dim); white-space: nowrap; transform: translateX(-50%); }
+.pline .lb.top { top: -6px; color: var(--amber); }
+.pline .lb.bot { top: 36px; }
+
+.linkrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; text-align: left; border: 0; background: none; padding: 14px 0; border-top: 1px solid var(--border-soft); color: var(--text); }
+.linkrow:first-child { border-top: 0; }
+.linkrow:hover .chev { transform: translateX(3px); color: var(--text); }
+.chev { color: var(--dim); transition: transform .2s var(--ease); }
+
+/* ---------- onboarding ---------- */
+.choice { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; padding: 16px 18px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface2); transition: border-color .2s, background .2s; }
+.choice:hover { border-color: var(--border-strong); }
+.choice[aria-pressed="true"] { border-color: var(--blue); background: #15243a; }
+.choice .t { font-weight: 600; }
+.choice .d { font-size: 14px; color: var(--secondary); }
+.radio { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--border-strong); flex: none; display: grid; place-items: center; }
+.choice[aria-pressed="true"] .radio { border-color: var(--blue); }
+.choice[aria-pressed="true"] .radio::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--blue); }
+.list > * + * { margin-top: 10px; }
+
+.stockrow { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 14px 0; border-top: 1px solid var(--border-soft); }
+.stockrow:first-child { border-top: 0; }
+.ticker { font-weight: 700; font-size: 18px; }
+.ticker small { display: block; font-weight: 400; font-size: 14px; color: var(--secondary); }
+.seg2 { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 10px; padding: 3px; background: var(--surface); }
+.seg2 button { border: 0; background: none; padding: 7px 14px; border-radius: 7px; font-size: 15px; color: var(--secondary); white-space: nowrap; }
+.seg2 button[aria-pressed="true"].yes { background: var(--green-soft); color: #8fe6c9; }
+.seg2 button[aria-pressed="true"].no { background: var(--amber-soft); color: var(--amber); }
+
+.cash { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border-strong); border-radius: 12px; padding: 0 18px; background: var(--surface); max-width: 360px; }
+.cash:focus-within { border-color: var(--blue); }
+.cash span { color: var(--dim); font-size: 22px; }
+.cash input { border: 0; background: none; outline: none; font-size: 30px; font-weight: 700; width: 100%; padding: 12px 0; }
+
+/* ---------- suggestions (step 2) ---------- */
+.opt { display: grid; grid-template-columns: 1fr auto; gap: 4px 18px; width: 100%; text-align: left; padding: 20px 22px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface2); transition: border-color .2s, background .2s; }
+.opt:hover { border-color: var(--border-strong); background: #1a2029; }
+.opt.recommended { border-color: #2f5aa0; }
+.opt .lvl { font-weight: 700; font-size: 18px; display: flex; align-items: center; gap: 10px; }
+.opt[disabled] { opacity: .5; cursor: not-allowed; }
+.opt .tag.short { background: var(--red-soft); color: var(--red); }
+.opt .tag { font-size: 13px; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: var(--blue-soft); color: #a9c8ff; }
+.opt .amt { font-size: 28px; text-align: right; }
+.opt .desc { color: var(--secondary); font-size: 15px; }
+.opt .per { font-size: 14px; color: var(--secondary); text-align: right; }
+.opt .row { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 15px; }
+
+/* ---------- five questions (step 3) ---------- */
+.q5 { border-top: 1px solid var(--border-soft); padding: 24px 0; display: grid; grid-template-columns: 180px 1fr; gap: 6px 28px; }
+.q5:first-of-type { border-top: 0; padding-top: 4px; }
+.q5 > h2 { font-size: 16px; font-weight: 600; color: var(--secondary); line-height: 1.5; }
+.q5 .ans { font-size: 17px; }
+.q5 .ans .money { font-size: 32px; display: block; line-height: 1.2; margin-bottom: 4px; }
+.cases > div { display: grid; grid-template-columns: 64px 1fr; gap: 14px; align-items: baseline; padding: 10px 0; }
+.cases .pct { font-size: 22px; font-weight: 800; text-align: right; }
+
+.whatif { margin-top: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; }
+.whatif-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.whatif-price { font-size: 15px; color: var(--secondary); }
+.whatif-price b { font-size: 26px; color: var(--text); font-weight: 800; margin-left: 4px; }
+.slider { position: relative; margin: 26px 0 10px; height: 14px; }
+.band { height: 14px; border-radius: 8px; overflow: hidden; display: flex; }
+.band span { height: 100%; }
+.band-labels { position: relative; height: 20px; font-size: 13px; color: var(--dim); }
+.band-labels span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.band-labels span:first-child { transform: none; }
+.band-labels span:last-child { transform: translateX(-100%); }
+.tick { position: absolute; top: -6px; width: 2px; height: 26px; background: var(--amber); transform: translateX(-1px); pointer-events: none; }
+.tick-label { position: absolute; top: -30px; transform: translateX(-50%); font-size: 13px; color: var(--amber); white-space: nowrap; pointer-events: none; }
+.slider { margin-top: 48px !important; }
+input[type=range] { -webkit-appearance: none; appearance: none; position: absolute; left: 0; right: 0; top: 0; width: 100%; height: 14px; margin: 0; background: transparent; }
+input[type=range]::-webkit-slider-runnable-track { height: 14px; background: transparent; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 26px; height: 26px; margin-top: -6px; border-radius: 50%; background: #fff; border: 4px solid var(--blue); box-shadow: 0 2px 8px #0008; cursor: grab; }
+input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 4px solid var(--blue); cursor: grab; }
+input[type=range]::-moz-range-track { background: transparent; }
+.outcome { margin-top: 18px; display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; align-items: center; }
+.outcome .money { font-size: 40px; line-height: 1.1; transition: color .25s; }
+.outcome p { color: var(--secondary); }
+.quick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.pill { border: 1px solid var(--border-strong); background: var(--surface2); border-radius: 999px; padding: 6px 14px; font-size: 14px; color: var(--secondary); }
+.pill:hover { color: var(--text); border-color: var(--blue); }
+
+/* ---------- ask agent ---------- */
+.ask { margin-top: 36px; }
+.ask h2 { display: flex; align-items: center; gap: 10px; }
+.thread { margin-top: 14px; }
+.thread .q { justify-self: end; background: var(--blue-soft); color: #dbe7ff; padding: 10px 14px; border-radius: 12px 12px 4px 12px; max-width: 80%; margin-left: auto; width: fit-content; }
+.thread .a { margin-top: 10px; background: var(--surface2); border: 1px solid var(--border); padding: 14px 16px; border-radius: 12px 12px 12px 4px; max-width: 92%; }
+.thread > * + .q { margin-top: 18px; }
+
+/* ---------- checklist (step 4) ---------- */
+.check { display: grid; grid-template-columns: 28px 1fr; gap: 14px; align-items: start; width: 100%; text-align: left; padding: 18px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface2); }
+.check[aria-checked="true"] { border-color: #1f6b55; background: #10241f; }
+.box { width: 26px; height: 26px; border-radius: 7px; border: 2px solid var(--border-strong); display: grid; place-items: center; color: transparent; transition: background .2s, border-color .2s; }
+.check[aria-checked="true"] .box { background: var(--green); border-color: var(--green); color: #06251c; }
+.check .t { font-weight: 600; }
+.check .d { font-size: 15px; color: var(--secondary); margin-top: 2px; }
+
+.fieldmap { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.fieldmap td { padding: 12px 0; border-top: 1px solid var(--border-soft); vertical-align: top; }
+.fieldmap tr:first-child td { border-top: 0; }
+.fieldmap td:first-child { color: var(--secondary); width: 42%; padding-right: 16px; }
+.fieldmap td:last-child { font-weight: 600; }
+.fieldmap small { display: block; font-weight: 400; color: var(--dim); font-size: 14px; }
+
+.note { display: grid; grid-template-columns: 22px 1fr; gap: 10px; font-size: 15px; color: var(--secondary); }
+.note.warn { color: var(--amber); }
+
+.status { background: var(--header); border-top: 1px solid var(--border); height: 30px; display: flex; align-items: center; gap: 18px; padding: 0 24px; font-size: 12.5px; color: var(--dim); }
+.status b { color: var(--amber); font-weight: 600; }
+.status .r { margin-left: auto; }
+
+.toast { position: fixed; left: 50%; bottom: 46px; transform: translate(-50%, 20px); opacity: 0; background: #26303f; padding: 12px 18px; border-radius: 12px; font-size: 15px; box-shadow: 0 8px 16px #0008; transition: opacity .3s, transform .3s var(--ease); pointer-events: none; max-width: calc(100% - 32px); }
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+@media (max-width: 640px) {
+  body { font-size: 15.5px; }
+  .appbar { padding: 0 16px; gap: 10px; }
+  .brand small, .sample .long { display: none; }
+  .sample .short { display: inline; }
+  .sample { padding: 4px 9px; font-size: 12px; line-height: 1.2; }
+  .brand { font-size: 13px; gap: 8px; }
+  .modes .ml { display: none; }
+  .brand-mark { width: 24px; height: 24px; }
+  main { padding: 20px 16px 56px; }
+  .flowbar { padding: 14px 16px 0; }
+  h1 { font-size: 25px; }
+  .panel { padding: 18px; }
+  .idea { grid-template-columns: 1fr; }
+  .idea .chance { justify-self: start; }
+  .idea .big { font-size: 38px; }
+  .modes button { padding: 5px 9px; font-size: 13px; }
+  .q5 { grid-template-columns: 1fr; gap: 8px; padding: 20px 0; }
+  .opt { grid-template-columns: 1fr; }
+  .opt .amt, .opt .per { text-align: left; }
+  .outcome { grid-template-columns: 1fr; }
+  .outcome .money { font-size: 34px; }
+  .stockrow { grid-template-columns: 1fr; }
+  .status .hide-s { display: none; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-6"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.2v.1"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.8v.1"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M5 5h14v10H10l-5 4z"/></symbol>
+</svg>
+
+<header class="appbar">
+  <div class="brand">
+    <span class="brand-mark"><svg class="i"><use href="#i-radar"/></svg></span>
+    <span>PREMIUM RADAR<small>ผู้ช่วยขาย option</small></span>
+  </div>
+  <span class="sample"><span class="long">ข้อมูลตัวอย่าง · ไม่ใช่ราคาจริง</span><span class="short">ตัวอย่าง</span></span>
+  <div class="modes" role="group" aria-label="เลือกโหมด">
+    <button aria-pressed="true"><span class="ml">โหมด</span>ง่าย</button>
+    <button aria-pressed="false" data-toast="ในแอปจริง ปุ่มนี้สลับไปหน้าจอแบบละเอียด (terminal) ที่ใช้ข้อมูลชุดเดียวกัน"><span class="ml">โหมด</span>ละเอียด</button>
+  </div>
+</header>
+
+<div class="flowbar" id="flowbar" aria-hidden="true">
+  <span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
+  <span class="count" id="flowcount"></span>
+</div>
+
+<main>
+
+<!-- ================= ONBOARDING 1: stocks ================= -->
+<section class="screen" data-screen="ob1" data-flow="ob" data-step="1">
+  <h1>หุ้นตัวไหนที่คุณสนใจ</h1>
+  <p class="lead">บอกด้วยว่า ถ้าราคาลงมา คุณ<strong>อยากได้หุ้นตัวนั้นไว้ถือ</strong>ไหม ผู้ช่วยจะใช้คำตอบนี้เลือกไอเดียให้เหมาะกับคุณ</p>
+  <div class="panel gap-l" id="ob-stocks"></div>
+  <p class="note dim" style="margin-top:14px"><svg class="i"><use href="#i-info"/></svg><span>ตัวอย่างนี้ใส่ NVDA กับ VLO ไว้ให้แล้ว ในแอปจริงพิมพ์ชื่อหุ้นเพิ่มเอง หรือดึงจากลิสต์ใน Webull ได้</span></p>
+  <div class="actions"><button class="btn primary" data-go="ob2">ต่อไป</button></div>
+</section>
+
+<!-- ================= ONBOARDING 2: money ================= -->
+<section class="screen" data-screen="ob2" data-flow="ob" data-step="2">
+  <button class="back" data-go="ob1"><svg class="i"><use href="#i-back"/></svg>ย้อนกลับ</button>
+  <h1>ตั้งใจใช้เงินเท่าไร</h1>
+  <p class="lead">เงินก้อนนี้ต้องพร้อมจ่ายจริง เพราะถ้าราคาหุ้นลงมาถึงราคาที่ตกลงไว้ คุณต้องใช้เงินนี้ซื้อหุ้น 100 หุ้น</p>
+  <label class="cash gap-l"><span>$</span><input id="cash" inputmode="numeric" value="18,000" aria-label="เงินที่ตั้งใจใช้ (ดอลลาร์)"></label>
+  <p class="muted" style="margin-top:10px" id="cash-thb"></p>
+  <div class="actions"><button class="btn primary" data-go="ob3">ต่อไป</button></div>
+</section>
+
+<!-- ================= ONBOARDING 3: risk ================= -->
+<section class="screen" data-screen="ob3" data-flow="ob" data-step="3">
+  <button class="back" data-go="ob2"><svg class="i"><use href="#i-back"/></svg>ย้อนกลับ</button>
+  <h1>ยอมให้ต้องซื้อหุ้นได้บ่อยแค่ไหน</h1>
+  <p class="lead">ยิ่งยอมบ่อย เงินที่ได้ต่อครั้งยิ่งมาก แต่ก็มีโอกาสต้องซื้อหุ้นจริงมากขึ้นตามไปด้วย</p>
+  <div class="list gap-l" id="ob-risk">
+    <button class="choice" aria-pressed="true" data-risk="1"><span class="radio"></span><span><span class="t">ไม่บ่อย · ประมาณ 1 ใน 10 ครั้ง</span><br><span class="d">ได้เงินน้อยลง แต่ส่วนใหญ่จะไม่ต้องซื้อหุ้น</span></span></button>
+    <button class="choice" aria-pressed="false" data-risk="2"><span class="radio"></span><span><span class="t">พอรับได้ · ประมาณ 2 ใน 10 ครั้ง</span><br><span class="d">ได้เงินพอสมควร เหมาะกับหุ้นที่อยากถืออยู่แล้ว</span></span></button>
+    <button class="choice" aria-pressed="false" data-risk="3"><span class="radio"></span><span><span class="t">บ่อยได้ · ประมาณ 3 ใน 10 ครั้ง</span><br><span class="d">ได้เงินมากที่สุด แต่ต้องพร้อมซื้อหุ้นบ่อย</span></span></button>
+  </div>
+  <div class="actions"><button class="btn primary" data-go="home">เสร็จแล้ว ไปดูไอเดียคืนนี้</button></div>
+</section>
+
+<!-- ================= HOME ================= -->
+<section class="screen" data-screen="home">
+  <div class="clock" id="clock"><span class="dot"></span><span>กำลังคำนวณเวลาตลาด…</span></div>
+
+  <div class="agent gap-l">
+    <span class="avatar"><svg class="i"><use href="#i-radar"/></svg></span>
+    <div>
+      <div class="agent-name">ผู้ช่วย</div>
+      <p class="say" id="home-say"></p>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:20px">
+    <div class="idea">
+      <div>
+        <div class="what" id="home-what"></div>
+        <div class="big money pos" id="home-amt"></div>
+      </div>
+      <span class="chance" id="home-chance"></span>
+      <div class="sub" id="home-sub"></div>
+    </div>
+    <div class="actions" style="margin-top:20px" id="home-act">
+      <button class="btn primary" data-go="s2">ดูไอเดียนี้<svg class="i"><use href="#i-chev"/></svg></button>
+    </div>
+    <div class="rule"></div>
+    <div class="skip">
+      <svg class="i warn"><use href="#i-pause"/></svg>
+      <span id="home-vlo"></span>
+    </div>
+  </div>
+
+  <h2 class="gap-l">สัญญาที่ขายไปแล้ว</h2>
+  <div class="panel" style="margin-top:14px">
+    <div class="held">
+      <div>
+        <div class="name">VLO · ยอมซื้อที่ $130 · หมดอายุศุกร์ 4 ธ.ค.</div>
+        <div class="muted" style="font-size:15px">ได้เงินไปแล้ว <span class="pos">$95</span> · เหลือ 9 วัน</div>
+      </div>
+      <span class="status-ok">ปลอดภัย</span>
+      <div class="pline" role="img" aria-label="ราคา VLO ตอนนี้ $142.30 สูงกว่าจุดที่ต้องซื้อหุ้น $130 อยู่ 8.6%">
+        <span class="track"></span>
+        <span class="gap" style="left:30%;width:41%"></span>
+        <span class="mk strike" style="left:30%"></span><span class="mk now" style="left:71%"></span>
+        <span class="lb top" style="left:30%">ต้องซื้อหุ้นถ้าต่ำกว่า $130</span>
+        <span class="lb bot" style="left:71%">ตอนนี้ $142.30</span>
+        <span class="lb bot" style="left:50.5%;color:var(--green)">ห่าง 8.6%</span>
+      </div>
+    </div>
+    <div class="rule"></div>
+    <p class="note"><svg class="i"><use href="#i-info"/></svg><span>คุณไม่อยากถือ VLO ถ้าราคาลงมาใกล้ $130 ผู้ช่วยจะเตือนให้พิจารณา<strong style="color:var(--text)">ซื้อสัญญาคืน</strong>ก่อนหมดอายุ จะได้ไม่ต้องรับหุ้น</span></p>
+  </div>
+
+  <div class="panel quiet gap-l" style="padding-top:8px;padding-bottom:8px">
+    <button class="linkrow" data-go="s1"><span>หุ้นที่ฉันสนใจ <span class="dim" id="home-cash"></span></span><svg class="i chev"><use href="#i-chev"/></svg></button>
+    <button class="linkrow" data-go="ob1"><span>ตั้งค่าใหม่ <span class="dim">· เริ่มคำถาม 3 ข้อใหม่</span></span><svg class="i chev"><use href="#i-chev"/></svg></button>
+  </div>
+</section>
+
+<!-- ================= STEP 1: interested stocks ================= -->
+<section class="screen" data-screen="s1" data-flow="dec" data-step="1">
+  <button class="back" data-go="home"><svg class="i"><use href="#i-back"/></svg>หน้าแรก</button>
+  <h1>หุ้นที่ฉันสนใจ</h1>
+  <p class="lead">เลือกหุ้นที่อยากให้ผู้ช่วยหาไอเดีย ตอนนี้ตั้งเงินไว้ <strong id="s1-cash">$18,000</strong></p>
+  <div class="panel gap-l" id="s1-stocks"></div>
+  <div class="actions"><button class="btn primary" data-go="s2">ให้ผู้ช่วยหาไอเดีย</button></div>
+</section>
+
+<!-- ================= STEP 2: agent suggests ================= -->
+<section class="screen" data-screen="s2" data-flow="dec" data-step="2">
+  <button class="back" data-go="home"><svg class="i"><use href="#i-back"/></svg>หน้าแรก</button>
+  <div class="agent">
+    <span class="avatar"><svg class="i"><use href="#i-radar"/></svg></span>
+    <div>
+      <div class="agent-name">ผู้ช่วย · NVDA ราคาตอนนี้ $182.45</div>
+      <p class="say" id="s2-say"></p>
+    </div>
+  </div>
+  <div class="list gap-l" id="opts"></div>
+</section>
+
+<!-- ================= STEP 3: five questions ================= -->
+<section class="screen" data-screen="s3" data-flow="dec" data-step="3">
+  <button class="back" data-go="s2"><svg class="i"><use href="#i-back"/></svg>ทางเลือกอื่น</button>
+  <h1 id="s3-title"></h1>
+  <p class="lead" id="s3-lead"></p>
+
+  <div class="panel gap-l" style="padding-top:8px">
+    <div class="q5"><h2>ได้เงินเท่าไร</h2><div class="ans" id="q-get"></div></div>
+    <div class="q5"><h2>แลกกับอะไร</h2><div class="ans" id="q-trade"></div></div>
+    <div class="q5"><h2>โอกาสแค่ไหน</h2><div class="ans"><div class="cases" id="q-cases"></div></div></div>
+    <div class="q5"><h2>ทำไมช่วงนี้น่าทำ</h2><div class="ans" id="q-why"></div></div>
+    <div class="q5"><h2>แย่สุดคืออะไร</h2><div class="ans" id="q-worst"></div></div>
+  </div>
+
+  <div class="whatif gap-l" id="whatif">
+    <div class="whatif-head">
+      <h2>ลองดูว่า ถ้าวันหมดอายุ NVDA ปิดที่…</h2>
+      <div class="whatif-price">ราคา<b id="wf-price">$182.45</b> <span id="wf-chg" class="dim"></span></div>
+    </div>
+    <div class="slider">
+    <div class="band" id="band" aria-hidden="true"></div>
+    <input type="range" id="wf" min="-40" max="25" step="1" value="0" aria-label="ราคา NVDA วันหมดอายุ เทียบกับวันนี้ (เปอร์เซ็นต์)">
+    </div>
+    <div class="band-labels" id="band-labels"></div>
+    <div class="outcome">
+      <div class="money" id="wf-money">+$220</div>
+      <p id="wf-text"></p>
+    </div>
+    <div class="quick">
+      <button class="pill" data-wf="0">ราคาเท่าเดิม</button>
+      <button class="pill" data-wf="-10" id="pill10">ลง 10% วันหมดอายุ</button>
+      <button class="pill" data-wf="-20">ลง 20%</button>
+      <button class="pill" data-wf="-30">ลง 30%</button>
+    </div>
+  </div>
+
+  <div class="ask">
+    <h2><svg class="i"><use href="#i-chat"/></svg>ถามผู้ช่วยต่อ</h2>
+    <div class="quick" id="ask-chips"></div>
+    <div class="thread" id="thread"></div>
+  </div>
+
+  <div class="actions"><button class="btn primary" data-go="s4">เข้าใจแล้ว ไปขั้นก่อนตัดสินใจ</button><button class="btn ghost" data-go="s2">ดูทางเลือกอื่น</button></div>
+</section>
+
+<!-- ================= STEP 4: before deciding ================= -->
+<section class="screen" data-screen="s4" data-flow="dec" data-step="4">
+  <button class="back" data-go="s3"><svg class="i"><use href="#i-back"/></svg>ย้อนกลับ</button>
+  <h1>ก่อนตัดสินใจ ลองเช็ก 3 ข้อนี้</h1>
+  <p class="lead">ติ๊กได้ครบเมื่อเข้าใจจริง ถ้ายังไม่แน่ใจข้อไหน ถามผู้ช่วยหรือเลือก “ยังไม่ทำ” ได้เสมอ</p>
+  <div class="list gap-l" id="checks"></div>
+  <div class="actions">
+    <button class="btn primary" id="ready" disabled data-go="s5">พร้อม · ดูวิธีกรอกใน Webull</button>
+    <button class="btn ghost" data-go="notyet">ยังไม่ทำ</button>
+  </div>
+</section>
+
+<!-- ================= STEP 5: hand-off to Webull ================= -->
+<section class="screen" data-screen="s5" data-flow="dec" data-step="4">
+  <button class="back" data-go="s4"><svg class="i"><use href="#i-back"/></svg>ย้อนกลับ</button>
+  <h1>กรอกแบบนี้ในแอป Webull</h1>
+  <p class="lead">ตอนนี้ PREMIUM RADAR ยังไม่ส่งคำสั่งให้ คุณกดเองในแอป Webull โดยใช้ค่าด้านล่าง</p>
+  <div class="panel gap-l">
+    <table class="fieldmap" id="fieldmap"></table>
+  </div>
+  <p class="note warn" style="margin-top:16px"><svg class="i"><use href="#i-alert"/></svg><span>ชื่อช่องในแอป Webull อาจต่างไปเล็กน้อยตามเวอร์ชัน ก่อนกดยืนยัน ให้ดูหน้าสรุปของ Webull ว่าเขียน “Sell to Open” และ Put</span></p>
+  <div class="actions"><button class="btn primary" data-go="home" data-toast="บันทึกไว้แล้ว ผู้ช่วยจะติดตามสัญญานี้ให้ในหน้าแรก (ตัวอย่าง)">กดใน Webull แล้ว ให้ช่วยติดตาม</button><button class="btn ghost" data-go="home">กลับหน้าแรก</button></div>
+</section>
+
+<!-- ================= not yet ================= -->
+<section class="screen" data-screen="notyet">
+  <div class="agent">
+    <span class="avatar"><svg class="i"><use href="#i-radar"/></svg></span>
+    <div>
+      <div class="agent-name">ผู้ช่วย</div>
+      <p class="say">ไม่เป็นไรเลยครับ การไม่ทำก็เป็นการตัดสินใจที่ดีได้ ถ้าคืนพรุ่งนี้มีไอเดียที่ตรงกับคุณมากกว่านี้ ผมจะบอกในหน้าแรก</p>
+    </div>
+  </div>
+  <div class="actions"><button class="btn primary" data-go="home">กลับหน้าแรก</button></div>
+</section>
+
+</main>
+
+<footer class="status">
+  <span><b>DEMO</b> · ข้อมูลตัวอย่าง</span>
+  <span class="hide-s">ราคาและโอกาสในหน้านี้สมมติขึ้นเพื่อทดลองหน้าจอ</span>
+  <span class="r">PREMIUM RADAR · prototype โหมดง่าย</span>
+</footer>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  const SPOT = 182.45;
+  const THB = 32.4; // sample exchange rate for the hint only
+  const state = { cash: 18000, risk: 1, pick: "safe",
+    stance: { NVDA: "yes", VLO: "no" } };
+
+  const STOCKS = [
+    { t: "NVDA", n: "NVIDIA · ชิปคอมพิวเตอร์", px: 182.45 },
+    { t: "VLO", n: "Valero Energy · โรงกลั่นน้ำมัน", px: 142.30 },
+  ];
+
+  // synthetic sample contracts (cash-secured puts on NVDA)
+  const OPTS = {
+    safe: { lvl: "ปลอดภัย", strike: 165, prem: 2.20, days: 23, exp: "ศุกร์ 18 ธ.ค.", expIso: "2026-12-18",
+      assign: 13, keep: 87, mid: 2, loss: 11 },
+    balanced: { lvl: "สมดุล", strike: 175, prem: 4.15, days: 23, exp: "ศุกร์ 18 ธ.ค.", expIso: "2026-12-18",
+      assign: 22, keep: 78, mid: 4, loss: 18 },
+    high: { lvl: "ได้เงินมากต่อวัน", strike: 178, prem: 2.85, days: 9, exp: "ศุกร์ 4 ธ.ค.", expIso: "2026-12-04",
+      assign: 30, keep: 70, mid: 4, loss: 26, warn: true },
+  };
+  for (const o of Object.values(OPTS)) {
+    o.credit = Math.round(o.prem * 100);
+    o.cost = o.strike * 100;
+    o.be = o.strike - o.prem;
+    o.pct = (o.credit / o.cost) * 100;
+    o.below = (1 - o.strike / SPOT) * 100;
+  }
+
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const usd = (n, d = 0) => "$" + Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+  const signed = n => (n >= 0 ? "+" : "−") + usd(n);
+  const icon = id => `<svg class="i"><use href="#i-${id}"/></svg>`;
+
+  // ---------- toast ----------
+  let tt;
+  const toast = msg => { const el = $("#toast"); el.textContent = msg; el.classList.add("on"); clearTimeout(tt); tt = setTimeout(() => el.classList.remove("on"), 3200); };
+  document.addEventListener("click", e => { const b = e.target.closest("[data-toast]"); if (b) toast(b.dataset.toast); });
+
+  // ---------- navigation ----------
+  const go = id => {
+    $$(".screen").forEach(s => s.classList.toggle("on", s.dataset.screen === id));
+    const scr = $(`.screen[data-screen="${id}"]`);
+    const bar = $("#flowbar");
+    const flow = scr.dataset.flow;
+    if (flow) {
+      const total = flow === "ob" ? 3 : 4;
+      const step = +scr.dataset.step;
+      bar.classList.add("on");
+      $$(".seg", bar).forEach((g, i) => { g.style.display = i < total ? "" : "none"; g.classList.toggle("done", i < step); });
+      $("#flowcount").textContent = flow === "ob" ? `ตั้งค่า ${step} จาก 3` : `ขั้น ${step} จาก 4`;
+    } else bar.classList.remove("on");
+    if (id === "home") renderHome();
+    if (id === "s2") renderOpts();
+    if (id === "s3") renderQ5();
+    if (id === "s4") renderChecks();
+    if (id === "s5") renderFieldmap();
+    if (id === "s1") renderStocks("#s1-stocks");
+    window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+    const h = scr.querySelector("h1, .say"); if (h) { h.setAttribute("tabindex", "-1"); h.focus({ preventScroll: true }); }
+  };
+  document.addEventListener("click", e => { const b = e.target.closest("[data-go]"); if (b && !b.disabled) go(b.dataset.go); });
+
+  // ---------- stocks + stance ----------
+  const renderStocks = sel => {
+    $(sel).innerHTML = STOCKS.map(s => `
+      <div class="stockrow">
+        <div class="ticker">${s.t}<small>${s.n} · ราคาตอนนี้ ${usd(s.px, 2)}</small></div>
+        <div class="seg2" role="group" aria-label="ถ้าราคาลง อยากได้ ${s.t} ไว้ถือไหม">
+          <button class="yes" data-stance="${s.t}:yes" aria-pressed="${state.stance[s.t] === "yes"}">อยากถือ</button>
+          <button class="no" data-stance="${s.t}:no" aria-pressed="${state.stance[s.t] === "no"}">ไม่อยากถือ</button>
+        </div>
+      </div>`).join("");
+  };
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-stance]"); if (!b) return;
+    const [t, v] = b.dataset.stance.split(":"); state.stance[t] = v;
+    $$(`[data-stance^="${t}:"]`).forEach(x => x.setAttribute("aria-pressed", x === b));
+  });
+  renderStocks("#ob-stocks");
+
+  // ---------- cash ----------
+  const cashEl = $("#cash");
+  const syncCash = () => {
+    const n = parseInt(cashEl.value.replace(/[^\d]/g, ""), 10) || 0;
+    state.cash = n;
+    $("#cash-thb").textContent = n ? `ประมาณ ${Math.round(n * THB).toLocaleString("en-US")} บาท (อัตราแลกเปลี่ยนตัวอย่าง)` : "ใส่จำนวนเงินเป็นดอลลาร์";
+    $("#s1-cash").textContent = usd(n);
+  };
+  cashEl.addEventListener("input", syncCash);
+  cashEl.addEventListener("blur", () => { cashEl.value = state.cash.toLocaleString("en-US"); });
+  syncCash();
+
+  // ---------- risk ----------
+  $$("#ob-risk .choice").forEach(c => c.addEventListener("click", () => {
+    state.risk = +c.dataset.risk;
+    $$("#ob-risk .choice").forEach(x => x.setAttribute("aria-pressed", x === c));
+  }));
+
+  // ---------- step 2 options ----------
+  // the agent's pick follows the user's own answers: risk comfort first, then cash
+  const recommend = () => {
+    const cap = state.stance.NVDA === "yes" ? state.risk * 10 + 5 : 15;
+    const ok = k => OPTS[k].cost <= state.cash && OPTS[k].assign <= cap;
+    return ["high", "balanced", "safe"].find(ok) ?? (OPTS.safe.cost <= state.cash ? "safe" : null);
+  };
+  const renderHome = () => {
+    const k = recommend(), o = k && OPTS[k], want = state.stance.NVDA === "yes";
+    $("#home-cash").textContent = `· 2 ตัว · เงิน ${usd(state.cash)}`;
+    if (!o) {
+      $("#home-say").innerHTML = `คืนนี้ยังไม่มีไอเดีย NVDA ที่ใช้เงินไม่เกิน <strong>${usd(state.cash)}</strong> เพราะต้องกันเงินไว้อย่างน้อย ${usd(OPTS.safe.cost)} ต่อ 1 สัญญา`;
+      $("#home-what").textContent = "NVDA · เงินที่ตั้งไว้ยังไม่พอ";
+      $("#home-amt").textContent = "—";
+      $("#home-chance").textContent = `ต้องกันไว้ ${usd(OPTS.safe.cost)}`;
+      $("#home-chance").className = "chance";
+      $("#home-sub").textContent = "ลองเพิ่มเงินที่ตั้งไว้ หรือเพิ่มหุ้นที่ราคาต่ำกว่านี้";
+      $("#home-act").style.display = "none";
+    } else {
+      $("#home-say").innerHTML = `คืนนี้มี <strong>1 ไอเดีย</strong>ที่ตรงกับที่คุณตั้งไว้ คือ NVDA${want ? " ซึ่งคุณอยากถืออยู่แล้ว" : " (คุณตั้งไว้ว่าไม่อยากถือ ผมจึงเลือกทางที่โอกาสต้องซื้อหุ้นต่ำ)"} ส่วน VLO ยังไม่มีไอเดียที่ดีพอ`;
+      $("#home-what").textContent = `NVDA · รับเงินตอนนี้ ถ้ายอมซื้อหุ้นที่ $${o.strike}`;
+      $("#home-amt").textContent = usd(o.credit);
+      $("#home-chance").innerHTML = `${o.warn ? icon("alert") : ""}โอกาสต้องซื้อหุ้น ${o.assign}%`;
+      $("#home-chance").className = "chance" + (o.warn ? " warn" : "");
+      $("#home-sub").textContent = `รอ ${o.days} วัน ถึง${o.exp} · ถูกกว่าราคาตอนนี้ ${o.below.toFixed(1)}%`;
+      $("#home-act").style.display = "";
+    }
+    const vloWhy = state.stance.VLO === "no"
+      ? `ไอเดียที่มีตอนนี้ มีโอกาสต้องซื้อหุ้นราว 25%${state.risk * 10 < 25 ? ` ซึ่งมากกว่าที่คุณรับได้ (${state.risk} ใน 10)` : ""} และคุณบอกว่าไม่อยากถือ VLO`
+      : `เงินที่ได้ตอนนี้น้อยเกินไปเมื่อเทียบกับเงินที่ต้องกันไว้ จึงยังไม่คุ้ม`;
+    $("#home-vlo").innerHTML = `<strong style="color:var(--text)">VLO · ยังไม่แนะนำคืนนี้</strong><br>${vloWhy}`;
+  };
+  const renderOpts = () => {
+    const rec = recommend();
+    $("#s2-say").innerHTML = rec
+      ? `NVDA มี 3 ทางเลือก คุณตั้งเงินไว้ <strong>${usd(state.cash)}</strong> ${state.stance.NVDA === "yes" ? `และยอมให้ต้องซื้อหุ้นได้ราว <strong>${state.risk} ใน 10</strong> ครั้ง` : `และ<strong>ไม่อยากถือ NVDA</strong> ผมจึงเลือกเฉพาะทางที่โอกาสต้องซื้อหุ้นต่ำ`} ผมแนะนำ <strong>ทาง${OPTS[rec].lvl}</strong>`
+      : `เงินที่ตั้งไว้ ${usd(state.cash)} ยังไม่พอสำหรับ NVDA ทุกทาง ต้องกันไว้อย่างน้อย ${usd(OPTS.safe.cost)}`;
+    $("#opts").innerHTML = Object.entries(OPTS).map(([k, o]) => { const short = o.cost > state.cash; o.tag = k === rec ? "แนะนำ" : ""; return `
+    <button class="opt ${o.tag ? "recommended" : ""}" data-pick="${k}" ${short ? "disabled" : ""}>
+      <span class="lvl">${o.lvl}${o.tag ? `<span class="tag">${o.tag}</span>` : ""}${short ? `<span class="tag short">เงินไม่พอ</span>` : ""}</span>
+      <span class="amt money pos">${usd(o.credit)}</span>
+      <span class="desc">ยอมซื้อ NVDA ที่ $${o.strike} (ถูกกว่าตอนนี้ ${o.below.toFixed(1)}%) · รอ ${o.days} วัน</span>
+      <span class="per">${o.pct.toFixed(2)}% ของเงินที่กันไว้</span>
+      <span class="row">
+        <span class="chance ${o.warn ? "warn" : ""}">${o.warn ? icon("alert") : ""}โอกาสต้องซื้อหุ้น ${o.assign}%</span>
+        <span class="muted">กันเงินไว้ ${usd(o.cost)}</span>
+      </span>
+    </button>`; }).join("");
+  };
+  document.addEventListener("click", e => { const b = e.target.closest("[data-pick]"); if (b && !b.disabled) { state.pick = b.dataset.pick; resetThread(); go("s3"); } });
+
+  // ---------- step 3: five questions ----------
+  const pick = () => OPTS[state.pick];
+  const renderQ5 = () => {
+    const o = pick();
+    $("#s3-title").textContent = `NVDA ทาง${o.lvl}: รับ ${usd(o.credit)} ถ้ายอมซื้อหุ้นที่ $${o.strike}`;
+    $("#s3-lead").textContent = `สัญญาหมดอายุ${o.exp} (อีก ${o.days} วัน) · ราคา NVDA ตอนนี้ $${SPOT}`;
+    $("#q-get").innerHTML = `<span class="money pos">${usd(o.credit)} ทันที</span>เงินเข้าบัญชีวันนี้ และเป็นของคุณไม่ว่าจะเกิดอะไรขึ้น คิดเป็น ${o.pct.toFixed(2)}% ของเงินที่กันไว้ ใน ${o.days} วัน`;
+    $("#q-trade").innerHTML = `คุณสัญญาว่า ถ้า${o.exp} NVDA ปิด<strong>ต่ำกว่า $${o.strike}</strong> คุณจะซื้อ NVDA 100 หุ้นที่ $${o.strike} รวม <strong>${usd(o.cost)}</strong> Webull จะกันเงินก้อนนี้ไว้จนสัญญาจบ`;
+    $("#q-cases").innerHTML = `
+      <div><span class="pct pos">${o.keep}%</span><span>NVDA ปิดสูงกว่า $${o.strike} → ไม่ต้องซื้อหุ้น เก็บ ${usd(o.credit)} ครบ เงินที่กันไว้คืนมา</span></div>
+      <div><span class="pct warn">${o.mid}%</span><span>ปิดระหว่าง $${o.be.toFixed(2)} ถึง $${o.strike} → ได้หุ้น 100 หุ้น แต่ยังไม่ขาดทุน เพราะเงินที่ได้มาช่วยลดต้นทุนเหลือ $${o.be.toFixed(2)} ต่อหุ้น</span></div>
+      <div><span class="pct neg">${o.loss}%</span><span>ปิดต่ำกว่า $${o.be.toFixed(2)} → ได้หุ้นในราคาที่สูงกว่าตลาด ขาดทุนบนกระดาษ จนกว่าราคาจะกลับขึ้นมา</span></div>
+      <div class="dim" style="grid-template-columns:1fr;font-size:14px">ตัวเลขโอกาสมาจากสูตรคำนวณ ใช้ความผันผวนของราคาเป็นฐาน ไม่ใช่คำทำนาย</div>`;
+    $("#q-why").innerHTML = `ช่วงนี้คนยอมจ่ายค่าประกันราคาหุ้นแพงกว่าปกติ ราคา option สะท้อนการแกว่ง <strong>48% ต่อปี</strong> ขณะที่ 30 วันที่ผ่านมา NVDA แกว่งจริงแค่ <strong>36%</strong> คนขายจึงได้ราคาดี<br><span class="dim" style="font-size:15px">และไม่มีวันประกาศงบของ NVDA ก่อนวันหมดอายุ (ข้อมูลตัวอย่าง)</span>`;
+    const drop = 0.30, px = SPOT * (1 - drop), paper = (px - o.strike) * 100 + o.credit;
+    $("#q-worst").innerHTML = `<span class="money neg">${signed(paper)}</span>ถ้า NVDA ร่วง 30% เหลือ $${px.toFixed(2)} คุณต้องซื้อ 100 หุ้นที่ $${o.strike} หุ้นที่ได้มามีมูลค่า ${usd(px * 100)} ขาดทุนบนกระดาษประมาณ ${usd(-paper)} ${state.stance.NVDA === "yes" ? "แต่ได้ NVDA ที่คุณอยากถืออยู่แล้วในราคาถูกกว่าวันนี้" : ""}<br><span class="dim" style="font-size:15px">ในทางทฤษฎี ถ้าหุ้นเหลือ $0 จะเสียได้มากสุด ${usd(o.cost - o.credit)}</span>`;
+    $("#pill10").textContent = `ลง 10% วัน${o.exp}`;
+    shown = null; renderBand(); updateWhatIf();
+  };
+
+  // ---------- what-if slider ----------
+  const MIN = -40, MAX = 25;
+  const toPos = px => ((px / SPOT - 1) * 100 - MIN) / (MAX - MIN) * 100;
+  const renderBand = () => {
+    const o = pick();
+    const be = Math.max(0, Math.min(100, toPos(o.be))), k = Math.max(0, Math.min(100, toPos(o.strike)));
+    $$(".slider .tick, .slider .tick-label").forEach(x => x.remove());
+    $(".slider").insertAdjacentHTML("beforeend", `<span class="tick" style="left:${k}%"></span><span class="tick-label" style="left:${k}%">ต่ำกว่า $${o.strike} ต้องซื้อหุ้น</span>`);
+    $("#band-labels").innerHTML = `<span style="left:0">ลง 40%</span><span style="left:${toPos(SPOT)}%">เท่าวันนี้</span><span style="left:100%">ขึ้น 25%</span>`;
+    $("#band").innerHTML = `<span style="width:${be}%;background:var(--red-soft);box-shadow:inset 0 0 0 1px #6b2c38"></span><span style="width:${k - be}%;background:var(--amber-soft);box-shadow:inset 0 0 0 1px #6a5229"></span><span style="flex:1;background:var(--green-soft);box-shadow:inset 0 0 0 1px #1f6b55"></span>`;
+  };
+  const wf = $("#wf");
+  let shown = null, raf;
+  const tween = (el, to) => {
+    cancelAnimationFrame(raf);
+    if (shown === null || matchMedia("(prefers-reduced-motion: reduce)").matches) { el.textContent = signed(to); shown = to; return; }
+    const from = shown, t0 = performance.now(), dur = 380;
+    const step = now => {
+      const k = Math.min(1, (now - t0) / dur), e = k === 1 ? 1 : 1 - Math.pow(2, -10 * k);
+      shown = from + (to - from) * e; el.textContent = signed(Math.round(shown));
+      if (k < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+  };
+  const updateWhatIf = () => {
+    const o = pick(); const chg = +wf.value; const px = SPOT * (1 + chg / 100);
+    $("#wf-price").textContent = usd(px, 2);
+    $("#wf-chg").textContent = chg === 0 ? "(เท่าวันนี้)" : `(${chg > 0 ? "ขึ้น" : "ลง"} ${Math.abs(chg)}%)`;
+    const m = $("#wf-money"), t = $("#wf-text");
+    if (px >= o.strike) {
+      tween(m, o.credit); m.className = "money pos";
+      t.innerHTML = `ราคาสูงกว่า $${o.strike} <strong style="color:var(--text)">ไม่ต้องซื้อหุ้น</strong> เก็บเงิน ${usd(o.credit)} ครบ และเงิน ${usd(o.cost)} ที่กันไว้กลับมาใช้ได้`;
+    } else {
+      const paper = (px - o.strike) * 100 + o.credit;
+      tween(m, paper); m.className = "money " + (paper >= 0 ? "warn" : "neg");
+      t.innerHTML = `ราคาต่ำกว่า $${o.strike} <strong style="color:var(--text)">ต้องซื้อ NVDA 100 หุ้น</strong> จ่าย ${usd(o.cost)} ได้หุ้นมูลค่า ${usd(px * 100)} ` +
+        (paper >= 0 ? `รวมเงินที่ได้มาแล้ว ยัง${paper === 0 ? "เท่าทุน" : "กำไรบนกระดาษ"}` : `รวมเงินที่ได้มาแล้ว ขาดทุนบนกระดาษ จนกว่าราคาจะกลับขึ้นมา`);
+    }
+  };
+  wf.addEventListener("input", updateWhatIf);
+  $$("[data-wf]").forEach(b => b.addEventListener("click", () => { wf.value = b.dataset.wf; updateWhatIf(); }));
+
+  // ---------- ask the agent (canned sample answers) ----------
+  const ASK = [
+    ["ถ้าได้หุ้นแล้ว ทำอะไรต่อ?", o => `ถ้าได้ NVDA 100 หุ้น ต้นทุนจริงของคุณคือ $${o.be.toFixed(2)} ต่อหุ้น (เพราะได้เงิน ${usd(o.credit)} มาแล้ว) คุณถือไว้เฉยๆ ได้ หรือจะ<strong>ขาย Call</strong> เพื่อรับเงินเพิ่มระหว่างรอ ซึ่งผมจะอธิบายเป็นขั้นตอนให้ตอนนั้นครับ`],
+    ["ทำไมไม่เลือกตัวที่ได้เงินมากกว่า?", o => OPTS.high.cost > state.cash && o !== OPTS.high
+      ? `ทาง “ได้เงินมากต่อวัน” ต้องกันเงินไว้ ${usd(OPTS.high.cost)} มากกว่าเงินที่คุณตั้งไว้ (${usd(state.cash)}) จึงเลือกไม่ได้ และยังมีโอกาสต้องซื้อหุ้นถึง 30%`
+      : state.stance.NVDA !== "yes" && o !== OPTS.high
+      ? `ทาง “ได้เงินมากต่อวัน” มีโอกาสต้องซื้อหุ้น 30% ซึ่งไม่เหมาะ เพราะคุณบอกว่าไม่อยากถือ NVDA`
+      : o === OPTS.high
+      ? `ทางนี้ได้เงินต่อวันมากที่สุดอยู่แล้ว แต่โอกาสต้องซื้อหุ้น 30% หมายความว่าราว 3 ใน 10 ครั้งคุณจะได้หุ้นจริง ${state.risk < 3 ? `ซึ่งมากกว่าที่คุณตั้งไว้ (${state.risk} ใน 10)` : "ตรงกับที่คุณตั้งไว้พอดี"}`
+      : `ทาง “ได้เงินมากต่อวัน” ได้ $285 ใน 9 วัน แต่โอกาสต้องซื้อหุ้น 30% หรือราว 3 ใน 10 ครั้ง ${state.risk < 3 ? `ซึ่งมากกว่าที่คุณตั้งไว้ (${state.risk} ใน 10)` : "ถ้ารับได้ ก็เลือกทางนั้นได้"} ทางที่ดูอยู่ได้น้อยกว่า แต่ต้องซื้อหุ้นน้อยครั้งกว่า`],
+    ["ถ้าหุ้นลงก่อนวันหมดอายุล่ะ?", o => `ส่วนใหญ่การต้องซื้อหุ้นจะตัดสินกันที่ราคาปิด${o.exp} แต่ถ้า NVDA ลงไปต่ำกว่า $${o.strike} มากๆ ก็<strong>อาจถูกให้ซื้อหุ้นก่อนวันหมดอายุได้</strong> (ใช้เงินก้อนเดิมที่กันไว้) ระหว่างทางราคา option จะแพงขึ้น ถ้าอยากเลิกสัญญาก่อน ต้อง<strong>ซื้อคืน</strong>ในราคาที่แพงกว่า $${o.prem.toFixed(2)} ที่ขายไป จึงขาดทุนส่วนต่าง แต่ถ้ารอถึงวันหมดอายุแล้วราคากลับขึ้นมาเหนือ $${o.strike} ก็ยังเก็บ ${usd(o.credit)} ครบ`],
+    ["เปลี่ยนใจกลางทางได้ไหม?", o => `ได้ครับ คุณ<strong>ซื้อสัญญาคืน</strong>ได้ทุกวันที่ตลาดเปิด ถ้าราคา option ตอนนั้นต่ำกว่า $${o.prem.toFixed(2)} คุณจะเหลือกำไรบางส่วน ถ้าสูงกว่า จะขาดทุนส่วนต่าง`],
+  ];
+  const resetThread = () => { $("#thread").innerHTML = ""; };
+  $("#ask-chips").innerHTML = ASK.map((a, i) => `<button class="pill" data-ask="${i}">${a[0]}</button>`).join("");
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-ask]"); if (!b) return;
+    const [q, a] = ASK[+b.dataset.ask];
+    $("#thread").insertAdjacentHTML("beforeend", `<div class="q">${q}</div><div class="a">${a(pick())}<div class="dim" style="font-size:13px;margin-top:6px">คำตอบตัวอย่างใน prototype</div></div>`);
+  });
+
+  // ---------- step 4 checklist ----------
+  const renderChecks = () => {
+    const o = pick();
+    const items = [
+      [`ถ้า${o.exp} NVDA ต่ำกว่า $${o.strike} ฉันต้องซื้อ 100 หุ้น จ่าย ${usd(o.cost)}`, `ฉันเข้าใจว่านี่ไม่ใช่แค่รับเงิน แต่เป็นสัญญาว่าจะซื้อหุ้น`],
+      [`ฉันมีเงินสด ${usd(o.cost)} ในบัญชี Webull`, `Webull จะกันเงินนี้ไว้ ใช้ทำอย่างอื่นไม่ได้จนถึง${o.exp} · คุณตั้งไว้ ${usd(state.cash)}`],
+      [state.stance.NVDA === "yes" ? `ถ้าได้หุ้น ฉันโอเคที่จะถือ NVDA` : `ถ้าได้หุ้น ฉันรู้ว่าจะซื้อสัญญาคืนหรือขายหุ้นออก`, state.stance.NVDA === "yes" ? `คุณตั้งไว้ว่าอยากถือ NVDA` : `คุณตั้งไว้ว่าไม่อยากถือ NVDA`],
+    ];
+    const enough = state.cash >= o.cost;
+    $("#checks").innerHTML = items.map(([t, d], i) => `
+      <button class="check" role="checkbox" aria-checked="false" data-check="${i}" ${i === 1 && !enough ? "disabled" : ""}>
+        <span class="box">${icon("check")}</span>
+        <span><span class="t">${t}</span><span class="d" style="display:block">${d}${i === 1 && !enough ? ` <span class="neg">· เงินไม่พอ</span>` : ""}</span></span>
+      </button>`).join("");
+    $("#ready").disabled = true;
+  };
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-check]"); if (!b || b.disabled) return;
+    b.setAttribute("aria-checked", b.getAttribute("aria-checked") !== "true");
+    $("#ready").disabled = $$("[data-check]").some(x => x.getAttribute("aria-checked") !== "true");
+  });
+
+  // ---------- step 5 Webull field map ----------
+  const renderFieldmap = () => {
+    const o = pick();
+    const rows = [
+      ["หุ้น", "NVDA"],
+      ["ประเภท", "Put", "สัญญาที่ “ยอมซื้อหุ้น”"],
+      ["การกระทำ", "Sell to Open (ขายเปิด)", "คุณเป็นคนขายและรับเงิน"],
+      ["วันหมดอายุ", `${o.expIso}`, o.exp],
+      ["ราคาที่ยอมซื้อ (Strike)", `$${o.strike}`],
+      ["จำนวน", "1 สัญญา", "= 100 หุ้น"],
+      ["ประเภทคำสั่ง", "Limit", "กำหนดราคาเอง ไม่ใช้ Market"],
+      ["ราคา", `$${o.prem.toFixed(2)} หรือสูงกว่า`, `ได้เงิน ${usd(o.credit)} ต่อสัญญา`],
+      ["อายุคำสั่ง", "Day", "ถ้าไม่มีคนซื้อในวันนั้น คำสั่งจะยกเลิกเอง"],
+    ];
+    $("#fieldmap").innerHTML = rows.map(([k, v, n]) => `<tr><td>${k}</td><td>${v}${n ? `<small>${n}</small>` : ""}</td></tr>`).join("");
+  };
+
+  // ---------- market clock in Thai time ----------
+  const NY = "America/New_York", TH = "Asia/Bangkok";
+  const parts = (d, tz) => Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d).map(p => [p.type, p.value]));
+  const nyOffset = ms => { const p = parts(new Date(ms), NY); return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute) - Math.floor(ms / 60000) * 60000; };
+  const nyAt = (p, add, h, m) => { const wall = Date.UTC(+p.year, +p.month - 1, +p.day + add, h, m); return wall - nyOffset(wall - nyOffset(wall)); };
+  const th = ms => new Intl.DateTimeFormat("en-GB", { timeZone: TH, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
+  const left = (ms, now) => { const t = Math.max(1, Math.ceil((ms - now) / 60000)); const h = Math.floor(t / 60), m = t % 60; return h ? `${h} ชม.${m ? ` ${m} นาที` : ""}` : `${m} นาที`; };
+  const DAYS = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const tick = () => {
+    const now = Date.now(), p = parts(new Date(now), NY), wd = DAYS[p.weekday], min = +p.hour * 60 + +p.minute;
+    let open = false, text;
+    if (wd === 0 || wd === 6) text = `ตลาดหุ้นอเมริกาปิดวันหยุดสุดสัปดาห์ · เปิดคืนวันจันทร์ <b>${th(nyAt(p, wd === 6 ? 2 : 1, 9, 30))} น.</b>`;
+    else if (min >= 570 && min < 960) { open = true; const c = nyAt(p, 0, 16, 0); text = `ตลาดหุ้นอเมริกาเปิดอยู่ · ปิดอีก ${left(c, now)} <b>(${th(c)} น.)</b>`; }
+    else { const add = min < 570 ? 0 : wd === 5 ? 3 : 1; const o = nyAt(p, add, 9, 30); text = `ตลาดหุ้นอเมริกายังไม่เปิด · เปิดอีก ${left(o, now)} <b>(${th(o)} น. เวลาไทย)</b>`; }
+    $("#clock").innerHTML = `<span class="dot ${open ? "open" : ""}"></span><span>${text}</span>`;
+  };
+  tick(); setInterval(tick, 60000);
+
+  go("ob1");
+})();
+</script>
+</body>
+</html>

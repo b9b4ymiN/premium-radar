@@ -12,11 +12,22 @@ Tauri 2 desktop app — Rust core (Webull TH REST + MQTT streaming, Black-Schole
 
 ## Users
 
-THP himself plus friends and family (confirmed 2026-11-22) — Thai-speaking retail investors who sell options premium (CSP / Covered Call) on US stocks through Webull Thailand. They are not professional analysts: every financial figure on screen must be explainable in plain Thai, in-app, without external jargon.
+Updated 2026-11-25 (supersedes the 2026-11-22 entry):
+
+- **Primary user: THP's wife.** She knows only what an option is. She does not know option terms (delta, IV, OI, assign), OI-trader thinking, or how to read a chain. She must be able to decide on her own from what the app shows.
+- **Secondary user: THP** and people who already understand options. They use the detailed mode.
+- Both are Thai-speaking retail investors selling option premium (CSP / Covered Call) on US stocks through Webull Thailand.
 
 ## Product Purpose
 
-A desktop radar that continuously scans US option chains, computes premium-selling economics (yield, annualized return, breakeven, cushion, POP, assignment probability, IV/greeks), grades every contract A/B/C with Thai reasons, and streams live prices — a faithful port of the Tkinter original `Short_Option_Radar_PY.py` (3,507 lines, window title "PREMIUM RADAR - CSP / Covered Call"). Success = the user can open one ticker and, within seconds, see which contract is worth selling and understand why, in Thai, including asking the built-in AI copilot follow-up questions grounded in the live screener numbers.
+North star (THP, 2026-11-25, verbatim): "แอปที่มี AI agent เป็นผู้ช่วยลงทุน option ภาษาไทย ใช้วิธีคิดแบบ OI trader หาโอกาสขาย premium ที่แม่นยำ อธิบายจนคนที่รู้แค่ว่า option คืออะไรตัดสินใจเองได้ อนาคตอาจให้ agent ส่งคำสั่งซื้อขายให้ได้ด้วย โดยเชื่อมกับ Webull ผ่าน MCP และ Skills ของทางการ" Full detail and workstreams: brain `decisions/decision-premium-radar-north-star`.
+
+The engine is still the scanner ported from the Tkinter original `Short_Option_Radar_PY.py`: it scans US option chains, computes premium-selling economics (yield, annualized return, breakeven, cushion, POP, assignment probability, IV/greeks), grades every contract A/B/C with Thai reasons, and streams live prices. On top of it sit OI signals measured from real Webull data (Volume÷OI, daily ΔOI from our own recorder, aggressor side from ticks, IV-implied range, IV vs realized volatility). Each signal must be proven in Option Lab before it affects grades. The app also has an AI agent that proposes opportunities first, without waiting to be asked.
+
+Success = in easy mode, the primary user can answer these 3 questions from the screen alone, without knowing option terms (`design/ux-review-2026-11-25/UX-REVIEW.md` §8):
+1. Which NVDA contract is safest for $18,000?
+2. What is the worst case if she sells it?
+3. What happens to the money if NVDA drops 10% on Friday?
 
 ## Positioning
 
@@ -43,6 +54,13 @@ Confirmed for v1:
 
 Explicit non-goals v1: order placement, backtesting, portfolio tracking, multi-ticker simultaneous streaming, mobile.
 
+Direction update 2026-11-25:
+- **Two modes.** Easy mode is the default. It shows one question per screen, the 5-question card (ได้เงินเท่าไร / แลกกับอะไร / โอกาสแค่ไหน / ทำไมช่วงนี้น่าทำ / แย่สุดคืออะไร) with no option jargon in the main text, and the agent in the centre. Detailed mode is the current terminal. Change request: `design/CR-001-easy-mode.md`.
+- **Assign stance per stock.** "อยากถือ" stocks such as NVDA use the framing "get paid to wait for a lower price". "ไม่อยากถือ" stocks such as VLO steer away from assignment and explain what to do if it happens anyway.
+- **Recorder server.** A Docker crate in this repo shares `radar-core`. The app gets a setting to choose `local` or `api` as the recorder source.
+- **Orders move from non-goal to future goal.** They are gated twice. First, a preview spike must prove that SELL_TO_OPEN works on the Trade API. Second, the user confirms every order. Until both gates pass, the app places no orders.
+- Portfolio tracking narrows to the after-sale journey for contracts already sold: current status, what to do if the stock falls, and what happens after assignment.
+
 Hard constraints: APP_KEY/APP_SECRET and LLM keys live only in the Rust process (never in frontend code, logs, or chat output); no fabricated data when a feed is silent — degrade honestly with the source badge.
 
 ## Brand Commitments
@@ -51,6 +69,7 @@ Hard constraints: APP_KEY/APP_SECRET and LLM keys live only in the Rust process 
 - UI language: Thai (plain, non-analyst friendly), technical terms in English.
 - Visual + structural baseline pinned by THP 2026-11-22: **`design/premium_radar_modern_v2.html` + `design/DESIGN.md` are the only design source of truth** (V2 Modern Visual Refinement). Webull-inspired professional trading terminal: charcoal neutral-dark surfaces (#0b0d11 canvas), flat 1px dividers (no glossy bezels / gradients / heavy shadows), electric blue #4b8cf7 for selection-focus only, green #24c99a / red #f4788c / amber #f0bd70 for financial semantics, Inter + tabular numerals, locked 4-column shell (icon rail 50px / left panel 225px / main / right panel 320px) with structure freeze per DESIGN.md §1.2 and §4 — layout or anatomy changes require an explicit change request.
 - Design work is done through the impeccable skill; financial model contracts are corrected independently of the frozen UI (DESIGN.md §8).
+- The frozen 4-column shell above becomes the **detailed mode**. Easy mode has its own shell under CR-001 (approved 2026-11-25, DESIGN.md §4.7) and shares the same tokens and data-source badges.
 
 ## Evidence on Hand
 
@@ -66,8 +85,9 @@ Hard constraints: APP_KEY/APP_SECRET and LLM keys live only in the Rust process 
 1. Every number on screen is auditable — deterministic scoring the user can re-derive, with the AI only explaining, never inventing, values.
 2. Honest data freshness — always show where a price came from (สด/API/ราคาปิด); silence is displayed as silence.
 3. Thai plain language is the product — explanations are written for a non-analyst reader, not shortened translations.
-4. One decision per screen — the app answers "which contract should I sell, and why" for one ticker before anything else.
-5. Keys and money stay safe — credentials never leave the Rust process; the app never places orders or touches accounts.
+4. One decision per screen. The app answers "which contract should I sell, and why" for one ticker before anything else. In easy mode this is a hard rule.
+5. Keys and money stay safe. Credentials never leave the Rust process. The app places no orders until the two gates in "Direction update 2026-11-25" have passed, and even then every order needs the user's confirmation.
+6. Risk is shown in money. "แย่สุดคืออะไร" is always a dollar amount tied to a scenario that is easy to understand, never only collateral or breakeven.
 
 ## Accessibility & Inclusion
 
