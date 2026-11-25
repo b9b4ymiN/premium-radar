@@ -32,17 +32,33 @@ interface Props {
   onGo: (screen: "s1" | "ob1") => void;
 }
 
+/** Beginner wording over the pro clock: same DST-correct times, but no
+ *  pre/after-hours session talk, and every time is labelled Thai time. */
+function easyClockText(now: Date): string {
+  const t = marketClockText(now).replace(/(\d{2}:\d{2}) น\./g, "$1 น. เวลาไทย");
+  const rest = t.slice(t.indexOf("·") + 1).trim();
+  switch (usSession(now)) {
+    case "regular": return `ตลาดหุ้นอเมริกาเปิดอยู่ · ${rest}`;
+    case "after": return `ตลาดหุ้นอเมริกาปิดแล้ว · ${rest.replace(/^ตลาดปกติ/, "")}`;
+    case "pre": return `ตลาดหุ้นอเมริกายังไม่เปิด · ${rest.replace(/^ตลาดปกติ/, "")}`;
+    default:
+      return t.startsWith("ตลาดปิดวันหยุด")
+        ? `ตลาดหุ้นอเมริกาปิดวันหยุดสุดสัปดาห์ · ${rest.replace("เปิดวันจันทร์", "เปิดคืนวันจันทร์")}`
+        : `ตลาดหุ้นอเมริกายังไม่เปิด · ${rest}`;
+  }
+}
+
 export function EasyHome(p: Props) {
-  // the pro mode's DST-correct clock, reused verbatim; the dot is lit only
-  // while the regular New York session is running
+  // DST-correct times from the pro clock, worded for a beginner; the dot is
+  // lit only while the regular New York session is running
   const [clock, setClock] = useState(() => {
     const now = new Date();
-    return { open: usSession(now) === "regular", text: marketClockText(now) };
+    return { open: usSession(now) === "regular", text: easyClockText(now) };
   });
   useEffect(() => {
     const t = window.setInterval(() => {
       const now = new Date();
-      setClock({ open: usSession(now) === "regular", text: marketClockText(now) });
+      setClock({ open: usSession(now) === "regular", text: easyClockText(now) });
     }, 60_000);
     return () => window.clearInterval(t);
   }, []);
@@ -75,7 +91,10 @@ export function EasyHome(p: Props) {
       <div className="ez-clock">
         <span className={`ez-dot ${clock.open ? "open" : ""}`} />
         {/* the Thai time portion ("HH:MM น.") renders bold, as in the prototype */}
-        <span dangerouslySetInnerHTML={{ __html: clock.text.replace(/(\d{2}:\d{2} น\.)/g, "<b>$1</b>") }} />
+        <span>
+          {clock.text.split(/(\d{2}:\d{2} น\. เวลาไทย)/).map((part, i) =>
+            i % 2 === 1 ? <b key={i}>{part}</b> : part)}
+        </span>
       </div>
 
       <div className="ez-agent ez-gap-l">
