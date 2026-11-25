@@ -1,11 +1,16 @@
 //! recorder-server — Lab recorder แบบ headless สำหรับรันใน Docker
 //!
-//! คำสั่ง: `run` (default, scheduler loop) · `once --layer 1|2
+//! คำสั่ง: `run` (default, scheduler loop + HTTP API) · `once --layer 1|2
 //! [--symbols A,B] [--refresh]` · `plan` (dry run ไม่มี network)
 //!
 //! ตารางเป็นเวลา New York (DST-correct), สุดสัปดาห์ไม่เก็บ, หนึ่ง job
 //! ต่อครั้ง (job ล้นเวลา = slot ถัดไปรันทันทีเมื่อ job เดิมจบ ไม่ซ้อนกัน)
+//! slot ที่รันแล้วถูกจดไว้ใน status.json — restart ไม่รันซ้ำของวันเดิม
+//!
+//! `run` เปิด read-only HTTP API (bearer token — ดู `api::router`) คู่กับ
+//! scheduler ใน process เดียวกัน และ spawn task universe refresh รายสัปดาห์
 
+mod api;
 mod budget;
 mod config;
 mod job;
@@ -113,8 +118,9 @@ fn symbols_for(kind: JobKind, cfg: &Config) -> (Vec<String>, Option<String>) {
     }
 }
 
-/// อัปเดต `<data_dir>/status.json` หลังจบ job
-fn update_status(cfg: &Config, sum: &JobSummary, scheduled_for_ny: &str) {
+/// อัปเดต `<data_dir>/status.json` หลังจบ job — `slot_id` เป็น Some เมื่อ
+/// มาจาก scheduler (จดว่า slot นี้รันแล้ว กันรันซ้ำหลัง restart)
+fn update_status(cfg: &Config, sum: &JobSummary, scheduled_for_ny: &str, slot_id: Option<&str>) {
     let path = cfg.status_path();
     let mut st: Status = status::load(&path);
     {
@@ -145,6 +151,9 @@ fn update_status(cfg: &Config, sum: &JobSummary, scheduled_for_ny: &str) {
     }
     st.last_error = sum.error.clone();
     st.updated_at = Some(Utc::now());
+    if let Some(id) = slot_id {
+        st.mark_slot_done(id, Utc::now());
+    }
     if let Err(e) = status::save(&path, &st) {
         logerr(format!("เขียน status.json ไม่ได้: {e}"));
     }
@@ -173,6 +182,17 @@ fn run_plan() {
         None => "(ยังไม่มี — run/once ต้องมี)".to_string(),
     };
     println!("token source: {token_where} (ค่าจริงไม่ถูกพิมพ์)");
+
+    // API — แสดงเฉพาะ "มี/ไม่มี token" กับ bind ไม่พิมพ์ค่าจริง
+    let bind = api::bind_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|e| format!("(ผิด: {e})"));
+    let api_token_where = match api::api_token_source(&cfg) {
+        Some("env") => "ตั้งแล้ว (env RECORDER_API_TOKEN)".to_string(),
+        Some(_) => format!("ตั้งแล้ว (ไฟล์ {})", cfg.api_token_file().display()),
+        None => "(ยังไม่มี — run จะปฏิเสธการเปิด API)".to_string(),
+    };
+    println!("api: bind={bind} · api_token={api_token_where} (ค่าจริงไม่ถูกพิมพ์)");
 
     let uni = universe::load_universe(&cfg.universe_path());
     if let Some(w) = &uni.warning {
@@ -247,7 +267,7 @@ fn run_once(cfg: &Config, layer: u8, symbols: Option<Vec<String>>, refresh: bool
     };
     let sum = job::run_job(cfg, &secrets, req);
     logln(sum.summary_line());
-    update_status(cfg, &sum, "(manual once)");
+    update_status(cfg, &sum, "(manual once)", None);
     if let Some(e) = &sum.error {
         logerr(format!("once: {e}"));
         3
@@ -256,25 +276,14 @@ fn run_once(cfg: &Config, layer: u8, symbols: Option<Vec<String>>, refresh: bool
     }
 }
 
-/// `run` — scheduler loop: จอง slot → sleep → รัน job ถัดไปทีละอัน
-async fn run_forever(cfg: Config) {
-    logln(format!("recorder-server run — {}", cfg.summary()));
-    let secrets = match config::load_secrets(&cfg) {
-        Ok(s) => s,
-        Err(e) => {
-            logerr(format!(
-                "{e} — ตั้ง env ก่อนรัน (WEBULL_APP_KEY/WEBULL_APP_SECRET/token)"
-            ));
-            std::process::exit(2);
-        }
-    };
-    logln(format!(
-        "creds: {} · token from {}",
-        secrets.creds.masked(),
-        secrets.token_source
-    ));
-
-    let mut state = schedule::DayState::new(Utc::now().with_timezone(&New_York).date_naive());
+/// scheduler loop: จอง slot → sleep → รัน job ถัดไปทีละอัน — slot ที่รัน
+/// แล้วถูกจดใน status.json ด้วย (restart ไม่รันซ้ำ slot ค้างของวันเดิม)
+async fn scheduler_loop(cfg: Config, secrets: Secrets) {
+    // seed จาก status.json — มีเฉพาะ id ของวัน NY ปัจจุบันที่มีผล
+    let mut state = schedule::DayState::with_done(
+        Utc::now().with_timezone(&New_York).date_naive(),
+        status::load(&cfg.status_path()).completed_slot_ids(),
+    );
     loop {
         let now = Utc::now();
         let slot = state.next_due(now, &cfg);
@@ -295,13 +304,7 @@ async fn run_forever(cfg: Config) {
                 symbols.len()
             ));
             let wait = (slot.at_utc() - now).to_std().unwrap_or_default();
-            tokio::select! {
-                _ = tokio::time::sleep(wait) => {}
-                _ = tokio::signal::ctrl_c() => {
-                    logln("ctrl-c — หยุด scheduler");
-                    return;
-                }
-            }
+            tokio::time::sleep(wait).await;
         } else {
             logln(format!(
                 "overdue: {} slot {} [NY] — รันทันที (job ก่อนหน้าล้นเวลา ไม่ซ้อนกัน)",
@@ -328,16 +331,85 @@ async fn run_forever(cfg: Config) {
                     logerr(format!("job {}: {e}", sum.kind.label()));
                 }
                 logln(sum.summary_line());
-                update_status(&cfg, &sum, &scheduled_ny);
+                update_status(&cfg, &sum, &scheduled_ny, Some(&slot.key));
             }
             Err(e) => {
                 logerr(format!(
                     "job {} panic ใน worker: {e} — ไป slot ถัดไป",
                     slot.kind.label()
                 ));
+                // slot นี้ "พยายามรัน" แล้ว — จดไว้กันรันซ้ำหลัง restart
+                let mut st = status::load(&cfg.status_path());
+                st.mark_slot_done(&slot.key, Utc::now());
+                if let Err(e2) = status::save(&cfg.status_path(), &st) {
+                    logerr(format!("เขียน status.json ไม่ได้: {e2}"));
+                }
             }
         }
     }
+}
+
+/// `run` — เปิด API (bearer token) + scheduler + universe refresh ใน
+/// process เดียว แล้วรอจนกว่าจะ ctrl-c
+async fn run_forever(cfg: Config) {
+    logln(format!("recorder-server run — {}", cfg.summary()));
+    let secrets = match config::load_secrets(&cfg) {
+        Ok(s) => s,
+        Err(e) => {
+            logerr(format!(
+                "{e} — ตั้ง env ก่อนรัน (WEBULL_APP_KEY/WEBULL_APP_SECRET/token)"
+            ));
+            std::process::exit(2);
+        }
+    };
+    logln(format!(
+        "creds: {} · token from {}",
+        secrets.creds.masked(),
+        secrets.token_source
+    ));
+
+    // ไม่มี API token = ไม่เปิด API — ไม่เสิร์ฟ Lab data แบบไม่มี auth เด็ดขาด
+    let api_token = match api::resolve_api_token(&cfg) {
+        Some(t) => t,
+        None => {
+            logerr(format!(
+                "ไม่มี API token — ตั้ง RECORDER_API_TOKEN หรือวางไฟล์ {} แล้วรันใหม่ \
+                 (ปฏิเสธการเปิด API แบบไม่มี auth)",
+                cfg.api_token_file().display()
+            ));
+            std::process::exit(2);
+        }
+    };
+    let bind = match api::bind_addr() {
+        Ok(b) => b,
+        Err(e) => {
+            logerr(e);
+            std::process::exit(2);
+        }
+    };
+    let listener = match tokio::net::TcpListener::bind(bind).await {
+        Ok(l) => l,
+        Err(e) => {
+            logerr(format!("bind {bind} ไม่ได้: {e}"));
+            std::process::exit(2);
+        }
+    };
+    logln(format!(
+        "api: http://{bind} — GET /health (no auth) + GET /v1/* (bearer token)"
+    ));
+
+    tokio::spawn(universe::refresh_loop(cfg.clone()));
+    tokio::spawn(scheduler_loop(cfg.clone(), secrets));
+
+    if let Err(e) = axum::serve(listener, api::router(api::ApiState::new(&cfg, api_token)))
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await
+    {
+        logerr(format!("api server error: {e}"));
+    }
+    logln("ctrl-c — หยุด recorder-server");
 }
 
 fn main() {

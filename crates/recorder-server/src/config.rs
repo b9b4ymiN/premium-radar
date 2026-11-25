@@ -268,6 +268,11 @@ impl Config {
         self.data_dir.join("secrets").join("access_token")
     }
 
+    /// Path ของ API token file (`RECORDER_API_TOKEN` env ชนะไฟล์นี้)
+    pub fn api_token_file(&self) -> PathBuf {
+        self.data_dir.join("secrets").join("api_token")
+    }
+
     /// สรุปแบบ log ได้ (ไม่มี secret อยู่ดี)
     pub fn summary(&self) -> String {
         format!(

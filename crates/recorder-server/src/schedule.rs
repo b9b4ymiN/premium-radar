@@ -66,7 +66,7 @@ impl Slot {
 
 /// เวลา wall-clock NY ของ date+TimeOfDay — None เมื่อชน DST gap (เช่น 02:30
 /// ตอน spring forward) — slot นั้นถูกข้ามไปวันนั้น
-fn local_time(ny_date: NaiveDate, t: TimeOfDay) -> Option<DateTime<chrono_tz::Tz>> {
+pub(crate) fn local_time(ny_date: NaiveDate, t: TimeOfDay) -> Option<DateTime<chrono_tz::Tz>> {
     let ndt = ny_date.and_hms_opt(t.hour, t.minute, 0)?;
     match New_York.from_local_datetime(&ndt) {
         LocalResult::Single(dt) => Some(dt),
@@ -128,10 +128,13 @@ pub struct DayState {
 }
 
 impl DayState {
-    pub fn new(date: NaiveDate) -> Self {
+    /// สร้าง state — `done` เป็น slot id ที่บันทึกไว้ล่วงหน้า (restart)
+    /// ส่งลิสต์ว่างเมื่อเริ่มสด มีเฉพาะ id ของ "วันปัจจุบัน NY" ที่มีผล
+    /// ต่อ next_due อยู่ดี วันอื่นถูก rollover ล้างเมื่อวันเปลี่ยน
+    pub fn with_done(date: NaiveDate, done: impl IntoIterator<Item = String>) -> Self {
         Self {
             date,
-            done: HashSet::new(),
+            done: done.into_iter().collect(),
         }
     }
 
@@ -273,7 +276,7 @@ mod tests {
     fn day_state_runs_overdue_slots_in_order_and_each_once() {
         // server เริ่มสดตอน 13:00 NY — slot 10:00/12:00/12:45 ค้างทั้งหมด
         // policy: รัน slot ที่ค้างทีละอัน "ตามลำดับเวลา" (ไม่ stack, ไม่ข้าม)
-        let mut state = DayState::new(NaiveDate::from_ymd_opt(2026, 11, 24).unwrap());
+        let mut state = DayState::with_done(NaiveDate::from_ymd_opt(2026, 11, 24).unwrap(), []);
         let late = utc("2026-11-24T18:00:00Z"); // 13:00 NY
         let first = state.next_due(late, &cfg());
         assert_eq!(first.kind, JobKind::Layer2Core);
@@ -304,7 +307,7 @@ mod tests {
     fn day_state_rolls_over_at_midnight_ny() {
         // done ของวันจันทร์ต้องไม่กัน slot ของวันอังคาร
         let mon = NaiveDate::from_ymd_opt(2026, 11, 23).unwrap();
-        let mut state = DayState::new(mon);
+        let mut state = DayState::with_done(mon, []);
         let slot = slots_on(mon, &cfg()).remove(0);
         state.mark_done(&slot);
         let tue_morning = utc("2026-11-24T12:00:00Z"); // 07:00 NY อังคาร

@@ -11,6 +11,12 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+axum = "0.8"
+tower-http = { version = "0.6", features = ["compression-gzip"] }
+
+[dev-dependencies]
+# ใช้เฉพาะ `ServiceExt::oneshot` ใน router tests (tower เป็น transitive dep ของ axum อยู่แล้ว)
+tower = { version = "0.5", features = ["util"] }
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
