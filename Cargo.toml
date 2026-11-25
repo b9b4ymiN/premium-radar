@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/radar-core", "src-tauri"]
+members = ["crates/radar-core", "crates/recorder-server", "src-tauri"]
 
 # Profiles must live at the workspace root (cargo ignores them in members).
 # See the optimization guideline: https://tauri.app/concept/size/#cargo-configuration

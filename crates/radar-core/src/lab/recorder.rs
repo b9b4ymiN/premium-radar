@@ -17,12 +17,84 @@ use crate::lab::capture::{
 use crate::lab::quality::session_date_of;
 use crate::lab::storage::{LabStorage, WriteStats};
 use crate::lab::types::{CaptureEvent, DiscoveryCoverage};
-use crate::webull::discovery::{fetch_window, strike_band};
+use crate::webull::discovery::fetch_window;
 use crate::webull::quotes::OI_BATCH;
 use crate::webull::rest::{
-    FetchError, HttpFetch, PATH_OPTION_SNAPSHOT, PATH_STOCK_SNAPSHOT, WINDOWS, extract_list,
-    get_json,
+    FetchError, HttpFetch, PATH_OPTION_SNAPSHOT, PATH_STOCK_SNAPSHOT, STRIKE_BAND, WINDOWS,
+    extract_list, get_json,
 };
+
+/// ขอบเขตการเก็บหนึ่ง run — หน้าต่าง DTE ที่จะ discovery + ความกว้าง
+/// strike band รอบ spot ให้ caller แคบกว่าพฤติกรรมเดิมของ scanner ได้
+/// (`legacy()` = WINDOWS ครบทั้ง 7 หน้าต่าง + ±30% — ค่าที่ local recorder
+/// ใช้อยู่ พฤติกรรม/ผลลัพธ์ต้องไม่เปลี่ยน)
+#[derive(Debug, Clone)]
+pub struct CaptureScope {
+    /// หน้าต่าง (x, y) วันนับจาก session — ไล่ตามลำดับที่ให้
+    pub windows: Vec<(i64, i64)>,
+    /// ความกว้าง band รอบ spot (0.20 = ±20%)
+    pub strike_pct: f64,
+}
+
+impl Default for CaptureScope {
+    fn default() -> Self {
+        Self::legacy()
+    }
+}
+
+impl CaptureScope {
+    /// พฤติกรรมเดิมของ lab_recorder: หน้าต่าง `WINDOWS` ทั้งหมด + band ±30%
+    pub fn legacy() -> Self {
+        Self {
+            windows: WINDOWS.to_vec(),
+            strike_pct: STRIKE_BAND,
+        }
+    }
+
+    /// หน้าต่าง `WINDOWS` ที่ไม่เกิน `max_dte` วัน — คู่ (x, y) ใด y ถูกตัด
+    /// ลงเท่า cap และคู่ที่ x เกิน cap ถูกตัดทิ้ง
+    /// (60 ⇒ (0,7),(8,14),(15,30),(31,60) · 45 ⇒ …,(31,45))
+    pub fn clipped_windows(max_dte: i64) -> Vec<(i64, i64)> {
+        WINDOWS
+            .iter()
+            .filter(|&&(x, _)| x <= max_dte)
+            .map(|&(x, y)| (x, y.min(max_dte)))
+            .collect()
+    }
+
+    /// scope สำหรับ DTE 0..=max_dte + band ±`strike_pct`
+    pub fn dte_capped(max_dte: i64, strike_pct: f64) -> Self {
+        Self {
+            windows: Self::clipped_windows(max_dte),
+            strike_pct,
+        }
+    }
+
+    /// ขอบเขต strike รอบ spot — สูตร/รูปแบบ (`{:.2}`) เดียมกับ
+    /// `discovery::strike_band` แต่คุมความกว้างเอง; `legacy()` ให้ค่า
+    /// ตรงกันทุกตัวอักษร
+    pub fn strike_band(&self, spot: f64) -> (String, String) {
+        (
+            format!("{:.2}", spot * (1.0 - self.strike_pct)),
+            format!("{:.2}", spot * (1.0 + self.strike_pct)),
+        )
+    }
+}
+
+/// พารามิเตอร์การเก็บข้อมูลหนึ่ง run — ใช้ร่วมทุก underlying
+#[derive(Debug, Clone)]
+pub struct RecordOptions {
+    pub session: NaiveDate,
+    /// anchor แบบ post-close: [`Anchor::post_close`] ของ `session`
+    pub anchor: Anchor,
+    pub now: DateTime<Utc>,
+    /// true = เก็บซ้ำแม้ session นี้มีข้อมูลแล้ว (dedupe กันซ้ำอยู่ที่ storage)
+    pub refresh: bool,
+    /// ชื่อกติกาคัด contracts ("near-spot-v1")
+    pub selection_rule: &'static str,
+    /// ขอบเขตการเก็บ — default/`legacy()` คือพฤติกรรมเดิมทั้งหมด
+    pub scope: CaptureScope,
+}
 
 /// Session NY ที่ปิดล่าสุดจากเวลาปัจจุบัน — สุดสัปดาห์ถอยกลับไปศุกร์
 /// (ไม่งั้นราคาปิดวันศุกร์ วันหมดอายุสำคัญที่สุดของ options รายสัปดาห์
@@ -33,19 +105,6 @@ pub fn last_closed_session(now: DateTime<Utc>) -> NaiveDate {
         session -= Duration::days(1);
     }
     session
-}
-
-/// พารามิเตอร์การเก็บข้อมูลหนึ่ง run — ใช้ร่วมทุก underlying
-#[derive(Debug, Clone, Copy)]
-pub struct RecordOptions {
-    pub session: NaiveDate,
-    /// anchor แบบ post-close: [`Anchor::post_close`] ของ `session`
-    pub anchor: Anchor,
-    pub now: DateTime<Utc>,
-    /// true = เก็บซ้ำแม้ session นี้มีข้อมูลแล้ว (dedupe กันซ้ำอยู่ที่ storage)
-    pub refresh: bool,
-    /// ชื่อกติกาคัด contracts ("near-spot-v1")
-    pub selection_rule: &'static str,
 }
 
 /// ขั้นตอนที่ทำไม่สำเร็จจนต้องยกเลิก underlying นี้
@@ -182,10 +241,10 @@ pub fn record_underlying<F: HttpFetch>(
     };
     report.spot = Some(stock.clone());
 
-    // 2) discovery ทีละหน้าต่าง DTE (band ±30% เหมือน scanner)
-    let (gte, lte) = strike_band(stock.price);
+    // 2) discovery ทีละหน้าต่าง DTE ตาม scope ของ run (band ±scope.strike_pct)
+    let (gte, lte) = opts.scope.strike_band(stock.price);
     let mut windows: Vec<WindowCapture> = Vec::new();
-    for (x, y) in WINDOWS {
+    for &(x, y) in &opts.scope.windows {
         let a = opts.session + Duration::days(x);
         let b = opts.session + Duration::days(y);
         match fetch_window(f, symbol, a, b, Some(&gte), Some(&lte), 3, None) {
@@ -343,6 +402,7 @@ mod tests {
             now: received(),
             refresh,
             selection_rule: "near-spot-v1",
+            scope: CaptureScope::legacy(),
         }
     }
 
@@ -539,6 +599,83 @@ mod tests {
         let stats = report.write_stats.as_ref().unwrap();
         assert_eq!((stats.written, stats.duplicates), (1, 0));
         assert!(sessions_log(&storage, session).contains("near-spot-v1"));
+        let _ = std::fs::remove_dir_all(storage.root());
+    }
+
+    #[test]
+    fn capture_scope_legacy_matches_scanner_behaviour() {
+        let s = CaptureScope::legacy();
+        assert_eq!(s.windows, WINDOWS.to_vec());
+        assert_eq!(s.strike_pct, STRIKE_BAND);
+        // สูตรเดียวกับ discovery::strike_band ทุกตัวอักษร
+        assert_eq!(
+            s.strike_band(182.45),
+            crate::webull::discovery::strike_band(182.45)
+        );
+        assert_eq!(
+            s.strike_band(58.12),
+            crate::webull::discovery::strike_band(58.12)
+        );
+        assert_eq!(
+            CaptureScope::default().windows,
+            CaptureScope::legacy().windows
+        );
+    }
+
+    #[test]
+    fn capture_scope_clips_windows_to_dte_cap() {
+        assert_eq!(
+            CaptureScope::clipped_windows(60),
+            vec![(0, 7), (8, 14), (15, 30), (31, 60)]
+        );
+        assert_eq!(
+            CaptureScope::clipped_windows(45),
+            vec![(0, 7), (8, 14), (15, 30), (31, 45)]
+        );
+        assert_eq!(
+            CaptureScope::clipped_windows(30),
+            vec![(0, 7), (8, 14), (15, 30)]
+        );
+        assert_eq!(CaptureScope::clipped_windows(7), vec![(0, 7)]);
+        // cap 0 = เหลือ expiry วันนี้เท่านั้น; cap ติดลบ = ไม่มีหน้าต่างเลย
+        assert_eq!(CaptureScope::clipped_windows(0), vec![(0, 0)]);
+        assert!(CaptureScope::clipped_windows(-1).is_empty());
+    }
+
+    #[test]
+    fn capture_scope_strike_band_at_20_and_15_percent() {
+        let s20 = CaptureScope::dte_capped(60, 0.20);
+        assert_eq!(s20.windows.len(), 4);
+        assert_eq!(
+            s20.strike_band(100.0),
+            ("80.00".to_string(), "120.00".to_string())
+        );
+        let s15 = CaptureScope::dte_capped(45, 0.15);
+        assert_eq!(
+            s15.strike_band(200.0),
+            ("170.00".to_string(), "230.00".to_string())
+        );
+    }
+
+    #[test]
+    fn narrowed_scope_fetches_only_kept_windows() {
+        let storage = tmp_storage("narrow");
+        let session = friday_session();
+        let mut fake = happy_fake();
+        let narrow = RecordOptions {
+            scope: CaptureScope::dte_capped(7, 0.20),
+            ..opts(session, false)
+        };
+
+        let report = record_underlying(&mut fake, &storage, "NVDA", &narrow);
+
+        // เหลือหน้าต่างเดียว (0..7) — discovery ถูกเรียกแค่ครั้งเดียว
+        assert_eq!(fake.window_calls, 1);
+        assert_eq!(report.coverage.len(), 1);
+        assert_eq!(
+            report.coverage[0].expiry_range,
+            (session, session + Duration::days(7))
+        );
         let _ = std::fs::remove_dir_all(storage.root());
     }
 

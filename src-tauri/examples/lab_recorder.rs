@@ -19,7 +19,7 @@ use std::time::Instant;
 use chrono::Utc;
 use radar_core::lab::capture::Anchor;
 use radar_core::lab::recorder::{
-    RecordOptions, RecordOutcome, RecordStage, UnderlyingReport, finish_session,
+    CaptureScope, RecordOptions, RecordOutcome, RecordStage, UnderlyingReport, finish_session,
     last_closed_session, record_underlying,
 };
 use radar_core::lab::storage::LabStorage;
@@ -222,6 +222,8 @@ fn main() {
         now,
         refresh,
         selection_rule: "near-spot-v1",
+        // scope เดิมของ local recorder — WINDOWS ครบ 7 หน้าต่าง + band ±30%
+        scope: CaptureScope::legacy(),
     };
     let mut grand_written = 0usize;
     let mut grand_dupes = 0usize;
