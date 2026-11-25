@@ -1,0 +1,159 @@
+/** Step 3 — the five questions card, the what-if slider and the ask-agent
+ *  chips, ported from the prototype. Money figures come from the EasyIdea
+ *  contract; the "why now" sentence comes from `why_now.text_th`. Ask-agent
+ *  answers call the app's copilot command (`ask_copilot`) with the question
+ *  plus a short context string; the browser preview shows the prototype's
+ *  canned answers, labelled as sample. */
+
+import { useState } from "react";
+import type { EasyIdea, EasyIdeas, EasyProfile } from "../types/easy";
+import { EzIcon } from "./icons";
+import { WhatIf } from "./WhatIf";
+import { LEVEL_TH, expiryTh, signed, sourceLabel, usd } from "./util";
+import { easyHasTauri, easyInvoke } from "./invoke";
+import { sampleAnswer } from "./sample";
+
+const ASK_QUESTIONS = [
+  "ถ้าได้หุ้นแล้ว ทำอะไรต่อ?",
+  "ทำไมไม่เลือกตัวที่ได้เงินมากกว่า?",
+  "ถ้าหุ้นลงก่อนวันหมดอายุล่ะ?",
+];
+
+interface Props {
+  idea: EasyIdea;
+  ideas: EasyIdeas;
+  profile: EasyProfile;
+  browserPreview: boolean;
+  onBack: () => void;
+  onNext: () => void;
+}
+
+export function FiveQuestions(p: Props) {
+  const { idea: o, ideas: d, profile } = p;
+  const want = d.stance === "want";
+  const sample = p.browserPreview || d.source === "DEMO";
+
+  const [thread, setThread] = useState<Array<{ q: string; a: string; sample: boolean }>>([]);
+  const [busy, setBusy] = useState(false);
+
+  const ask = async (q: string) => {
+    if (busy) return;
+    if (!easyHasTauri) {
+      setThread(t => [...t, { q, a: sampleAnswer(q, o), sample: true }]);
+      return;
+    }
+    setBusy(true);
+    const context = `(${d.symbol}, ยอมซื้อหุ้นที่ $${o.strike}, หมดอายุ ${o.expiry}, ได้เงิน ${usd(o.credit)}, กันเงิน ${usd(o.cost)})`;
+    try {
+      const answer = await easyInvoke<string>("ask_copilot", {
+        messages: [{ role: "user", content: `${q} ${context}` }],
+      });
+      setThread(t => [...t, { q, a: answer, sample: false }]);
+    } catch (e) {
+      setThread(t => [...t, { q, a: `ถามผู้ช่วยไม่สำเร็จ — ${e instanceof Error ? e.message : String(e)}`, sample: false }]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dropPct = 0.30;
+  const dropPx = d.spot * (1 - dropPct);
+
+  return (
+    <section className="ez-screen">
+      <button className="ez-back" onClick={p.onBack}><EzIcon name="back" />ทางเลือกอื่น</button>
+      <h1>{d.symbol} ทาง{LEVEL_TH[o.level]}: รับ {usd(o.credit)} ถ้ายอมซื้อหุ้นที่ ${o.strike}</h1>
+      <p className="ez-lead">
+        สัญญาหมดอายุ{expiryTh(o.expiry)} (อีก {o.days} วัน) · ราคา {d.symbol} ตอนนี้ ${d.spot.toFixed(2)}
+        <span className="ez-src">{sourceLabel(d.source)}</span>
+        {sample && <span className="ez-src" style={{ color: "var(--amber)", borderColor: "#5a4724" }}>ข้อมูลตัวอย่าง</span>}
+      </p>
+
+      <div className="ez-panel ez-gap-l" style={{ paddingTop: 8 }}>
+        <div className="ez-q5">
+          <h2>ได้เงินเท่าไร</h2>
+          <div className="ez-ans">
+            <span className="ez-money ez-pos">{usd(o.credit)} ทันที</span>
+            เงินเข้าบัญชีวันนี้ และเป็นของคุณไม่ว่าจะเกิดอะไรขึ้น คิดเป็น {o.period_pct.toFixed(2)}% ของเงินที่กันไว้ ใน {o.days} วัน
+          </div>
+        </div>
+        <div className="ez-q5">
+          <h2>แลกกับอะไร</h2>
+          <div
+            className="ez-ans"
+            dangerouslySetInnerHTML={{
+              __html: `คุณสัญญาว่า ถ้า${expiryTh(o.expiry)} ${d.symbol} ปิด<strong>ต่ำกว่า $${o.strike}</strong> คุณจะซื้อ ${d.symbol} 100 หุ้นที่ $${o.strike} รวม <strong>${usd(o.cost)}</strong> Webull จะกันเงินก้อนนี้ไว้จนสัญญาจบ`,
+            }}
+          />
+        </div>
+        <div className="ez-q5">
+          <h2>โอกาสแค่ไหน</h2>
+          <div className="ez-ans">
+            <div className="ez-cases">
+              <div>
+                <span className="ez-pct ez-pos">{Math.round(o.cases.keep_pct)}%</span>
+                <span>{d.symbol} ปิดสูงกว่า ${o.strike} → ไม่ต้องซื้อหุ้น เก็บ {usd(o.credit)} ครบ เงินที่กันไว้คืนมา</span>
+              </div>
+              <div>
+                <span className="ez-pct ez-warn">{Math.round(o.cases.between_pct)}%</span>
+                <span>ปิดระหว่าง ${o.breakeven.toFixed(2)} ถึง ${o.strike} → ได้หุ้น 100 หุ้น แต่ยังไม่ขาดทุน เพราะเงินที่ได้มาช่วยลดต้นทุนเหลือ ${o.breakeven.toFixed(2)} ต่อหุ้น</span>
+              </div>
+              <div>
+                <span className="ez-pct ez-neg">{Math.round(o.cases.loss_pct)}%</span>
+                <span>ปิดต่ำกว่า ${o.breakeven.toFixed(2)} → ได้หุ้นในราคาที่สูงกว่าตลาด ขาดทุนบนกระดาษ จนกว่าราคาจะกลับขึ้นมา</span>
+              </div>
+              <div className="ez-dim" style={{ gridTemplateColumns: "1fr", fontSize: 14 }}>
+                ตัวเลขโอกาสมาจากสูตรคำนวณ ใช้ความผันผวนของราคาเป็นฐาน ไม่ใช่คำทำนาย
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="ez-q5">
+          <h2>ทำไมช่วงนี้น่าทำ</h2>
+          <div className="ez-ans" dangerouslySetInnerHTML={{ __html: d.why_now.text_th }} />
+        </div>
+        <div className="ez-q5">
+          <h2>แย่สุดคืออะไร</h2>
+          <div
+            className="ez-ans"
+            dangerouslySetInnerHTML={{
+              __html: `<span class="ez-money ez-neg">${signed(o.worst_30_usd)}</span>ถ้า ${d.symbol} ร่วง 30% เหลือ $${dropPx.toFixed(2)} คุณต้องซื้อ 100 หุ้นที่ $${o.strike} หุ้นที่ได้มามีมูลค่า ${usd(dropPx * 100)} ขาดทุนบนกระดาษประมาณ ${usd(-o.worst_30_usd)}${want ? ` แต่ได้ ${d.symbol} ที่คุณอยากถืออยู่แล้วในราคาถูกกว่าวันนี้` : ""}<br><span class="ez-dim" style="font-size:15px">ในทางทฤษฎี ถ้าหุ้นเหลือ $0 จะเสียได้มากสุด ${usd(o.max_loss_usd)}</span>`,
+            }}
+          />
+        </div>
+      </div>
+
+      <WhatIf key={o.occ} idea={o} spot={d.spot} symbol={d.symbol} />
+
+      <div className="ez-ask">
+        <h2><EzIcon name="chat" />ถามผู้ช่วยต่อ</h2>
+        <div className="ez-quick">
+          {ASK_QUESTIONS.map(q => (
+            <button key={q} className="ez-pill" disabled={busy} onClick={() => ask(q)}>{q}</button>
+          ))}
+        </div>
+        <div className="ez-thread">
+          {thread.map((m, i) => (
+            <div key={i}>
+              <div className="ez-q">{m.q}</div>
+              <div className="ez-a">
+                <span dangerouslySetInnerHTML={{ __html: m.a }} />
+                {m.sample && <div className="ez-dim" style={{ fontSize: 13, marginTop: 6 }}>คำตอบตัวอย่างใน prototype</div>}
+              </div>
+            </div>
+          ))}
+          {busy && <div className="ez-thread-busy">ผู้ช่วยกำลังคิด…</div>}
+        </div>
+      </div>
+
+      <div className="ez-actions">
+        <button className="ez-btn primary" onClick={p.onNext}>เข้าใจแล้ว ไปขั้นก่อนตัดสินใจ</button>
+        <button className="ez-btn ghost" onClick={p.onBack}>ดูทางเลือกอื่น</button>
+      </div>
+      <p className="ez-note ez-dim" style={{ marginTop: 18 }}>
+        <EzIcon name="info" />
+        <span>คุณตั้งเงินไว้ {usd(profile.cash)} · สัญญานี้ต้องกันเงิน {usd(o.cost)}</span>
+      </p>
+    </section>
+  );
+}

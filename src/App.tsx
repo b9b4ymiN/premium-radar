@@ -16,6 +16,7 @@ import "./App.css";
 import brandMark from "./assets/thpforge-mark.svg";
 import { RadarAssistant } from "./components/RadarAssistant/RadarAssistant";
 import UpdateBanner from "./components/UpdateBanner";
+import { EasyApp } from "./easy/EasyApp";
 
 /** The pages of the icon rail — the app's single menu. */
 type MainTab = "home" | "market" | "monitor" | "lab" | "portfolio" | "watchlist";
@@ -206,6 +207,8 @@ export default function App() {
   const [tauriReady, setTauriReady] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const [setupMode, setSetupMode] = useState<"first-run" | "edit">("first-run");
+  // Easy Mode is the default for new installs (CR-001); `ui_mode` persists in settings
+  const [uiMode, setUiMode] = useState<"easy" | "pro">("easy");
 
   // live data from the Rust scan worker
   const [snap, setSnap] = useState<EngineSnapshot | null>(null);
@@ -255,6 +258,7 @@ export default function App() {
         setRisk(lastRisk);
         setBudget(String(lastBudget));
         if (lastSym) setSymbol(lastSym);
+        setUiMode(st?.ui_mode === "pro" ? "pro" : "easy");
         // sync engine filters with the restored UI state (no expiry pinned yet)
         await tauriInvoke("set_filters", { strategy: lastStrat, risk: lastRisk, expiry: null, budget: lastBudget }).catch(() => {});
         if (!disposed) setTauriReady(true);
@@ -337,6 +341,16 @@ export default function App() {
       setChatBusy(false);
     }
   }, [chat, chatInput, chatBusy]);
+
+  /** Switch easy/pro: the mode applies immediately and is pushed into the
+   *  settings prefs (`ui_mode`) — a prefs push can never touch credentials. */
+  const switchMode = useCallback((next: "easy" | "pro") => {
+    setUiMode(next);
+    if (!hasTauri) return;
+    tauriInvoke<Record<string, unknown>>("get_settings")
+      .then(st => tauriInvoke("save_settings", { newSettings: { ...st, ui_mode: next } }))
+      .catch(() => { /* mode still switches for this session */ });
+  }, []);
 
   const applyFilters = useCallback(async (s: string, r: string, e: string | null, b: number) => {
     if (!tauriReady) return;
@@ -509,7 +523,7 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app ${uiMode === "easy" ? "easy" : ""}`}>
       {/* ============ TOP BAR ============ */}
       <header className="appbar">
         <div className="brand">
@@ -535,10 +549,27 @@ export default function App() {
           />
         </label>
         <span className={`tag-demo ${badge.cls}`}>{badge.text}</span>
+        <div className="ez-modes" role="group" aria-label="เลือกโหมด">
+          <button aria-pressed={uiMode === "easy"} onClick={() => switchMode("easy")}><span className="ez-ml">โหมด</span>ง่าย</button>
+          <button aria-pressed={uiMode === "pro"} onClick={() => switchMode("pro")}><span className="ez-ml">โหมด</span>ละเอียด</button>
+        </div>
       </header>
       <UpdateBanner />
 
       {/* ============ WORKSPACE ============ */}
+      {/* Easy mode replaces the 4-column workspace with one centred column;
+          pro mode renders exactly the workspace below, unchanged. */}
+      {uiMode === "easy" ? (
+        <EasyApp
+          tauriReady={tauriReady}
+          hasTauri={hasTauri}
+          symbol={symbol}
+          setSymbol={setSymbol}
+          loading={loading}
+          scanMsg={scanMsg}
+          stock={stock}
+        />
+      ) : (
       <div className="workspace">
         {/* ---- Icon Rail ---- */}
         <nav className="iconbar">
@@ -1002,8 +1033,11 @@ export default function App() {
 
         </aside>
       </div>
+      )}
 
-      {/* Radar Assistant — floating button + chat that keeps the conversation while closed */}
+      {/* Radar Assistant — floating button + chat that keeps the conversation
+          while closed (pro mode; easy mode has its own ask-the-agent chips) */}
+      {uiMode === "pro" && (
       <RadarAssistant
         llmInfo={llmInfo}
         isLive={isLive}
@@ -1015,6 +1049,7 @@ export default function App() {
         sendChat={sendChat}
         openSetup={() => { setSetupMode("edit"); setShowSetup(true); }}
       />
+      )}
 
       {/* ============ STATUS BAR ============ */}
       <footer className="statusbar">
