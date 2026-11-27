@@ -99,3 +99,164 @@
     animation: none;
   }
 }
+
+/* ---- AgentPanel (W6 P3-T4). The panel shell reuses the RadarAssistant
+   classes from App.css; everything here is additive and agent-panel
+   prefixed: live timeline, status bar, undo, unverified note. ---- */
+
+/* groups user bubble + timeline + answer of one turn without touching the
+   chatlog's flex-gap rhythm */
+.agent-panel-turn {
+  display: contents;
+}
+
+.agent-panel-steps-toggle {
+  align-self: flex-start;
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dim, #8797aa);
+  font-size: 9.5px;
+  cursor: pointer;
+}
+
+.agent-panel-steps-toggle:hover {
+  color: var(--text, #f0f3f8);
+}
+
+.agent-panel-steps {
+  margin: 0;
+  padding: 4px 8px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-left: 2px solid var(--border-strong, #384251);
+  max-width: 96%;
+}
+
+.agent-panel-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--secondary, #9bacc7);
+}
+
+.agent-panel-step i {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--dim, #8797aa);
+}
+
+.agent-panel-step.run {
+  color: var(--text, #f0f3f8);
+}
+
+.agent-panel-step.run i {
+  background: var(--accent, #4b8cf7);
+  animation: agent-panel-blink 0.9s ease-in-out infinite;
+}
+
+.agent-panel-step.done i {
+  background: var(--green, #3ddc97);
+}
+
+.agent-panel-step.fail {
+  color: var(--red, #f4788c);
+}
+
+.agent-panel-step.fail i {
+  background: var(--red, #f4788c);
+}
+
+.agent-panel-ms {
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--dim, #8797aa);
+  font-size: 9px;
+}
+
+@keyframes agent-panel-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.agent-panel-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--border, #1e2733);
+  font-size: 10px;
+  color: var(--secondary, #9bacc7);
+}
+
+.agent-panel-status .agent-panel-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #4b8cf7);
+  animation: agent-panel-blink 0.9s ease-in-out infinite;
+}
+
+.agent-panel-stop {
+  margin-left: auto;
+  height: 20px;
+  padding: 0 9px;
+  border: 1px solid var(--red, #f4788c);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--red, #f4788c);
+  font-size: 9.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.agent-panel-stop:hover {
+  background: rgba(244, 120, 140, 0.12);
+}
+
+.agent-panel-undo {
+  margin-left: auto;
+  height: 18px;
+  padding: 0 7px;
+  border: 1px solid var(--border-strong, #384251);
+  border-radius: 5px;
+  background: none;
+  color: var(--dim, #8797aa);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.agent-panel-undo:hover {
+  color: var(--text, #f0f3f8);
+  border-color: var(--amber, #f0bd70);
+}
+
+.agent-panel-unverified {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px dashed rgba(240, 189, 112, 0.4);
+  color: var(--amber, #f0bd70);
+  font-size: 9.5px;
+  cursor: help;
+}
+
+.agent-panel-note {
+  color: var(--dim, #8797aa);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-panel-step.run i,
+  .agent-panel-status .agent-panel-dot {
+    animation: none;
+  }
+}
