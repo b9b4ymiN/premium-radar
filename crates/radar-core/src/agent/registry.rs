@@ -386,6 +386,37 @@ mod tests {
     /// `steps` schema doubles as the recursive-validation fixture).
     fn test_registry() -> Registry {
         let mut reg = Registry::new();
+        // The agent no longer ships `top_candidates` (scan_chain replaced
+        // it), but these tests exercise defaults/enum/bounds against that
+        // exact shape — so they carry their own local copy, registered
+        // first to keep the per-mode order assertions stable.
+        reg.register(ToolSpec {
+            name: "top_candidates".into(),
+            tier: Tier::Read,
+            modes: vec![Mode::Easy, Mode::Pro],
+            description: "ทดสอบ".into(),
+            examples: vec![],
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 20,
+                        "default": 5
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["all", "put", "call"],
+                        "default": "all"
+                    }
+                },
+                "additionalProperties": false
+            }),
+            timeout_ms: 1000,
+            webull_cost: 0,
+        })
+        .expect("register top_candidates fixture");
         for spec in crate::agent::tools::screener_specs() {
             reg.register(spec).expect("register screener spec");
         }
@@ -511,12 +542,7 @@ mod tests {
             .collect();
         assert_eq!(
             easy,
-            vec![
-                "top_candidates",
-                "contract_detail",
-                "chain_stats",
-                "easy_only_tool"
-            ]
+            vec!["top_candidates", "contract_detail", "easy_only_tool"]
         );
         assert_eq!(
             pro,

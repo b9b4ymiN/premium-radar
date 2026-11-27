@@ -85,6 +85,17 @@ fn start_scan(
     state: tauri::State<'_, AppState>,
     symbol: String,
 ) -> Result<(), String> {
+    start_scan_for(&app, &state, &symbol)
+}
+
+/// Body of the `start_scan` command, shared with the agent's
+/// `ensure_scanned` (agent_tools::ideas) so a tool-driven scan goes through
+/// exactly the same checks and persistence as the button on the main screen.
+pub(crate) fn start_scan_for(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    symbol: &str,
+) -> Result<(), String> {
     let symbol = symbol.trim().to_uppercase();
     if symbol.is_empty() {
         return Err("กรุณาระบุ symbol".into());
@@ -101,7 +112,7 @@ fn start_scan(
 
     state
         .scan
-        .spawn(app, state.engine.clone(), settings, symbol.clone());
+        .spawn(app.clone(), state.engine.clone(), settings, symbol.clone());
 
     // remember the last symbol for the next session (persist goes through
     // the keyring path so the scrubbed file never regains plaintext secrets;
