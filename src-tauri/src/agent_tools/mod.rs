@@ -22,6 +22,7 @@ pub mod ideas;
 pub mod market;
 pub mod mine;
 pub mod present;
+pub mod screener;
 pub mod ui;
 
 /// Everything a tool executor may read. `settings` is a snapshot taken when
@@ -63,7 +64,10 @@ pub fn dispatch(ctx: &ToolCtx, spec: &ToolSpec, args: &Value) -> Result<String, 
     if let Some(result) = mine::execute(ctx, name, args) {
         return result;
     }
-    // the screener tools still answer through the copilot executor
+    if let Some(result) = screener::execute(ctx, name, args) {
+        return result;
+    }
+    // tools no family owns still answer through the copilot executor
     let mut engine = lock(&ctx.engine);
     Ok(radar_core::copilot::execute_tool(
         name,
