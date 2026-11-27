@@ -13,6 +13,13 @@ import { expiryTh, signed, usd } from "./util";
 const MIN = -40;
 const MAX = 25;
 
+/** The only finance maths Easy Mode does in TypeScript: the paper result of
+ *  ONE contract (100 shares) at expiry, in USD. Exported so the lesson
+ *  (Lesson.tsx) and this slider can never disagree. */
+export function expiryOutcome(price: number, idea: Pick<EasyIdea, "strike" | "credit">): number {
+  return price >= idea.strike ? idea.credit : (price - idea.strike) * 100 + idea.credit;
+}
+
 interface Props {
   idea: EasyIdea;
   spot: number;
@@ -37,7 +44,7 @@ export function WhatIf({ idea, spot, symbol }: Props) {
 
   const toPos = (px: number) => ((px / spot - 1) * 100 - MIN) / (MAX - MIN) * 100;
   const price = spot * (1 + chg / 100);
-  const money = price >= idea.strike ? idea.credit : (price - idea.strike) * 100 + idea.credit;
+  const money = expiryOutcome(price, idea);
 
   useEffect(() => {
     const to = Math.round(money);

@@ -2,9 +2,11 @@
  *  active stock, ported from the prototype. Level names, the ⚠ badge and the
  *  plain-Thai sentences all come from the EasyIdeas contract. */
 
+import { useState } from "react";
 import type { EasyIdea, EasyIdeas } from "../types/easy";
 import { anchorId, useAgentAnchor } from "../agent/anchors";
 import { EzIcon } from "./icons";
+import { Lesson } from "./Lesson";
 import { LEVEL_TH, badgeText, expiryTh, usd } from "./util";
 
 interface Props {
@@ -18,6 +20,10 @@ interface Props {
 }
 
 export function IdeasStep(p: Props) {
+  // the lesson overlay opened from this screen (null = closed) — state lives
+  // before the loading/error early returns so the hook order is stable
+  const [lessonIdea, setLessonIdea] = useState<EasyIdea | null>(null);
+
   if (p.ideasError) {
     return (
       <section className="ez-screen">
@@ -62,12 +68,24 @@ export function IdeasStep(p: Props) {
           <p className="ez-muted">{d.skip_reason_th}</p>
         </div>
       ) : (
-        <div className="ez-list ez-gap-l">
-          {d.ideas.map(o => (
-            <IdeaOption key={o.occ} o={o} symbol={d.symbol} onPick={p.onPick} />
-          ))}
-        </div>
+        <>
+          <div className="ez-lesson-entry">
+            <button
+              className="ez-btn ghost"
+              onClick={() => setLessonIdea(d.ideas.find(i => i.recommended) ?? d.ideas[0])}
+            >
+              <EzIcon name="info" />เรียนพื้นฐานก่อนตัดสินใจ (5 นาที)
+            </button>
+          </div>
+          <div className="ez-list ez-gap-l">
+            {d.ideas.map(o => (
+              <IdeaOption key={o.occ} o={o} symbol={d.symbol} onPick={p.onPick} />
+            ))}
+          </div>
+        </>
       )}
+
+      {lessonIdea && <Lesson idea={lessonIdea} ideas={d} onClose={() => setLessonIdea(null)} />}
     </section>
   );
 }
