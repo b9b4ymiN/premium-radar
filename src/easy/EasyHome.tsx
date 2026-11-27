@@ -4,7 +4,7 @@
  *  numbers rendered here are the ones it carries. */
 
 import { useEffect, useState } from "react";
-import type { EasyProfile, Stance, UniverseIdeas, UniversePick } from "../types/easy";
+import type { EasyProfile, Stance, UniverseIdeas, UniversePick, WatchCash } from "../types/easy";
 import { anchorId, useAgentAnchor } from "../agent/anchors";
 import { marketClockText, usSession } from "../components/shared/usSession";
 import { EzIcon } from "./icons";
@@ -128,6 +128,7 @@ export function EasyHome(p: Props) {
               {u.budget_short.text_th}
             </span>
           </div>
+          <Contract100 cash={p.profile.cash} />
           <div className="ez-actions" style={{ marginTop: 20 }}>
             <button className="ez-btn primary" onClick={() => p.onGo("ob1")}>ปรับงบ</button>
           </div>
@@ -152,6 +153,17 @@ export function EasyHome(p: Props) {
               onOpen={() => p.onOpenPick(pick.idea.symbol)}
             />
           ))}
+        </div>
+      )}
+
+      {u && p.universeError == null && u.watch_cash.length > 0 && (
+        <div className="ez-panel ez-gap-l">
+          <div className="ez-wcash-title">เงินที่ต้องมีสำหรับหุ้นที่คุณสนใจ</div>
+          {u.watch_cash.map(w => <WatchCashRow key={w.symbol} w={w} />)}
+          <p className="ez-note ez-dim" style={{ fontSize: 13, marginTop: 12 }}>
+            <EzIcon name="info" />
+            <span>✓ = งบของคุณพอสำหรับสัญญาที่ผ่านเกณฑ์ของคืนนี้ · ✕ = ยังไม่พอหรือยังไม่มีตัวที่ผ่านเกณฑ์</span>
+          </p>
         </div>
       )}
 
@@ -186,6 +198,47 @@ export function EasyHome(p: Props) {
         </button>
       </div>
     </section>
+  );
+}
+
+/** The 100-share contract explainer — collapsed by default; a native
+ *  <details>/<summary> keeps it keyboard-focusable. The budget sentence is
+ *  the only number computed here (cash ÷ 100, rounded down); the worked
+ *  $26 → $2,600 example is static teaching text. */
+function Contract100({ cash }: { cash: number }) {
+  const ref = useAgentAnchor(anchorId("explain", "contract100"), "คำอธิบาย สัญญา 1 ตัว = 100 หุ้น");
+  const perShare = Math.floor(cash / 100);
+  return (
+    <details className="ez-c100">
+      <summary ref={ref}>สัญญา 1 ตัว = 100 หุ้น คืออะไร?</summary>
+      <div className="ez-c100-body">
+        <p>
+          ขายสัญญา 1 ตัว คือให้คำสัญญาว่า "ถ้าหุ้นราคาลงมาถึงระดับที่นัดไว้ เราจะซื้อหุ้นนั้น 100 หุ้น"
+          — ตลาดหุ้นอเมริกากำหนดให้ 1 สัญญาครอบคลุม 100 หุ้นเสมอ ขอซื้อทีละ 10 หุ้นไม่ได้
+        </p>
+        <p>
+          เพราะคำสัญญานี้ผูกมัดเราไว้ Webull จึงต้องกันเงินสดไว้ก่อน เท่ากับ ราคาที่นัด × 100
+          เช่น นัดซื้อที่ $26 → กันเงิน $2,600
+        </p>
+        <p>
+          งบ {usd(cash)} ของคุณจึงใช้ได้กับหุ้นที่ราคาไม่เกินราว {usd(perShare)} ต่อหุ้น
+        </p>
+      </div>
+    </details>
+  );
+}
+
+/** One watched stock's "how much money do I need" row — the sentence is
+ *  computed in Rust; here we only add the affordable ✓/✕ marker. */
+function WatchCashRow({ w }: { w: WatchCash }) {
+  const ref = useAgentAnchor(anchorId("watchcash", w.symbol), `เงินที่ต้องมี ${w.symbol}`);
+  return (
+    <div ref={ref} className="ez-wcash">
+      <span className={`ez-wmark ${w.affordable ? "ez-pos" : "ez-neg"}`}>
+        {w.affordable ? "✓" : "✕"}
+      </span>
+      <span>{w.text_th}</span>
+    </div>
   );
 }
 

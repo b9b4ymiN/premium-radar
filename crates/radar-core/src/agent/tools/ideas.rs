@@ -305,6 +305,25 @@ pub fn summarize_universe_ideas(u: &UniverseIdeas) -> Value {
         o.insert("budget_short_usd".into(), num2(b.min_cash_usd));
         o.insert("budget_short_symbol".into(), json!(b.cheapest_symbol));
     }
+    // "เงินที่ต้องมี" ของหุ้นที่ user สนใจ — compact ≤ 5 แถว ไม่มีข้อความ
+    // ยาว (ประโยคไทยเต็มอยู่ที่หน้าบ้านแล้ว) เพื่ออยู่ใน byte budget
+    if !u.watch_cash.is_empty() {
+        let list: Vec<Value> = u
+            .watch_cash
+            .iter()
+            .take(5)
+            .map(|w| {
+                json!({
+                    "symbol": w.symbol,
+                    "spot": w.spot.map(num2).unwrap_or(Value::Null),
+                    "min_cash_usd": w.min_cash_usd.map(num2).unwrap_or(Value::Null),
+                    "any_cash_usd": w.any_cash_usd.map(num2).unwrap_or(Value::Null),
+                    "affordable": w.affordable,
+                })
+            })
+            .collect();
+        o.insert("watch_cash".into(), Value::Array(list));
+    }
     o.insert("picks".into(), Value::Array(picks));
     Value::Object(o)
 }
@@ -475,7 +494,7 @@ mod tests {
     use super::*;
     use crate::agent::registry::Registry;
     use crate::easy::{EasyCases, IdeaLevel, Stance, WhyNow};
-    use crate::easy_rank::{BudgetShort, OiContext, ScoreParts, UniversePick};
+    use crate::easy_rank::{BudgetShort, OiContext, ScoreParts, UniversePick, WatchCash};
 
     // ---------- specs ----------
 
@@ -665,6 +684,26 @@ mod tests {
             market_note_th: String::new(),
             picks: vec![pick(1), pick(2), pick(3)],
             budget_short: None,
+            watch_cash: vec![
+                WatchCash {
+                    symbol: "NVDA".into(),
+                    spot: Some(178.4),
+                    min_cash_usd: Some(16_500.0),
+                    any_cash_usd: Some(16_500.0),
+                    affordable: false,
+                    text_th: "NVDA ราคา $178 · ขาย 1 สัญญาต้องกันเงินราว $16,500 (ยอมซื้อ 100 หุ้นที่ $165)"
+                        .into(),
+                },
+                WatchCash {
+                    symbol: "PFE".into(),
+                    spot: Some(28.46),
+                    min_cash_usd: None,
+                    any_cash_usd: Some(2_600.0),
+                    affordable: false,
+                    text_th: "PFE ราคา $28 · ยังไม่มีสัญญาที่ปลอดภัยพอในรอบนี้ — ตัวที่ถูกสุดต้องกันเงิน $2,600"
+                        .into(),
+                },
+            ],
             agent_say_th: String::new(),
             computed_at: "2026-11-27T09:00:00+00:00".into(),
         };
@@ -682,6 +721,12 @@ mod tests {
         }
         assert_eq!(out["picks"][0]["earnings_date"], "2026-12-10");
         assert!(out.get("budget_short_usd").is_none());
+        let watch = out["watch_cash"].as_array().unwrap();
+        assert_eq!(watch.len(), 2);
+        assert_eq!(watch[0]["symbol"], "NVDA");
+        assert_eq!(watch[0]["min_cash_usd"], json!(16_500));
+        assert_eq!(watch[1]["min_cash_usd"], Value::Null);
+        assert_eq!(watch[1]["affordable"], json!(false));
         let size = serde_json::to_string(&out).unwrap().len();
         assert!(size <= 1500, "universe result is {size} bytes");
     }
@@ -701,6 +746,7 @@ mod tests {
                 cheapest_symbol: "F".into(),
                 text_th: "งบยังไม่พอ".into(),
             }),
+            watch_cash: vec![],
             agent_say_th: String::new(),
             computed_at: "2026-11-27T09:00:00+00:00".into(),
         };
@@ -708,6 +754,7 @@ mod tests {
         assert_eq!(out["picks"].as_array().unwrap().len(), 0);
         assert_eq!(out["note"], "งบยังไม่พอ");
         assert_eq!(out["source"], "recorder");
+        assert!(out.get("watch_cash").is_none(), "watch_cash ว่าง ⇒ ไม่มี key");
         // as_of falls back to the computation time
         assert_eq!(out["as_of"], "2026-11-27T09:00:00+00:00");
     }

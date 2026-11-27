@@ -14,7 +14,7 @@ use radar_core::agent::tools::ideas::{
     summarize_what_if,
 };
 use radar_core::easy::{build_ideas, source_token};
-use radar_core::easy_rank::rank_universe;
+use radar_core::easy_rank::rank_universe_with_watch;
 use radar_core::engine::Engine;
 use radar_core::quant::{OptType, realized_vol};
 use radar_core::screener::{Filters, Mode};
@@ -171,7 +171,15 @@ fn run_find_ideas(ctx: &ToolCtx, args: &Value) -> Result<String, String> {
                     .to_string());
                 }
             };
-            let ranked = rank_universe(&input, &profile, Utc::now());
+            // watch list ของ "เงินที่ต้องมี": หุ้นในโปรไฟล์ + watchlist ที่ active
+            let mut watch: Vec<String> = profile.stocks.iter().map(|s| s.symbol.clone()).collect();
+            watch.extend(
+                crate::load_watchlists(&ctx.app_data_dir)
+                    .active_list()
+                    .map(|list| list.symbols.clone())
+                    .unwrap_or_default(),
+            );
+            let ranked = rank_universe_with_watch(&input, &profile, &watch, Utc::now());
             Ok(summarize_universe_ideas(&ranked).to_string())
         }
         Some(symbol) => {
