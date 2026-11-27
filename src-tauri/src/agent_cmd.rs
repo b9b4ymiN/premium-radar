@@ -185,21 +185,21 @@ mod tests {
     use super::*;
     use radar_core::agent::Mode;
 
-    /// The registry this phase ships: exactly the three screener tools,
-    /// in registration order, in both UI modes.
+    /// Every family registers cleanly (no duplicate names across files) and
+    /// `contract_detail` is served in both UI modes. The exact per-mode
+    /// tool lists are pinned once all families have landed.
     #[test]
-    fn build_registry_serves_the_three_screener_tools_in_both_modes() {
-        let registry = build_registry().expect("screener specs register cleanly");
+    fn build_registry_registers_every_family_without_name_clashes() {
+        let registry = build_registry().expect("all tool families register cleanly");
         for mode in [Mode::Easy, Mode::Pro] {
             let names: Vec<&str> = registry
                 .for_mode(mode)
                 .iter()
                 .map(|spec| spec.name.as_str())
                 .collect();
-            assert_eq!(
-                names,
-                ["top_candidates", "contract_detail", "chain_stats"],
-                "mode {mode:?}"
+            assert!(
+                names.contains(&"contract_detail"),
+                "mode {mode:?}: {names:?}"
             );
         }
     }
