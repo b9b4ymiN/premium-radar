@@ -72,6 +72,13 @@ pub enum AgentEvent {
         summary: String,
         ms: u64,
     },
+    /// A ui tool wants the screen to act (`ui_id` pairs the event with the
+    /// ack the frontend sends back through the `agent_ui_result` command).
+    /// The runner loop itself never emits this — the Tauri executor does.
+    UiAction {
+        ui_id: String,
+        action: Value,
+    },
     Answer {
         text: String,
         unverified: bool,
@@ -837,6 +844,18 @@ mod tests {
             })
             .expect("serialize"),
             json!({"type": "answer", "text": "ตอบ", "unverified": true, "ungrounded": ["$999"]})
+        );
+        assert_eq!(
+            serde_json::to_value(AgentEvent::UiAction {
+                ui_id: "ui-1".into(),
+                action: json!({"kind": "go", "mode": "pro", "page": "home"}),
+            })
+            .expect("serialize"),
+            json!({
+                "type": "ui_action",
+                "ui_id": "ui-1",
+                "action": {"kind": "go", "mode": "pro", "page": "home"}
+            })
         );
     }
 

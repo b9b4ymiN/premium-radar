@@ -2359,6 +2359,7 @@ pub fn run() {
             ask_copilot,
             agent_cmd::agent_ask,
             agent_cmd::agent_cancel,
+            agent_cmd::agent_ui_result,
             test_llm,
             save_lab_source,
             recorder_test_connection,

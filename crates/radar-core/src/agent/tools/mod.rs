@@ -7,5 +7,6 @@ pub mod market;
 pub mod mine;
 pub mod playbook;
 pub mod screener;
+pub mod ui;
 
 pub use screener::screener_specs;
