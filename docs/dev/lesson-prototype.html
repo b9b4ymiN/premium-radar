@@ -1,0 +1,317 @@
+<title>ขายสัญญา PFE ทีละขั้น</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anuphan:wght@500;600;700&family=IBM+Plex+Sans+Thai+Looped:wght@400;500;600&display=swap">
+<style>
+/* Layout: one calm reading column, a lesson in numbered steps (the order is the lesson); diagrams sit on their own light "paper" panels */
+:root{
+  --bg:#f3f6f5; --surface:#ffffff; --fg:#17262a; --muted:#56676b; --line:#d4dedc;
+  --accent:#0f7d72; --accent-soft:#e1f1ee;
+  --good:#1d8a4e; --good-soft:#e3f4ea; --warn:#b7791f; --warn-soft:#fbf1dc; --bad:#c2414b; --bad-soft:#fbe6e8;
+  --font:"IBM Plex Sans Thai Looped","Noto Sans Thai",system-ui,sans-serif;
+  --display:"Anuphan","IBM Plex Sans Thai Looped",system-ui,sans-serif;
+  --mono:ui-monospace,"SFMono-Regular",Consolas,monospace;
+  --pele-bg:var(--surface);--pele-fg:var(--fg);--pele-muted:var(--muted);--pele-line:var(--muted);--pele-border:var(--line);
+  --pele-surface:var(--bg);--pele-surface-alt:var(--surface);--pele-accent:var(--accent);--pele-font:var(--font);--pele-font-mono:var(--mono);
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1719; --surface:#172225; --fg:#e4eeec; --muted:#9db0b2; --line:#2b3a3d;
+  --accent:#4cc3b5; --accent-soft:#163633;
+  --good:#5fd08d; --good-soft:#15301f; --warn:#e7b25a; --warn-soft:#33280f; --bad:#f07882; --bad-soft:#3a1a1e; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1719; --surface:#172225; --fg:#e4eeec; --muted:#9db0b2; --line:#2b3a3d;
+  --accent:#4cc3b5; --accent-soft:#163633;
+  --good:#5fd08d; --good-soft:#15301f; --warn:#e7b25a; --warn-soft:#33280f; --bad:#f07882; --bad-soft:#3a1a1e; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--font);font-size:17px;line-height:1.75}
+.wrap{max-width:720px;margin:0 auto;padding-block:28px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:28px}
+h1,h2,h3{font-family:var(--display);line-height:1.35;text-wrap:balance;margin:0}
+h1{font-size:1.85rem}
+h2{font-size:1.3rem}
+p{margin:0}
+.lead{color:var(--muted)}
+.tag{display:inline-block;font-size:.8rem;letter-spacing:.04em;color:var(--accent);background:var(--accent-soft);border-radius:999px;padding:2px 10px;font-weight:600}
+.num{font-variant-numeric:tabular-nums}
+.step{display:flex;flex-direction:column;gap:12px}
+.step-head{display:flex;align-items:baseline;gap:12px}
+.step-no{font-family:var(--display);font-weight:700;color:var(--accent);font-size:1.05rem;min-width:2.2em}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;min-width:0}
+.dg-box{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px;overflow-x:auto}
+.dg-box svg{max-width:100%;height:auto;display:block;margin:0 auto}
+pre.dg{white-space:pre-wrap;color:var(--muted);font-size:.85rem;margin:0}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.fact b{display:block;font-family:var(--display);font-size:1.25rem}
+.fact span{font-size:.85rem;color:var(--muted)}
+.money-in{color:var(--good)} .money-out{color:var(--bad)}
+.remember{border-left:4px solid var(--accent);background:var(--accent-soft);padding:10px 14px;border-radius:0 10px 10px 0}
+.note{font-size:.88rem;color:var(--muted)}
+.ending{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.end{border-radius:14px;padding:14px;border:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.end.good{background:var(--good-soft)} .end.warn{background:var(--warn-soft)}
+.end h3{font-size:1.05rem}
+/* ladder */
+.ladder-wrap{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+.ladder svg{width:100%;height:auto;display:block}
+.slider{display:flex;flex-direction:column;gap:6px}
+.slider input{width:100%;accent-color:var(--accent)}
+.result{border-radius:12px;padding:12px 14px;font-weight:500}
+.result.good{background:var(--good-soft)} .result.warn{background:var(--warn-soft)} .result.bad{background:var(--bad-soft)}
+/* quiz */
+.quiz{display:flex;flex-direction:column;gap:8px}
+.opt{font:inherit;text-align:left;background:var(--surface);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:10px 14px;cursor:pointer}
+.opt:hover{border-color:var(--accent)}
+.opt:focus-visible,summary:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.opt.right{background:var(--good-soft);border-color:var(--good)}
+.opt.wrong{background:var(--bad-soft);border-color:var(--bad)}
+.feedback{min-height:1.5em}
+details{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 16px}
+summary{cursor:pointer;font-weight:600;font-family:var(--display)}
+details[open] summary{margin-bottom:10px}
+details .inner{display:flex;flex-direction:column;gap:10px}
+.chart svg{width:100%;height:auto;display:block}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<main class="wrap">
+  <header class="step">
+    <span class="tag">ตัวอย่างบทเรียน · ข้อมูลสัญญาจริงคืน 26 พ.ย. 2026</span>
+    <h1>ขายสัญญา PFE ทีละขั้น</h1>
+    <p class="lead">หน้านี้เล่าไอเดียเดียวให้จบ: ถ้าคุณกดขายสัญญานี้ จะเกิดอะไรกับเงินของคุณ ตั้งแต่วันนี้จนวันที่สัญญาหมดอายุ อ่านทีละขั้นจากบนลงล่าง ไม่ต้องรู้ศัพท์อะไรมาก่อน</p>
+    <div class="facts">
+      <div class="fact"><b class="num">$28.46</b><span>ราคา PFE ตอนนี้ (ต่อ 1 หุ้น)</span></div>
+      <div class="fact"><b class="num">$26</b><span>ราคาที่คุณ "นัดซื้อ"</span></div>
+      <div class="fact"><b class="num money-in">+$13</b><span>เงินที่ได้ทันที</span></div>
+      <div class="fact"><b class="num">24 ธ.ค.</b><span>วันที่สัญญาหมดอายุ (อีก 28 วัน)</span></div>
+    </div>
+  </header>
+
+  <section class="step" aria-labelledby="s1">
+    <div class="step-head"><span class="step-no">ขั้น 1</span><h2 id="s1">ใครให้อะไรใคร</h2></div>
+    <p>เรื่องนี้มี 3 ฝ่าย คือ <b>คุณ</b>, <b>คนซื้อสัญญา</b> (คนที่กลัวว่า PFE จะลง) และ <b>Webull</b> (คนถือเงินกลาง) คุณทำหน้าที่คล้ายบริษัทประกัน คือรับเงินค่าเบี้ยไว้ก่อน แลกกับคำสัญญาว่าถ้าเกิดเรื่อง คุณจะช่วยรับซื้อหุ้น</p>
+    <div class="dg-box"><pre class="dg">sequenceDiagram
+  participant B as คนซื้อสัญญา
+  participant Y as คุณ
+  participant W as Webull
+  B->>Y: จ่ายเงินให้ $13 (เป็นของคุณทันที)
+  Y->>B: สัญญาว่า "ถ้า PFE ต่ำกว่า $26 ฉันจะซื้อ 100 หุ้นที่ $26"
+  W->>W: กันเงินในบัญชีคุณไว้ $2,600 จนสัญญาจบ</pre></div>
+    <p class="remember"><b>จำง่ายๆ:</b> คุณได้เงิน $13 ไปก่อน แลกกับการยอมรับซื้อหุ้นถ้าราคาลง</p>
+  </section>
+
+  <section class="step" aria-labelledby="s2">
+    <div class="step-head"><span class="step-no">ขั้น 2</span><h2 id="s2">ทำไมต้องกันเงิน $2,600</h2></div>
+    <p>ตลาดหุ้นอเมริกากำหนดว่า <b>สัญญา 1 ตัว = หุ้น 100 หุ้นเสมอ</b> จะทำทีละ 10 หุ้นไม่ได้ ถ้าวันหนึ่งคุณต้องซื้อจริง ต้องจ่าย 100 หุ้น × $26 = <b class="num">$2,600</b> Webull จึงล็อกเงินก้อนนี้ไว้ล่วงหน้า เพื่อให้แน่ใจว่าคุณมีเงินจ่าย</p>
+    <div class="panel">
+      <p><b>ระหว่างที่สัญญายังไม่จบ</b></p>
+      <p>เงิน <span class="num">$2,600</span> ยังเป็นของคุณ แต่ <b>ถอนหรือเอาไปซื้ออย่างอื่นไม่ได้</b> จนถึงวันที่ 24 ธ.ค.</p>
+      <p>เงิน <span class="num money-in">$13</span> ที่ได้มา ใช้ได้เลย</p>
+    </div>
+    <p class="remember"><b>จำง่ายๆ:</b> เงินที่ต้องมี = ราคาที่นัดซื้อ × 100 งบ $3,000 จึงทำได้กับหุ้นราคาไม่เกินราว $30</p>
+  </section>
+
+  <section class="step" aria-labelledby="s3">
+    <div class="step-head"><span class="step-no">ขั้น 3</span><h2 id="s3">ระหว่าง 28 วันนี้ เกิดอะไรบ้าง</h2></div>
+    <div class="dg-box"><pre class="dg">timeline
+  title จากวันนี้ถึงวันหมดอายุ
+  26 พ.ย. : ขายสัญญา : ได้ $13 ทันที : Webull กันเงิน $2,600
+  ระหว่างทาง : ราคา PFE ขึ้นลงทุกวัน : เป็นเรื่องปกติ ยังไม่มีอะไรต้องทำ
+  24 ธ.ค. : วันตัดสิน : ดูว่า PFE ปิดเหนือหรือต่ำกว่า $26</pre></div>
+    <p>ระหว่างทาง ราคา PFE อาจลงไปแตะ $26 แล้วเด้งกลับก็ได้ <b>แต่สิ่งที่ตัดสินคือราคาตอนปิดวันที่ 24 ธ.ค.</b> เห็นตัวเลขแดงระหว่างทางจึงยังไม่ได้แปลว่าเสียเงินจริง</p>
+    <p class="note">โดยทั่วไป ราคามักลงไปแตะราคาที่นัดระหว่างทางบ่อยกว่าที่จะจบต่ำกว่าจริง ประมาณ 2 เท่า เตรียมใจไว้ก่อนจะได้ไม่ตกใจ</p>
+  </section>
+
+  <section class="step" aria-labelledby="s4">
+    <div class="step-head"><span class="step-no">ขั้น 4</span><h2 id="s4">จบได้แค่ 2 ทาง</h2></div>
+    <div class="dg-box"><pre class="dg">flowchart TD
+  A["26 พ.ย. ขายสัญญา<br/>ได้ $13 ทันที"] --> B{"24 ธ.ค.<br/>PFE ปิดที่เท่าไร?"}
+  B -->|"เหนือ $26"| C["สัญญาจบเอง<br/>ได้ $13 เต็ม<br/>เงิน $2,600 กลับมาใช้ได้"]
+  B -->|"ต่ำกว่า $26"| D["ต้องซื้อ PFE 100 หุ้นที่ $26<br/>จ่าย $2,600<br/>ได้หุ้นมาถือ"]</pre></div>
+    <div class="ending">
+      <div class="end good">
+        <h3>ทางที่ 1 · ปิดที่ $28 (สูงกว่า $26)</h3>
+        <p>คนซื้อสัญญาไม่ได้ใช้สิทธิ สัญญาจบไปเฉยๆ</p>
+        <p>คุณได้ <b class="num money-in">+$13</b> และเงิน $2,600 ปลดล็อก</p>
+      </div>
+      <div class="end warn">
+        <h3>ทางที่ 2 · ปิดที่ $24 (ต่ำกว่า $26)</h3>
+        <p>คุณต้องจ่าย <span class="num">$2,600</span> ซื้อ 100 หุ้น แต่ตอนนั้นหุ้นมีมูลค่า 100 × $24 = <span class="num">$2,400</span></p>
+        <p>ขาดทุนบนกระดาษ <span class="num money-out">−$200</span> แต่ได้ $13 มาแล้ว สุทธิ <b class="num money-out">−$187</b></p>
+        <p class="note">ยังถือหุ้นอยู่ ถ้าราคากลับขึ้นมา ตัวเลขนี้ก็ลดลงได้ ขาดทุนจริงเมื่อขายหุ้นออกเท่านั้น</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="step" aria-labelledby="s5">
+    <div class="step-head"><span class="step-no">ขั้น 5</span><h2 id="s5">โอกาสแต่ละทาง</h2></div>
+    <div class="dg-box"><pre class="dg">pie showData
+  title โอกาสที่จะเกิด (ประมาณจากสูตร)
+  "ทางที่ 1 จบสวย ได้ $13" : 85.4
+  "ทางที่ 2 ต้องซื้อหุ้น" : 14.6</pre></div>
+    <p>ทุก 7 ครั้งที่ขายสัญญาแบบนี้ ประมาณ 1 ครั้งจะต้องซื้อหุ้นจริง ตัวเลขนี้คำนวณจากราคาในตลาดตอนนี้ <b>เป็นค่าประมาณ ไม่ใช่คำทำนาย</b> ถ้ามีข่าวร้ายแรงๆ โอกาสก็เปลี่ยนได้</p>
+    <p class="remember"><b>จำง่ายๆ:</b> ก่อนกด ให้ถามตัวเองว่า "ถ้าโชคร้ายต้องซื้อ PFE 100 หุ้นที่ $26 จริง ฉันโอเคไหม?" ถ้าไม่โอเค ไม่ควรขายสัญญานี้</p>
+  </section>
+
+  <section class="step" aria-labelledby="s6">
+    <div class="step-head"><span class="step-no">ขั้น 6</span><h2 id="s6">ราคาต้องลงแค่ไหนถึงจะเจ็บ</h2></div>
+    <p>ลากแถบด้านล่าง เพื่อสมมติราคา PFE ในวันที่ 24 ธ.ค. แล้วดูว่าเงินของคุณเป็นยังไง</p>
+    <div class="ladder-wrap">
+      <div class="panel ladder"><svg id="ladder" viewBox="0 0 640 300" role="img" aria-label="บันไดราคา PFE"></svg></div>
+      <div class="slider">
+        <label for="price">ราคา PFE วันที่ 24 ธ.ค.: <b class="num" id="priceOut">$28.46</b></label>
+        <input id="price" type="range" min="18" max="31" step="0.25" value="28.5">
+      </div>
+      <div class="result good" id="result" aria-live="polite"></div>
+    </div>
+    <p class="note">จุดคุ้มทุน $25.87 = $26 − $0.13 (เงินที่ได้ต่อหุ้น) ตัวเลขในหน้านี้ยังไม่รวมค่าธรรมเนียม</p>
+  </section>
+
+  <section class="step" aria-labelledby="s7">
+    <div class="step-head"><span class="step-no">ขั้น 7</span><h2 id="s7">ในอดีต ราคาเคยลงถึงเส้นนี้บ่อยไหม</h2></div>
+    <div class="panel chart"><svg id="chart" viewBox="0 0 640 260" role="img" aria-label="ภาพจำลองราคาย้อนหลังกับเส้นราคาที่นัด"></svg></div>
+    <p class="note"><b>ภาพจำลองเพื่อสาธิตเท่านั้น ไม่ใช่ราคาจริงของ PFE</b> ในแอปจริงจะใช้กราฟราคาจริงย้อนหลังหลายเดือน แล้วขีดเส้น $26 ทับ ให้เห็นด้วยตาว่าหุ้นตัวนี้เคยลงต่ำกว่าเส้นนี้บ่อยแค่ไหน</p>
+  </section>
+
+  <section class="step" aria-labelledby="s8">
+    <div class="step-head"><span class="step-no">ขั้น 8</span><h2 id="s8">ลองตอบดู</h2></div>
+    <div class="panel quiz" data-quiz="1">
+      <p><b>ถ้าวันที่ 24 ธ.ค. PFE ปิดที่ $28 คุณจะได้อะไร?</b></p>
+      <button class="opt" data-ok="1">ได้ $13 และเงิน $2,600 กลับมาใช้ได้</button>
+      <button class="opt">ต้องซื้อ PFE 100 หุ้น</button>
+      <button class="opt">ต้องคืนเงิน $13</button>
+      <p class="feedback" aria-live="polite"></p>
+    </div>
+    <div class="panel quiz" data-quiz="2">
+      <p><b>ถ้าวันที่ 24 ธ.ค. PFE ปิดที่ $24 เกิดอะไรขึ้น?</b></p>
+      <button class="opt">สัญญาจบเอง ไม่มีอะไรเกิดขึ้น</button>
+      <button class="opt" data-ok="1">ต้องจ่าย $2,600 ซื้อ PFE 100 หุ้น</button>
+      <button class="opt">Webull ยึดเงินไปทั้งหมด</button>
+      <p class="feedback" aria-live="polite"></p>
+    </div>
+  </section>
+
+  <details>
+    <summary>อยากรู้เพิ่ม · ทำไมแอปไม่แนะนำสัญญาตัวนี้ในโหมดปลอดภัย</summary>
+    <div class="inner">
+      <p>สัญญาตัวนี้ผ่านเกือบทุกข้อ (เงินอยู่ในงบ, โอกาสต้องซื้อหุ้นต่ำ) แต่ <b>มีคนซื้อขายสัญญานี้น้อย</b></p>
+      <p><b>ถ้าคุณถือจนวันที่ 24 ธ.ค.</b> เรื่องนี้ไม่กระทบคุณเลย</p>
+      <p><b>ถ้าคุณอยากยกเลิกสัญญาก่อนกำหนด</b> เช่น หุ้นร่วงแล้วไม่อยากเสี่ยงต่อ คุณต้อง "ซื้อสัญญาคืน" ตอนนี้ราคาซื้อคืนอยู่ที่ <span class="num">$18</span> ทั้งที่ตอนขายได้มา <span class="num">$13</span> เลิกทันทีจะเสีย <span class="num money-out">$5</span> แม้ราคาหุ้นยังไม่ขยับ</p>
+      <p class="remember"><b>จำง่ายๆ:</b> สัญญาที่คนซื้อขายเยอะ ถ้าเปลี่ยนใจจะเสียน้อย สัญญาที่คนซื้อขายน้อย ถ้าเปลี่ยนใจจะเสียเยอะ</p>
+    </div>
+  </details>
+
+  <p class="note">ข้อมูลสัญญาจากตัวเก็บข้อมูลของแอป คืนวันที่ 26 พ.ย. 2026 (PFE ยอมซื้อที่ $26 หมดอายุ 24 ธ.ค. · ราคาเสนอซื้อ $0.13 / เสนอขาย $0.18 · โอกาสต้องซื้อหุ้นประมาณ 14.6%) · หน้านี้เป็นตัวอย่างเพื่อทดสอบวิธีอธิบาย ไม่ใช่คำแนะนำให้ซื้อขาย</p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/pele@1.12.0/dist/pele.global.js"></script>
+<script>
+(function(){
+  var lib = window.pele;
+  document.querySelectorAll("pre.dg").forEach(function(pre){
+    if(!lib || !lib.render) return;
+    try{
+      var out = lib.render(pre.textContent.trim());
+      var d = document.createElement("div");
+      d.innerHTML = out.svg;
+      pre.replaceWith(d);
+    }catch(e){ console.warn("pele render failed", e); }
+  });
+})();
+
+(function(){
+  var NS = "http://www.w3.org/2000/svg";
+  var SPOT = 28.46, K = 26, CREDIT = 13, BE = 25.87, LO = 18, HI = 31;
+  var svg = document.getElementById("ladder");
+  var W = 640, H = 300, top = 20, bot = 280, x0 = 120, x1 = 470, yK = 120, yBE = 176;
+  // not to scale on purpose: the $26 → $25.87 band is only 13 cents wide, so it
+  // gets a fixed height of its own and each zone is scaled separately
+  function y(p){
+    if (p >= K) return yK - Math.min(1, (p - K) / (HI - K)) * (yK - top);
+    if (p >= BE) return yK + (K - p) / (K - BE) * (yBE - yK);
+    return yBE + Math.min(1, (BE - p) / (BE - LO)) * (bot - yBE);
+  }
+  function el(tag, attrs, text){
+    var e = document.createElementNS(NS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    svg.appendChild(e); return e;
+  }
+  var css = getComputedStyle(document.documentElement);
+  function c(name){ return css.getPropertyValue(name).trim(); }
+  function draw(){
+    svg.innerHTML = "";
+    el("rect",{x:x0,y:top,width:x1-x0,height:yK-top,fill:c("--good-soft")});
+    el("rect",{x:x0,y:yK,width:x1-x0,height:yBE-yK,fill:c("--warn-soft")});
+    el("rect",{x:x0,y:yBE,width:x1-x0,height:bot-yBE,fill:c("--bad-soft")});
+    function line(p, label, color, dash){
+      el("line",{x1:x0,x2:x1,y1:y(p),y2:y(p),stroke:color,"stroke-width":2,"stroke-dasharray":dash||""});
+      el("text",{x:x0-10,y:y(p)+5,"text-anchor":"end",fill:c("--fg"),"font-size":15,"font-family":c("--font")},"$"+p.toFixed(2));
+      el("text",{x:x1+10,y:y(p)+5,fill:c("--muted"),"font-size":14,"font-family":c("--font")},label);
+    }
+    line(SPOT,"ราคาตอนนี้",c("--accent"),"6 5");
+    line(K,"ราคาที่นัดซื้อ",c("--fg"));
+    line(BE,"จุดคุ้มทุน",c("--bad"),"3 4");
+    el("text",{x:(x0+x1)/2,y:(top+yK)/2+30,"text-anchor":"middle",fill:c("--good"),"font-size":15,"font-weight":600,"font-family":c("--font")},"ปิดเหนือ $26 → ได้ $13 เต็ม");
+    el("text",{x:(x0+x1)/2,y:(yK+yBE)/2+5,"text-anchor":"middle",fill:c("--warn"),"font-size":14,"font-weight":600,"font-family":c("--font")},"ต้องซื้อหุ้น แต่ยังไม่ขาดทุน");
+    el("text",{x:W-8,y:H-6,"text-anchor":"end",fill:c("--muted"),"font-size":12,"font-family":c("--font")},"* ระยะห่างไม่ตามสัดส่วนจริง ช่วงสีเหลืองขยายให้เห็นชัด");
+    el("text",{x:(x0+x1)/2,y:(yBE+bot)/2+5,"text-anchor":"middle",fill:c("--bad"),"font-size":15,"font-weight":600,"font-family":c("--font")},"ต่ำกว่า $25.87 → ขาดทุนบนกระดาษ");
+    var p = parseFloat(document.getElementById("price").value);
+    el("circle",{cx:(x0+x1)/2,cy:y(p),r:9,fill:c("--accent"),stroke:c("--surface"),"stroke-width":3});
+  }
+  function update(){
+    var p = parseFloat(document.getElementById("price").value);
+    document.getElementById("priceOut").textContent = "$" + p.toFixed(2);
+    var r = document.getElementById("result");
+    if (p >= K){
+      r.className = "result good";
+      r.innerHTML = "ปิดที่ $" + p.toFixed(2) + " ซึ่งสูงกว่า $26 → สัญญาจบเอง คุณได้ <b>+$13</b> และเงิน $2,600 กลับมาใช้ได้";
+    } else {
+      var paper = (p - K) * 100 + CREDIT;
+      var worth = p * 100;
+      r.className = paper >= 0 ? "result warn" : "result bad";
+      r.innerHTML = "ปิดที่ $" + p.toFixed(2) + " ซึ่งต่ำกว่า $26 → คุณจ่าย $2,600 ได้ PFE 100 หุ้น ซึ่งตอนนั้นมีมูลค่า $" + worth.toLocaleString("en-US",{maximumFractionDigits:0}) +
+        " · รวมเงิน $13 ที่ได้มาแล้ว สุทธิ <b>" + (paper >= 0 ? "+$" : "−$") + Math.abs(paper).toFixed(0) + "</b> (บนกระดาษ ยังถือหุ้นอยู่)";
+    }
+    draw();
+  }
+  document.getElementById("price").addEventListener("input", update);
+  update();
+
+  // illustrative chart (seeded random walk — clearly labelled as a simulation)
+  var ch = document.getElementById("chart");
+  var seed = 7; function rnd(){ seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+  var pts = [], v = 27.4;
+  for (var i = 0; i < 130; i++){ v += (rnd() - 0.5) * 0.7 + (28.4 - v) * 0.02; pts.push(v); }
+  pts[pts.length - 1] = SPOT;
+  var cl = 50, cr = 620, ct = 18, cb = 228, mn = 24, mx = 31;
+  function cy(p){ return ct + (mx - p) / (mx - mn) * (cb - ct); }
+  function add(tag, attrs, text){ var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; ch.appendChild(e); return e; }
+  [24, 26, 28, 30].forEach(function(t){
+    add("line",{x1:cl,x2:cr,y1:cy(t),y2:cy(t),stroke:c("--line"),"stroke-width":1});
+    add("text",{x:cl-8,y:cy(t)+5,"text-anchor":"end",fill:c("--muted"),"font-size":13,"font-family":c("--font")},"$"+t);
+  });
+  var d = pts.map(function(p, i){ return (i ? "L" : "M") + (cl + i * (cr - cl) / (pts.length - 1)).toFixed(1) + " " + cy(p).toFixed(1); }).join(" ");
+  add("path",{d:d,fill:"none",stroke:c("--accent"),"stroke-width":2.5});
+  add("line",{x1:cl,x2:cr,y1:cy(K),y2:cy(K),stroke:c("--bad"),"stroke-width":2,"stroke-dasharray":"6 5"});
+  add("text",{x:cr,y:cy(K)-8,"text-anchor":"end",fill:c("--bad"),"font-size":14,"font-weight":600,"font-family":c("--font")},"เส้นราคาที่นัด $26");
+  add("text",{x:cl,y:252,fill:c("--muted"),"font-size":13,"font-family":c("--font")},"ย้อนหลัง ~6 เดือน (ภาพจำลอง)");
+  add("text",{x:cr,y:252,"text-anchor":"end",fill:c("--muted"),"font-size":13,"font-family":c("--font")},"วันนี้");
+
+  // quiz
+  document.querySelectorAll(".quiz").forEach(function(q){
+    var fb = q.querySelector(".feedback");
+    var expl = q.dataset.quiz === "1"
+      ? ["ถูกต้อง: $28 สูงกว่า $26 คนซื้อสัญญาจึงไม่ใช้สิทธิ สัญญาจบเอง เงิน $13 เป็นของคุณ และเงิน $2,600 ปลดล็อก", "ยังไม่ใช่: ต้องซื้อหุ้นเฉพาะเมื่อราคาปิด 'ต่ำกว่า' $26 เท่านั้น ส่วน $13 เป็นของคุณตั้งแต่วันแรก ไม่ต้องคืน"]
+      : ["ถูกต้อง: $24 ต่ำกว่า $26 คุณต้องทำตามสัญญา คือจ่าย $2,600 ซื้อ 100 หุ้น ได้หุ้นมาถือ (มูลค่าตอนนั้น $2,400)", "ยังไม่ใช่: เมื่อปิดต่ำกว่า $26 คุณต้องซื้อ 100 หุ้นที่ $26 จ่าย $2,600 และได้หุ้นมาถือ เงินไม่ได้หายไปเปล่าๆ"];
+    q.querySelectorAll(".opt").forEach(function(b){
+      b.addEventListener("click", function(){
+        q.querySelectorAll(".opt").forEach(function(o){ o.classList.remove("right","wrong"); });
+        var ok = b.dataset.ok === "1";
+        b.classList.add(ok ? "right" : "wrong");
+        fb.textContent = ok ? expl[0] : expl[1];
+      });
+    });
+  });
+
+  var mq = window.matchMedia("(prefers-color-scheme: dark)");
+  if (mq.addEventListener) mq.addEventListener("change", function(){ css = getComputedStyle(document.documentElement); update(); });
+})();
+</script>

@@ -5,7 +5,7 @@
  *  short context string and render as Markdown; only the browser preview's
  *  canned answers are trusted HTML, labelled as sample. */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { EasyIdea, EasyIdeas, EasyProfile } from "../types/easy";
@@ -13,6 +13,7 @@ import { anchorId, useAgentAnchor } from "../agent/anchors";
 import { runAgentTurn } from "../agent/bus";
 import { EzIcon } from "./icons";
 import { WhatIf } from "./WhatIf";
+import { Lesson, lessonSeen, markLessonSeen } from "./Lesson";
 import { LEVEL_TH, badgeText, expiryTh, signed, usd } from "./util";
 import { easyHasTauri } from "./invoke";
 import { sampleAnswer } from "./sample";
@@ -48,6 +49,13 @@ export function FiveQuestions(p: Props) {
 
   const [thread, setThread] = useState<ThreadEntry[]>([]);
   const [busy, setBusy] = useState(false);
+
+  // the lesson opens by itself the first time the user ever opens an idea;
+  // any open (auto or via the button) marks the flag so it never nags again
+  const [lessonOpen, setLessonOpen] = useState(() => !lessonSeen());
+  useEffect(() => {
+    if (lessonOpen) markLessonSeen();
+  }, [lessonOpen]);
 
   // one anchor per answer block, in the fixed order of the five questions
   const when = expiryTh(o.expiry).replace(/^\S+ /, "");
@@ -97,6 +105,12 @@ export function FiveQuestions(p: Props) {
         สัญญาหมดอายุ{expiryTh(o.expiry)} (อีก {o.days} วัน) · ราคา {d.symbol} ตอนนี้ ${d.spot.toFixed(2)}
         <span className={`ez-src${sample ? " amber" : ""}`}>{badgeText(d.source, sample)}</span>
       </p>
+
+      <div className="ez-lesson-entry">
+        <button className="ez-btn ghost" onClick={() => setLessonOpen(true)}>
+          <EzIcon name="info" />เรียนพื้นฐานก่อนตัดสินใจ (5 นาที)
+        </button>
+      </div>
 
       <div className="ez-panel ez-gap-l" style={{ paddingTop: 8 }}>
         <div className="ez-q5" ref={q1Ref}>
@@ -190,6 +204,8 @@ export function FiveQuestions(p: Props) {
         <EzIcon name="info" />
         <span>คุณตั้งเงินไว้ {usd(profile.cash)} · สัญญานี้ต้องกันเงิน {usd(o.cost)}</span>
       </p>
+
+      {lessonOpen && <Lesson idea={o} ideas={d} onClose={() => setLessonOpen(false)} />}
     </section>
   );
 }
