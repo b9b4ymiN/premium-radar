@@ -87,6 +87,35 @@ fn dte_window(risk: u8) -> (f64, f64) {
 const LOW_OI: f64 = 100.0;
 /// Spread ที่เริ่มเป็น caution (%, เขต gate คือ MAX_SPREAD_PCT)
 const WIDE_SPREAD_PCT: f64 = 10.0;
+/// สัญญาราคาถูก (เซนต์ต่อหุ้น) ช่องว่าง bid-ask เป็น % ดูใหญ่แต่เป็นเงิน
+/// น้อยมาก เช่น 0.13/0.18 = 32% แต่ต่างกันแค่ $0.05/หุ้น ($5 ต่อสัญญา) —
+/// จึงยอมให้ผ่าน gate ด้วยเกณฑ์เงินสัมบูรณ์นี้คู่กับเกณฑ์ % (การให้คะแนน
+/// liquidity ยังคิดจาก % เหมือนเดิม)
+const MAX_SPREAD_ABS_USD: f64 = 0.05;
+
+/// Spread gate ของ Easy Mode: ผ่านเมื่อกว้างเป็น % ไม่เกิน MAX_SPREAD_PCT
+/// "หรือ" ช่องว่าง ask−bid เป็นเงินไม่เกิน MAX_SPREAD_ABS_USD ต่อหุ้น —
+/// ขาด bid/ask ฝั่งใดฝั่งหนึ่ง (spread_pct เป็น None) ผ่านเหมือนเดิม
+/// A per-share price for a sentence: whole dollars stay whole ("$10"), any
+/// cents are kept ("$21.50", "$28.46") — rounding a strike of 21.5 to "$22"
+/// would name a contract that does not exist.
+fn fmt_price(v: f64) -> String {
+    let cents = (v * 100.0).round() as i64;
+    if cents % 100 == 0 {
+        fmt_usd(v)
+    } else {
+        format!(
+            "{}.{:02}",
+            fmt_usd((cents / 100) as f64),
+            (cents % 100).abs()
+        )
+    }
+}
+
+fn spread_ok(row: &EnrichedRow) -> bool {
+    row.spread_pct.is_none_or(|sp| sp <= MAX_SPREAD_PCT)
+        || row.q.ask - row.q.bid <= MAX_SPREAD_ABS_USD
+}
 
 // ---------- public API ----------
 
@@ -157,6 +186,22 @@ pub struct BudgetShort {
     pub text_th: String,
 }
 
+/// "เงินที่ต้องมี" ของหุ้นแต่ละตัวที่ user สนใจ (โปรไฟล์ + watchlist) —
+/// เงินทุกตัวคิดต่อ 1 สัญญา (×100) เหมือนที่อื่นใน Easy Mode
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WatchCash {
+    pub symbol: String,
+    pub spot: Option<f64>,
+    /// สัญญาพุตที่ถูกที่สุดที่ผ่านทุก quality gate (strike×100) —
+    /// None = ไม่มีตัวไหนของ symbol นี้ผ่านเกณฑ์ในรอบนี้
+    pub min_cash_usd: Option<f64>,
+    /// สัญญาพุตที่ถูกที่สุดที่จับได้ใน DTE window และมี bid>0 (ไม่สน gate อื่น)
+    pub any_cash_usd: Option<f64>,
+    /// min_cash_usd ≤ profile.cash (false เมื่อยังไม่มีตัวที่ผ่านเกณฑ์)
+    pub affordable: bool,
+    pub text_th: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UniverseIdeas {
     pub session_date: Option<String>,
@@ -168,6 +213,8 @@ pub struct UniverseIdeas {
     pub market_note_th: String,
     pub picks: Vec<UniversePick>,
     pub budget_short: Option<BudgetShort>,
+    /// เงินที่ต้องมีต่อหุ้นที่ user สนใจ (อาจว่างเมื่อไม่มี watch symbol)
+    pub watch_cash: Vec<WatchCash>,
     pub agent_say_th: String,
     pub computed_at: String,
 }
@@ -188,10 +235,23 @@ pub fn shortlist(
         .collect()
 }
 
-/// Stage 2: จัดอันดับพร้อม extras
+/// Stage 2: จัดอันดับพร้อม extras — watch list คือหุ้นในโปรไฟล์ของ user
 pub fn rank_universe(
     input: &RankInput,
     profile: &EasyProfile,
+    now: DateTime<Utc>,
+) -> UniverseIdeas {
+    let watch: Vec<String> = profile.stocks.iter().map(|s| s.symbol.clone()).collect();
+    rank_universe_with_watch(input, profile, &watch, now)
+}
+
+/// Stage 2 แบบระบุ watch list เอง (หุ้นในโปรไฟล์ + watchlist ของแอป):
+/// เหมือน [`rank_universe`] แต่เพิ่ม `watch_cash` — เงินที่ต้องกันต่อหุ้น
+/// ที่ user สนใจ (uppercase, dedup, เรียงตามลำดับที่ส่งมา, ไม่เกิน 10 ตัว)
+pub fn rank_universe_with_watch(
+    input: &RankInput,
+    profile: &EasyProfile,
+    watch: &[String],
     now: DateTime<Utc>,
 ) -> UniverseIdeas {
     let pipe = run_pipeline(input, profile, now, true);
@@ -204,9 +264,11 @@ pub fn rank_universe(
             .map(|(min_cash, symbol)| BudgetShort {
                 min_cash_usd: *min_cash,
                 cheapest_symbol: symbol.clone(),
+                // อธิบายกติกา 100 หุ้นด้วย เพราะคนทั่วไปไม่รู้ว่าทำไมงบเท่านี้ไม่พอ
                 text_th: format!(
-                    "งบ ${} ยังไม่พอสำหรับหุ้นที่ผู้ช่วยคัดได้คืนนี้ ตัวที่ใช้เงินน้อยสุดคือ {symbol} \
-                 ต้องกันเงิน ${} ต่อ 1 สัญญา",
+                    "งบ ${} ยังไม่พอสำหรับไอเดียที่ผ่านเกณฑ์คืนนี้ · ขายสัญญา 1 ตัว = \
+                     สัญญาว่าจะซื้อหุ้น 100 หุ้น จึงต้องกันเงินไว้ = ราคาที่นัด × 100 · \
+                     ตัวที่ใช้เงินน้อยสุดที่ผ่านเกณฑ์คือ {symbol} ต้องกันเงิน ${}",
                     fmt_usd(profile.cash),
                     fmt_usd(*min_cash)
                 ),
@@ -271,6 +333,8 @@ pub fn rank_universe(
         (None, None) => "คืนนี้ยังไม่มีหุ้นที่ผ่านการคัดกรองให้พิจารณา".to_string(),
     };
 
+    let watch_cash = watch_cash_list(&pipe, profile, watch);
+
     UniverseIdeas {
         session_date: pipe.session_date.map(|d| d.format("%Y-%m-%d").to_string()),
         as_of: pipe.as_of.map(|t| t.to_rfc3339()),
@@ -280,9 +344,64 @@ pub fn rank_universe(
         market_note_th,
         picks,
         budget_short,
+        watch_cash,
         agent_say_th,
         computed_at: now.to_rfc3339(),
     }
+}
+
+/// สร้าง WatchCash ต่อ watch symbol: uppercase/dedup/ตามลำดับ/ไม่เกิน 10 ตัว
+fn watch_cash_list(pipe: &PipeOut, profile: &EasyProfile, watch: &[String]) -> Vec<WatchCash> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for raw in watch {
+        if out.len() >= 10 {
+            break;
+        }
+        let sym = raw.trim().to_uppercase();
+        if sym.is_empty() || !seen.insert(sym.clone()) {
+            continue;
+        }
+        let Some(sc) = pipe.sym_cash.get(&sym) else {
+            out.push(WatchCash {
+                symbol: sym.clone(),
+                spot: None,
+                min_cash_usd: None,
+                any_cash_usd: None,
+                affordable: false,
+                text_th: format!("ยังไม่มีข้อมูลของ {sym} ในรอบนี้"),
+            });
+            continue;
+        };
+        let affordable = sc.min_gated.is_some_and(|m| m <= profile.cash);
+        // ประโยคเดียวที่หน้าบ้านต้องแสดง — เลขทุกตัวคิดใน Rust แล้ว
+        let text_th = match (sc.min_gated, sc.min_any) {
+            (Some(min), _) => format!(
+                "{sym} ราคา ${} · ขาย 1 สัญญาต้องกันเงินราว ${} (ยอมซื้อ 100 หุ้นที่ ${})",
+                fmt_price(sc.spot),
+                fmt_usd(min),
+                fmt_price(min / 100.0)
+            ),
+            (None, Some(any)) => format!(
+                "{sym} ราคา ${} · ยังไม่มีสัญญาที่ปลอดภัยพอในรอบนี้ — ตัวที่ถูกสุดต้องกันเงิน ${}",
+                fmt_price(sc.spot),
+                fmt_usd(any)
+            ),
+            (None, None) => format!(
+                "{sym} ราคา ${} · ยังไม่มีสัญญาที่ปลอดภัยพอในรอบนี้",
+                fmt_price(sc.spot)
+            ),
+        };
+        out.push(WatchCash {
+            symbol: sym,
+            spot: Some(sc.spot),
+            min_cash_usd: sc.min_gated,
+            any_cash_usd: sc.min_any,
+            affordable,
+            text_th,
+        });
+    }
+    out
 }
 
 // ---------- pipeline ----------
@@ -309,6 +428,15 @@ struct Cand {
     score: f64,
 }
 
+/// ข้อมูลเงินที่ต้องกันของหุ้นหนึ่งตัวจากข้อมูลคืนนี้ — ใช้ทำ WatchCash
+struct SymCash {
+    spot: f64,
+    /// collateral ต่ำสุดของสัญญาที่ผ่านทุก gate
+    min_gated: Option<f64>,
+    /// collateral ต่ำสุดของพุตที่มี bid>0 ใน DTE window (ไม่สน gate อื่น)
+    min_any: Option<f64>,
+}
+
 struct PipeOut {
     /// contract ที่ดีที่สุด "ที่จ่ายไหว" ต่อ symbol เรียง score desc, symbol asc —
     /// ถ้าตัวท็อปของ symbol เกินงบ จะไต่ลงเอาตัวถัดไปของ symbol เดิมที่ผ่านงบ
@@ -324,6 +452,9 @@ struct PipeOut {
     latest: HashMap<String, Observation>,
     /// latest OI ต่อ occ จาก `previous` — ใช้ทำ oi_change_pct เท่านั้น
     prev_oi: HashMap<String, f64>,
+    /// ต่อ symbol ที่สแกน (มี spot + quote): เงินที่ต้องกันต่ำสุดแบบผ่าน gate
+    /// และแบบไม่สน gate — ใช้ทำ watch_cash
+    sym_cash: HashMap<String, SymCash>,
 }
 
 fn run_pipeline(
@@ -405,6 +536,7 @@ fn run_pipeline(
     // 2–3. enrich + gates + raw components
     let mut cands: Vec<Cand> = Vec::new();
     let mut cheapest: Option<(f64, String)> = None;
+    let mut sym_cash: HashMap<String, SymCash> = HashMap::new();
     for sym in &symbols {
         let spot = match &stock[sym].kind {
             ObsKind::StockQuote { price, .. } => price.expect("spot filtered > 0"),
@@ -449,14 +581,27 @@ fn run_pipeline(
             _ => None,
         };
 
+        // เงินที่ต้องกันต่ำสุดของ symbol นี้สองแบบ (ผ่าน gate / ไม่สน gate)
+        // ใช้ทำ watch_cash — พุตที่ไม่ผ่าน gate ก็ยังบอกได้ว่าถูกสุดกี่ตัง
+        let mut min_gated: Option<f64> = None;
+        let mut min_any: Option<f64> = None;
         for row in enriched {
             let gated = row.q.option_type == OptType::Put
                 && (dte_lo..=dte_hi).contains(&row.dte)
                 && row.q.bid > 0.0
                 && row.credit.is_some_and(|c| c >= MIN_CREDIT * 100.0)
-                && row.spread_pct.is_none_or(|sp| sp <= MAX_SPREAD_PCT)
+                && spread_ok(&row)
                 && row.iv.is_some()
                 && row.p_itm.is_some_and(|p| p * 100.0 <= gate_cap_pct);
+            if row.q.bid > 0.0
+                && (dte_lo..=dte_hi).contains(&row.dte)
+                && let Some(col) = row.collateral
+            {
+                min_any = Some(min_any.map_or(col, |m| m.min(col)));
+            }
+            if gated && let Some(col) = row.collateral {
+                min_gated = Some(min_gated.map_or(col, |m| m.min(col)));
+            }
             if !gated {
                 continue;
             }
@@ -515,6 +660,14 @@ fn run_pipeline(
                 score: 0.0,
             });
         }
+        sym_cash.insert(
+            (*sym).to_string(),
+            SymCash {
+                spot,
+                min_gated,
+                min_any,
+            },
+        );
     }
 
     let candidate_symbols = u32::try_from(
@@ -584,6 +737,7 @@ fn run_pipeline(
         as_of,
         latest,
         prev_oi,
+        sym_cash,
     }
 }
 
@@ -989,6 +1143,7 @@ mod tests {
         assert_eq!(short.min_cash_usd, 1000.0, "F strike 10 × 100");
         assert!(short.text_th.contains("$1,000"), "text: {}", short.text_th);
         assert!(short.text_th.contains("F"));
+        assert!(short.text_th.contains("100 หุ้น"), "ต้องอธิบายกติกา 100 หุ้น");
         assert_eq!(out.agent_say_th, short.text_th);
         assert_eq!(out.candidate_symbols, 6, "gates ผ่าน เฉพาะงบที่ไม่พอ");
     }
@@ -1221,6 +1376,7 @@ mod tests {
             "market_note_th",
             "picks",
             "budget_short",
+            "watch_cash",
             "agent_say_th",
             "computed_at",
         ] {
@@ -1303,5 +1459,201 @@ mod tests {
         let rich = rank_universe(&inp, &profile(10_000.0, 3), now());
         assert_eq!(rich.picks[0].idea.strike, 31.0);
         assert!(rich.picks[0].score > tight.picks[0].score);
+    }
+
+    // ---------- spread gate (percent OR absolute gap) ----------
+
+    /// EnrichedRow เดี่ยวจาก bid/ask เพื่อเทส spread_ok ตรง ๆ
+    fn row_with_spread(bid: f64, ask: f64) -> EnrichedRow {
+        let rows = vec![QuoteRow {
+            symbol: "TEST261224P00100000".into(),
+            underlying: "TEST".into(),
+            expiry: exp_dec24(),
+            option_type: OptType::Put,
+            strike: 100.0,
+            price: (ask + bid) / 2.0,
+            bid,
+            ask,
+            volume: 1000.0,
+            oi: 1000.0,
+            change: 0.0,
+            change_ratio: 0.0,
+            src: "TEST".into(),
+        }];
+        enrich_rows_raw(rows, 100.0, now()).remove(0)
+    }
+
+    #[test]
+    fn fmt_price_keeps_cents_and_drops_zero_cents() {
+        assert_eq!(fmt_price(21.5), "21.50");
+        assert_eq!(fmt_price(28.46), "28.46");
+        assert_eq!(fmt_price(26.0), "26");
+        assert_eq!(fmt_price(1250.0), "1,250");
+    }
+
+    #[test]
+    fn spread_ok_passes_wide_percent_with_tiny_absolute_gap() {
+        // PFE จริงจาก recorder: 0.13/0.18 = 32% แต่ต่างกันแค่ $0.05/หุ้น
+        let row = row_with_spread(0.13, 0.18);
+        assert!(
+            row.spread_pct.is_some_and(|sp| sp > MAX_SPREAD_PCT),
+            "fixture ต้องกว้างเป็น % ก่อน"
+        );
+        assert!(spread_ok(&row), "32% แต่ 5 เซนต์ ต้องผ่าน");
+    }
+
+    #[test]
+    fn spread_ok_fails_wide_percent_with_big_absolute_gap() {
+        let row = row_with_spread(0.30, 0.40);
+        let sp = row.spread_pct.expect("มีทั้งสองฝั่ง");
+        assert!(sp > MAX_SPREAD_PCT && sp < 30.5, "≈28.6%: {sp}");
+        assert!(!spread_ok(&row), "28.6% และ $0.10 ต้องไม่ผ่าน");
+    }
+
+    #[test]
+    fn spread_ok_passes_narrow_percent_even_with_big_gap() {
+        let row = row_with_spread(1.00, 1.20); // 18% ≤ 25 แม้ช่องว่าง $0.20
+        assert!(spread_ok(&row));
+    }
+
+    #[test]
+    fn spread_ok_missing_spread_still_passes() {
+        let row = row_with_spread(0.10, 0.0); // ขาด ask ⇒ spread_pct None
+        assert!(row.spread_pct.is_none());
+        assert!(spread_ok(&row));
+    }
+
+    /// Regression ของ session 2026-11-26: PFE spot 28.46, K=26 (2026-12-24,
+    /// DTE 28) bid .13 ask .18, IV ≈ 31% — เดิมตายที่ spread 32% > 25% ทั้ง
+    /// ที่ช่องว่างแค่ $5 ต่อสัญญา ตอนนี้งบ $3,000 / risk 1 ต้องได้ pick
+    #[test]
+    fn pfe_k26_regression_becomes_pick_at_3000_risk1() {
+        let now = Utc.with_ymd_and_hms(2026, 11, 26, 22, 0, 0).unwrap();
+        let t = Utc.with_ymd_and_hms(2026, 11, 26, 21, 0, 0).unwrap();
+        let today = vec![
+            stock("PFE", 28.46, t),
+            put("PFE", 26.0, exp_dec24(), t, 0.13, 0.18, 5_000.0),
+        ];
+        let out = rank_universe(&input(today), &profile(3_000.0, 1), now);
+        assert!(out.budget_short.is_none(), "ต้องมีตัวที่จ่ายไหวแล้ว");
+        assert_eq!(out.picks.len(), 1);
+        let pick = &out.picks[0];
+        assert_eq!(pick.idea.symbol, "PFE");
+        assert_eq!(pick.idea.strike, 26.0);
+        assert!(pick.idea.cost <= 3_000.0, "cost = {}", pick.idea.cost);
+        assert_eq!(pick.idea.cost, 2_600.0, "26 × 100");
+        assert!(!pick.idea.cash_short);
+    }
+
+    // ---------- watch_cash ----------
+
+    /// สาขาข้อความครบ: ไม่มีข้อมูล / ผ่านเกณฑ์ / ไม่ผ่านเกณฑ์แต่มีตัวถูก /
+    /// มี spot แต่ไม่มีพุตใน DTE window + ธง affordable — risk 2 เพราะ
+    /// ทุก branch ของ fixture นี้ตัดสินที่ gate p_itm/spread ไม่ใช่หน้าต่าง dte
+    #[test]
+    fn watch_cash_text_branches_and_affordability() {
+        let (t, near) = (
+            at(21, 0),
+            NaiveDate::from_ymd_opt(2026, 11, 28).unwrap(), // dte 3 นอกหน้าต่าง
+        );
+        let mut today = base_today(); // F ผ่าน gate ทั้งหมด (strike 10)
+        today.push(stock("GATE", 50.0, t)); // ATM put ไม่ผ่าน p_itm แต่มี bid
+        today.push(put("GATE", 50.0, exp_dec24(), t, 0.92, 0.98, 4_000.0));
+        today.push(stock("NEAR", 50.0, t)); // พุตใกล้เกินไป ⇒ ไม่มีตัวใน window
+        today.push(put("NEAR", 45.0, near, t, 0.50, 0.55, 4_000.0));
+
+        let watch = ["f", "GATE", "NEAR", "NVDA"];
+        let out = rank_universe_with_watch(
+            &input(today.clone()),
+            &profile(5_000.0, 2),
+            &watch.map(String::from),
+            now(),
+        );
+        let by: HashMap<&str, &WatchCash> = out
+            .watch_cash
+            .iter()
+            .map(|w| (w.symbol.as_str(), w))
+            .collect();
+        assert_eq!(out.watch_cash.len(), 4);
+
+        let f = by["F"];
+        assert_eq!(f.spot, Some(11.0));
+        assert_eq!(f.min_cash_usd, Some(1_000.0), "F strike 10 × 100");
+        assert!(f.affordable, "1,000 ≤ งบ 5,000");
+        assert_eq!(
+            f.text_th,
+            "F ราคา $11 · ขาย 1 สัญญาต้องกันเงินราว $1,000 (ยอมซื้อ 100 หุ้นที่ $10)"
+        );
+
+        let gate = by["GATE"];
+        assert_eq!(gate.min_cash_usd, None, "ATM put ไม่ผ่าน p_itm gate");
+        assert_eq!(gate.any_cash_usd, Some(5_000.0), "ตัวถูกสุดที่จับได้");
+        assert!(!gate.affordable);
+        assert_eq!(
+            gate.text_th,
+            "GATE ราคา $50 · ยังไม่มีสัญญาที่ปลอดภัยพอในรอบนี้ — ตัวที่ถูกสุดต้องกันเงิน $5,000"
+        );
+
+        let near = by["NEAR"];
+        assert_eq!(near.spot, Some(50.0));
+        assert_eq!(near.min_cash_usd, None);
+        assert_eq!(near.any_cash_usd, None, "พุตเดียวอยู่นอก DTE window");
+        assert_eq!(near.text_th, "NEAR ราคา $50 · ยังไม่มีสัญญาที่ปลอดภัยพอในรอบนี้");
+
+        let nvda = by["NVDA"];
+        assert_eq!(nvda.spot, None);
+        assert_eq!(nvda.min_cash_usd, None);
+        assert_eq!(nvda.any_cash_usd, None);
+        assert_eq!(nvda.text_th, "ยังไม่มีข้อมูลของ NVDA ในรอบนี้");
+
+        // KO (base_today) ผ่านเกณฑ์ที่ $5,500 — เกินงบ $5,000 ⇒ ไม่ affordable
+        let rich = rank_universe_with_watch(
+            &input(today.clone()),
+            &profile(5_000.0, 2),
+            &["KO".to_string()],
+            now(),
+        );
+        let ko = &rich.watch_cash[0];
+        assert_eq!(ko.min_cash_usd, Some(5_500.0));
+        assert!(!ko.affordable, "5,500 > งบ 5,000");
+    }
+
+    /// uppercase + dedup (เก็บตัวแรก) + คงลำดับ + cap 10 หลัง dedup
+    #[test]
+    fn watch_cash_uppercases_dedups_and_caps_at_ten() {
+        let mut watch: Vec<String> = ["f", "F", " ko ", "GM"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        for i in 0..12 {
+            watch.push(format!("S{i:02}")); // symbol ต่างกัน 12 ตัว ไม่มีในข้อมูล
+        }
+        let out =
+            rank_universe_with_watch(&input(base_today()), &profile(50_000.0, 2), &watch, now());
+        assert_eq!(out.watch_cash.len(), 10, "dedup เหลือ 4 + 12 ใหม่ ⇒ cap 10");
+        assert_eq!(out.watch_cash[0].symbol, "F", "uppercase + เก็บตัวแรก");
+        assert_eq!(out.watch_cash[1].symbol, "KO", "trim + uppercase");
+        assert_eq!(out.watch_cash[2].symbol, "GM");
+        assert_eq!(out.watch_cash[3].symbol, "S00", "ตัวถัดไปตามลำดับที่ส่งมา");
+        assert_eq!(out.watch_cash[9].symbol, "S06", "ตัดที่ 10 ตัวแรก");
+    }
+
+    /// rank_universe ใช้ profile.stocks เป็น watch list อัตโนมัติ
+    #[test]
+    fn rank_universe_defaults_watch_to_profile_stocks() {
+        let mut prof = profile(50_000.0, 2);
+        prof.stocks = vec![
+            crate::easy::EasyStock {
+                symbol: "f".into(),
+                stance: Stance::Want,
+            },
+            crate::easy::EasyStock {
+                symbol: "NOPE".into(),
+                stance: Stance::Avoid,
+            },
+        ];
+        let out = rank_universe(&input(base_today()), &prof, now());
+        let syms: Vec<&str> = out.watch_cash.iter().map(|w| w.symbol.as_str()).collect();
+        assert_eq!(syms, ["F", "NOPE"], "uppercase ตามลำดับ profile");
     }
 }

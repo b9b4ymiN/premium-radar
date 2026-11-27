@@ -143,6 +143,21 @@ export interface BudgetShort {
   text_th: string;
 }
 
+/** "เงินที่ต้องมี" per watched stock (profile stocks + active watchlist);
+ *  all money figures in USD for ONE contract (100 shares), computed in Rust. */
+export interface WatchCash {
+  symbol: string;
+  spot: number | null;
+  /** Cheapest put passing ALL quality gates (strike × 100); null = none passed tonight. */
+  min_cash_usd: number | null;
+  /** Cheapest captured put with a bid in the DTE window, gates aside; null = no put captured. */
+  any_cash_usd: number | null;
+  /** min_cash_usd ≤ profile cash (false while min_cash_usd is null). */
+  affordable: boolean;
+  /** Plain-Thai sentence computed in Rust (the UI renders it verbatim). */
+  text_th: string;
+}
+
 export interface UniverseIdeas {
   session_date: string | null;
   /** RFC3339 */
@@ -154,6 +169,8 @@ export interface UniverseIdeas {
   market_note_th: string;
   picks: UniversePick[];
   budget_short: BudgetShort | null;
+  /** Money needed per watched stock; may be empty. */
+  watch_cash: WatchCash[];
   agent_say_th: string;
   computed_at: string;
 }

@@ -329,6 +329,31 @@
 /* programmatic focus on a screen heading must not draw a ring */
 .ez-main [tabindex="-1"]:focus { outline: none; }
 
+/* "สัญญา 1 ตัว = 100 หุ้น" explainer (collapsed <details>) + the watch-cash
+   list — same surface/border look as every other panel content */
+.ez-c100 { margin-top: 14px; }
+.ez-c100 summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+  font-size: 15px;
+}
+.ez-c100 summary:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; border-radius: 4px; }
+.ez-c100-body { margin-top: 10px; display: grid; gap: 8px; }
+.ez-c100-body p { margin: 0; color: var(--secondary); font-size: 15px; line-height: 1.55; }
+
+.ez-wcash-title { font-weight: 700; font-size: 16px; color: var(--text); }
+.ez-wcash {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+  align-items: start;
+  color: var(--secondary);
+  font-size: 15px;
+  margin-top: 10px;
+}
+.ez-wmark { font-weight: 700; font-size: 15px; }
+
 /* easy mode on narrow windows: keep the mode switch and data badge visible */
 @media (max-width: 640px) {
   .app.easy .global-search { display: none; }

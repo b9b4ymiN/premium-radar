@@ -12,7 +12,7 @@ pub mod scan;
 pub mod settings;
 
 use radar_core::easy::{EasyIdeas, EasyProfile, build_ideas, normalise_profile, source_token};
-use radar_core::easy_rank::{UniverseIdeas, rank_universe};
+use radar_core::easy_rank::{UniverseIdeas, rank_universe_with_watch};
 use radar_core::engine::{Engine, EngineSnapshot};
 use radar_core::quant::realized_vol;
 use radar_core::screener::{Filters, Mode};
@@ -1808,7 +1808,20 @@ async fn easy_universe_ideas(state: tauri::State<'_, AppState>) -> Result<Univer
     let app_data_dir = state.app_data_dir.clone();
     let input =
         off_ui_thread(move || easy_universe::load_rank_input(&settings, &app_data_dir)).await?;
-    Ok(rank_universe(&input, &profile, Utc::now()))
+    // watch list ของ "เงินที่ต้องมี": หุ้นในโปรไฟล์ต่อด้วย watchlist ที่ active
+    let mut watch: Vec<String> = profile.stocks.iter().map(|s| s.symbol.clone()).collect();
+    watch.extend(
+        load_watchlists(&state.app_data_dir)
+            .active_list()
+            .map(|list| list.symbols.clone())
+            .unwrap_or_default(),
+    );
+    Ok(rank_universe_with_watch(
+        &input,
+        &profile,
+        &watch,
+        Utc::now(),
+    ))
 }
 
 /// Save the Easy Mode onboarding answers: symbols are normalised and
