@@ -2,7 +2,8 @@
 //! `tauri::ipc::Channel<AgentEvent>` plus its `agent_cancel` counterpart.
 //! The run itself lives on the blocking pool; the engine lock is taken
 //! only while a tool executes inside the executor closure and released
-//! before every LLM round-trip (the same contract as `ask_copilot`).
+//! before every LLM round-trip — the lock contract the retired legacy
+//! chat established, now the agent's only entry point.
 
 use std::sync::Arc;
 use std::sync::Mutex;

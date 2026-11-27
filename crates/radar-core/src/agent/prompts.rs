@@ -3,7 +3,6 @@
 //! always carries (Easy: tone-easy + five-answers, Pro: tone-pro).
 //! assignment and oi-trader are deliberately NOT embedded — read_playbook
 //! loads them on demand so the prompt stays inside the GLM token budget.
-//! The legacy `copilot::system_prompt` stays untouched for the old chat.
 
 use crate::agent::contract::Mode;
 

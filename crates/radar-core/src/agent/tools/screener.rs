@@ -1,7 +1,7 @@
-//! Screener tools for the agent registry. `top_candidates` is no longer an
-//! agent tool (the agent's `scan_chain` in the ideas family replaces it —
-//! it applies the filters and returns the same formatter's rows); the
-//! legacy copilot chat keeps `copilot::screener_tools()` until P4.
+//! Screener tools for the agent registry. `top_candidates` is not an agent
+//! tool (the agent's `scan_chain` in the ideas family replaces it — it
+//! applies the filters and returns the same formatter's rows); it stays a
+//! name only `copilot::execute_tool` answers for the engine dispatch.
 
 use serde_json::{Map, Value, json};
 
@@ -199,22 +199,15 @@ mod tests {
     use crate::screener::{Grade, QuoteRow};
 
     #[test]
-    fn two_specs_whose_names_stay_within_the_copilot_screener_set() {
+    fn two_specs_whose_names_stay_within_the_engine_tool_set() {
         let specs = screener_specs();
         let spec_names: Vec<&str> = specs.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(spec_names, vec!["contract_detail", "chain_stats"]);
-        // top_candidates stays a copilot-only tool; the agent set is a subset
-        let copilot_names: Vec<String> = crate::copilot::screener_tools()
-            .iter()
-            .map(|t| t.function.name.clone())
-            .collect();
-        for name in &spec_names {
-            assert!(
-                copilot_names.iter().any(|c| c == name),
-                "{name} must exist in the copilot set"
-            );
-        }
-        assert!(copilot_names.iter().any(|c| c == "top_candidates"));
+        // top_candidates is engine-only (the ideas family's scan_chain
+        // covers it for the agent); these specs stay a subset of the names
+        // `copilot::execute_tool` dispatches.
+        let engine_tools = ["top_candidates", "contract_detail", "chain_stats"];
+        assert!(spec_names.iter().all(|name| engine_tools.contains(name)));
     }
 
     #[test]
