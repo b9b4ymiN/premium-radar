@@ -2,6 +2,7 @@
 //! registry, and the tool specs the agent exposes to the model.
 
 pub mod contract;
+pub mod grounding;
 pub mod registry;
 pub mod runner;
 pub mod tools;

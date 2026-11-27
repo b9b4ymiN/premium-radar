@@ -49,8 +49,9 @@ impl Default for RunLimits {
     }
 }
 
-/// Streamed progress for the chat UI. `unverified` stays false until the
-/// grounding check lands (P1-T3).
+/// Streamed progress for the chat UI. `unverified` is true when the
+/// grounding check found numbers with no supporting tool/user fact even
+/// after the single correction round; `ungrounded` lists their raw tokens.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {
@@ -74,6 +75,7 @@ pub enum AgentEvent {
     Answer {
         text: String,
         unverified: bool,
+        ungrounded: Vec<String>,
     },
     Error {
         message: String,
@@ -98,6 +100,12 @@ pub type ToolExecutor<'a> = dyn FnMut(&ToolSpec, &Value) -> Result<String, Strin
 #[cfg(feature = "client")]
 const QUOTA_HINT: &str =
     "ใช้ tool ครบโควตาแล้ว — ตอบจากข้อมูลที่มีอยู่ตอนนี้ และบอกผู้ใช้ตรงๆ ว่าข้อมูลส่วนไหนยังไม่ได้ดู";
+
+/// Correction note of the one grounding retry: the model sees the raw
+/// tokens it invented and is told to re-answer from tool data only (or to
+/// call the relevant tool first).
+#[cfg(feature = "client")]
+const GROUNDING_HINT: &str = "ตัวเลขเหล่านี้ไม่มีในข้อมูลจาก tools";
 
 // ---------- pure helpers: compiled for tests and the client loop ----------
 
@@ -297,6 +305,8 @@ use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 #[cfg(feature = "client")]
+use super::grounding;
+#[cfg(feature = "client")]
 use super::registry::Registry;
 
 /// Marker: the cancel flag won before this call could execute.
@@ -485,6 +495,16 @@ pub fn run_agent(
         .map_err(|e| emit_error(emit, format!("build http client: {e}")))?;
 
     let mut messages = build_messages(req);
+    // Grounding sources: every tool result string shown to the model in
+    // this run plus the user's own turns — the model may reuse numbers the
+    // user themselves provided.
+    let mut sources: Vec<String> = req
+        .history
+        .iter()
+        .filter(|message| message.role == "user")
+        .map(|message| message.content.clone())
+        .collect();
+    let mut grounding_retry_used = false;
     let mut state = RunState {
         registry,
         mode: req.mode,
@@ -542,13 +562,28 @@ pub fn run_agent(
 
         match parse_agent_reply(&json) {
             AgentReply::Content(text) => {
-                // The grounding check (P1-T3) will decide `unverified`;
-                // until then every answer is presented as verified.
-                emit(AgentEvent::Answer {
-                    text: text.clone(),
-                    unverified: false,
-                });
-                return Ok(AgentOutcome::Answer(text));
+                let facts = grounding::collect_facts(
+                    &sources.iter().map(String::as_str).collect::<Vec<&str>>(),
+                );
+                let ungrounded = grounding::ungrounded(&text, &facts);
+                if ungrounded.is_empty() || grounding_retry_used {
+                    let unverified = !ungrounded.is_empty();
+                    emit(AgentEvent::Answer {
+                        text: text.clone(),
+                        unverified,
+                        ungrounded,
+                    });
+                    return Ok(AgentOutcome::Answer(text));
+                }
+                // One correction round: show the model the numbers it
+                // invented, then let it answer again (it may also call
+                // more tools — normal budgets still apply).
+                grounding_retry_used = true;
+                messages.push(ChatMessage::assistant(text));
+                messages.push(ChatMessage::system(format!(
+                    "{GROUNDING_HINT}: {} — ตอบใหม่โดยใช้เฉพาะตัวเลขจากผลของ tools หรือเรียก tool ที่เกี่ยวข้องก่อน ห้ามคำนวณเอง",
+                    ungrounded.join(", ")
+                )));
             }
             AgentReply::Error(message) => {
                 return Err(emit_error(emit, format!("LLM response ผิดรูป: {message}")));
@@ -584,6 +619,7 @@ pub fn run_agent(
                             }
                         }
                     };
+                    sources.push(result.clone());
                     messages.push(ChatMessage {
                         role: "tool".into(),
                         content: result,
@@ -792,6 +828,15 @@ mod tests {
             })
             .expect("serialize"),
             json!({"type": "tool_start", "call_id": "c1", "name": "top_candidates", "args": {"count": 5}, "tier": "read"})
+        );
+        assert_eq!(
+            serde_json::to_value(AgentEvent::Answer {
+                text: "ตอบ".into(),
+                unverified: true,
+                ungrounded: vec!["$999".into()],
+            })
+            .expect("serialize"),
+            json!({"type": "answer", "text": "ตอบ", "unverified": true, "ungrounded": ["$999"]})
         );
     }
 

@@ -46,10 +46,21 @@ fn spawn_agent(
     cfg: LlmConfig,
     limits: RunLimits,
     cancel: Arc<AtomicBool>,
+    exec: impl FnMut(&ToolSpec, &Value) -> Result<String, String> + Send + 'static,
+) -> (Result<AgentOutcome, String>, Vec<AgentEvent>) {
+    spawn_agent_with(agent_request(), cfg, limits, cancel, exec)
+}
+
+/// `spawn_agent` with a caller-built request (custom history for the
+/// grounding tests).
+fn spawn_agent_with(
+    req: AgentRequest,
+    cfg: LlmConfig,
+    limits: RunLimits,
+    cancel: Arc<AtomicBool>,
     mut exec: impl FnMut(&ToolSpec, &Value) -> Result<String, String> + Send + 'static,
 ) -> (Result<AgentOutcome, String>, Vec<AgentEvent>) {
     let registry = test_registry();
-    let req = agent_request();
     std::thread::spawn(move || {
         let mut events = Vec::new();
         let outcome = run_agent(
@@ -604,7 +615,176 @@ async fn event_sequence_for_one_tool_call_scenario_is_exact() {
             AgentEvent::Answer {
                 text: "ตอบเสร็จแล้ว".into(),
                 unverified: false,
+                ungrounded: vec![],
             },
         ]
+    );
+}
+
+// (i) grounding: an invented number triggers exactly one correction round;
+// the corrected answer is verified
+#[tokio::test]
+async fn invented_number_gets_one_correction_then_verified_answer() {
+    let server = MockServer::start().await;
+    mount_round(
+        &server,
+        tool_calls_reply(&[("call_1", "top_candidates", r#"{"count": 3}"#)]),
+    )
+    .await;
+    mount_round(
+        &server,
+        json!({"choices": [{"message": {"role": "assistant", "content": "คุณจะได้เงินทันทีประมาณ $999 ต่อสัญญา"}}]}),
+    )
+    .await;
+    mount_answer(&server, "คุณจะได้เงินทันทีประมาณ $183 ต่อสัญญา").await;
+
+    let (outcome, events) = spawn_agent(
+        LlmConfig::new("mock", server.uri(), "m", "k"),
+        RunLimits::default(),
+        Arc::new(AtomicBool::new(false)),
+        |_spec, _args| Ok(json!({"premium": 183.0}).to_string()),
+    );
+
+    assert_eq!(
+        outcome,
+        Ok(AgentOutcome::Answer(
+            "คุณจะได้เงินทันทีประมาณ $183 ต่อสัญญา".into()
+        ))
+    );
+    let reqs = server.received_requests().await.expect("captured");
+    assert_eq!(
+        reqs.len(),
+        3,
+        "tool round + invented answer + corrected answer"
+    );
+    let messages = request_body(&reqs[2])["messages"]
+        .as_array()
+        .expect("messages")
+        .clone();
+    // the failed answer is preserved as an assistant turn...
+    assert!(
+        messages
+            .iter()
+            .any(|m| m["role"] == "assistant" && m["content"] == "คุณจะได้เงินทันทีประมาณ $999 ต่อสัญญา"),
+        "the ungrounded answer must stay in the transcript: {messages:?}"
+    );
+    // ...followed by the correction system note naming the invented token
+    assert!(
+        messages.iter().any(|m| m["role"] == "system"
+            && m["content"]
+                .as_str()
+                .expect("str")
+                .contains("ตัวเลขเหล่านี้ไม่มีในข้อมูลจาก tools: $999 — ตอบใหม่")),
+        "the correction note must list $999: {messages:?}"
+    );
+    let answers: Vec<&AgentEvent> = events
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::Answer { .. }))
+        .collect();
+    assert_eq!(answers.len(), 1, "only the final answer is emitted");
+    assert_eq!(
+        events.last().expect("events"),
+        &AgentEvent::Answer {
+            text: "คุณจะได้เงินทันทีประมาณ $183 ต่อสัญญา".into(),
+            unverified: false,
+            ungrounded: vec![],
+        }
+    );
+}
+
+// (j) grounding: still invented after the retry → Answer unverified with
+// the token list, and no third answer round
+#[tokio::test]
+async fn still_ungrounded_after_retry_is_flagged_and_returned() {
+    let server = MockServer::start().await;
+    mount_round(
+        &server,
+        tool_calls_reply(&[("call_1", "top_candidates", r#"{"count": 3}"#)]),
+    )
+    .await;
+    mount_round(
+        &server,
+        json!({"choices": [{"message": {"role": "assistant", "content": "คุณจะได้ราว $999 ต่อสัญญา"}}]}),
+    )
+    .await;
+    mount_answer(&server, "คุณจะได้ราว $888 ต่อสัญญา").await;
+
+    let (outcome, events) = spawn_agent(
+        LlmConfig::new("mock", server.uri(), "m", "k"),
+        RunLimits::default(),
+        Arc::new(AtomicBool::new(false)),
+        |_spec, _args| Ok(json!({"premium": 183.0}).to_string()),
+    );
+
+    assert_eq!(
+        outcome,
+        Ok(AgentOutcome::Answer("คุณจะได้ราว $888 ต่อสัญญา".into()))
+    );
+    let reqs = server.received_requests().await.expect("captured");
+    assert_eq!(
+        reqs.len(),
+        3,
+        "exactly 2 LLM requests after the tool round, then stop"
+    );
+    assert_eq!(
+        events.last().expect("events"),
+        &AgentEvent::Answer {
+            text: "คุณจะได้ราว $888 ต่อสัญญา".into(),
+            unverified: true,
+            ungrounded: vec!["$888".to_string()],
+        }
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::Answer { .. }))
+            .count(),
+        1,
+        "the flagged answer is emitted once"
+    );
+}
+
+// (k) grounding: numbers the user said themselves are facts — no retry
+#[tokio::test]
+async fn numbers_from_the_users_own_message_skip_the_retry() {
+    let server = MockServer::start().await;
+    mount_answer(&server, "แผนนี้ให้ผลราว $200 ต่อเดือนค่ะ").await;
+
+    let req = AgentRequest {
+        mode: Mode::Easy,
+        system_prompt: "test".into(),
+        history: vec![ChatMessage::user("อยากได้เดือนละ $200 มีอะไรดี")],
+        screen_context: None,
+    };
+    let (outcome, events) = spawn_agent_with(
+        req,
+        LlmConfig::new("mock", server.uri(), "m", "k"),
+        RunLimits::default(),
+        Arc::new(AtomicBool::new(false)),
+        |_spec, _args| Ok(json!({"candidates": []}).to_string()),
+    );
+
+    assert_eq!(
+        outcome,
+        Ok(AgentOutcome::Answer("แผนนี้ให้ผลราว $200 ต่อเดือนค่ะ".into()))
+    );
+    let reqs = server.received_requests().await.expect("captured");
+    assert_eq!(reqs.len(), 1, "no correction round was needed");
+    let body = request_body(&reqs[0]);
+    let messages = body["messages"].as_array().expect("messages");
+    assert!(
+        !messages.iter().any(|m| m["content"]
+            .as_str()
+            .map(|c| c.contains("ตัวเลขเหล่านี้ไม่มีในข้อมูลจาก tools"))
+            .unwrap_or(false)),
+        "no correction note may appear: {messages:?}"
+    );
+    assert_eq!(
+        events.last().expect("events"),
+        &AgentEvent::Answer {
+            text: "แผนนี้ให้ผลราว $200 ต่อเดือนค่ะ".into(),
+            unverified: false,
+            ungrounded: vec![],
+        }
     );
 }
