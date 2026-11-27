@@ -14,7 +14,10 @@ import { fmt, thaiDate } from "./lib/format";
 import type { EnrichedRow, StockUpdate, ChainStats, EngineSnapshot } from "./types/screener";
 import "./App.css";
 import brandMark from "./assets/thpforge-mark.svg";
-import { RadarAssistant } from "./components/RadarAssistant/RadarAssistant";
+import { AgentPanel } from "./agent/AgentPanel";
+import { anchorId, useAgentAnchor, useScreenState } from "./agent/anchors";
+import { registerUiHandler } from "./agent/bus";
+import { clearPointing } from "./agent/point";
 import UpdateBanner from "./components/UpdateBanner";
 import { EasyApp } from "./easy/EasyApp";
 
@@ -188,6 +191,108 @@ function SortTh({ label, sortKey, sort, onSort }: {
   );
 }
 
+// ---------- agent anchors (pro workspace) ----------
+
+/** Short anchor label for one contract row, e.g. "NVDA 175P 18 ธ.ค. 68". */
+function rowLabel(r: EnrichedRow): string {
+  return `${r.q.underlying.toUpperCase()} ${r.q.strike}${r.q.option_type} ${thaiDate(r.q.expiry)}`;
+}
+
+/** Anchor hook that tolerates "nothing to point at": when id is null the
+ *  callback is never attached, so no placeholder anchor is registered. */
+function useOptionalAnchor(id: string | null, label: string) {
+  const attach = useAgentAnchor(id ?? "unanchored", label);
+  return id ? attach : undefined;
+}
+
+/** One icon-rail tab button, registered as a `tab:<name>` agent anchor. */
+function IconTab(props: { id: MainTab; icon: string; label: string; title: string; on: boolean; onClick: () => void }) {
+  const ref = useAgentAnchor(anchorId("tab", props.id), props.label);
+  return (
+    <button ref={ref} className={`iconbtn ${props.on ? "on" : ""}`} title={props.title} onClick={props.onClick}>
+      <span className="ic">{props.icon}</span><span className="iclabel">{props.label}</span>
+    </button>
+  );
+}
+
+/** One screener table row with its agent anchors: the row itself plus the
+ *  premium / delta / p_itm / ann cells the agent may point at. */
+function ScreenerRow({ r, selected, onSelect }: { r: EnrichedRow; selected: boolean; onSelect: () => void }) {
+  const base = rowLabel(r);
+  const rowRef = useAgentAnchor(anchorId("row", r.q.symbol), base);
+  const premRef = useAgentAnchor(anchorId("row", r.q.symbol, "premium"), `เงินที่ได้ ${base}`);
+  const deltaRef = useAgentAnchor(anchorId("row", r.q.symbol, "delta"), `เดลต้า ${base}`);
+  const itmRef = useAgentAnchor(anchorId("row", r.q.symbol, "p_itm"), `โอกาสถูกเรียก ${base}`);
+  const annRef = useAgentAnchor(anchorId("row", r.q.symbol, "ann"), `ผลตอบแทนต่อปี ${base}`);
+  return (
+    <tr className={selected ? "selected" : ""} onClick={onSelect} ref={rowRef}>
+      <td><GradeBadge grade={r.grade} /></td>
+      <td style={{ color: r.q.option_type === "P" ? "#f4788c" : "#24c99a", fontWeight: 650 }}>
+        {r.q.option_type === "P" ? "Put" : "Call"}
+      </td>
+      <td>{r.q.expiry.slice(5).replace("-", "/")} <small style={{ color: "#6b7d98" }}>({Math.round(r.dte)}d)</small></td>
+      <td>
+        <button
+          type="button"
+          className="contract-select"
+          aria-label={`Inspect ${r.q.option_type === "P" ? "put" : "call"} ${r.q.strike}, expires ${r.q.expiry}`}
+          aria-pressed={selected}
+          onClick={event => {
+            event.stopPropagation();
+            onSelect();
+          }}
+        >{r.q.strike}</button>
+      </td>
+      <td ref={deltaRef}>{r.delta?.toFixed(2)}</td>
+      <td ref={itmRef} className={((r.p_itm ?? 0) > 0.25) ? "neg" : ""}>{((r.p_itm ?? 0) * 100).toFixed(0)}%</td>
+      <td ref={premRef} className="pos">+{r.credit?.toFixed(0)}</td>
+      <td>{((r.prem ?? 0) / (r.q.strike ?? 1) * 100).toFixed(2)}%</td>
+      <td ref={annRef} className="pos">{r.ann?.toFixed(0)}%</td>
+      <td>${r.collateral?.toLocaleString()}</td>
+      <td>{r.be?.toFixed(2)}</td>
+      <td>{r.q.oi?.toLocaleString()}</td>
+      <td><SourceDot src={r.q.src} /></td>
+    </tr>
+  );
+}
+
+/** One opportunity card, anchored as `opp:<OCC>` when built from a real row. */
+function OppCardBtn({ o, featured, muted, onSelect }: { o: OppCard; featured: boolean; muted: boolean; onSelect: () => void }) {
+  const ref = useOptionalAnchor(o.symbol ? anchorId("opp", o.symbol) : null, `${o.label} · ${o.contract}`);
+  return (
+    <button ref={ref} className={`opportunity ${featured ? "on" : ""} ${muted ? "muted-card" : ""}`} onClick={onSelect}>
+      <div className="otop"><span>{o.label}</span><span className={`otag ${o.tagWarn ? "warn" : ""}`}>{o.tag}</span></div>
+      <div className="ocontract">{o.contract}</div>
+      <div className="ometas">
+        {o.gain != null && o.period != null
+          ? <><b className="pos">ได้ {o.gain}</b> · {o.period}{o.ann != null && <span className="oann"> · {o.ann}</span>}</>
+          : " "}
+      </div>
+    </button>
+  );
+}
+
+/** The probability bar of the selected contract, carrying the `row:<OCC>/pop`
+ *  anchor (the table itself has no probability column). */
+function ProbModel({ row }: { row: EnrichedRow }) {
+  const ref = useAgentAnchor(anchorId("row", row.q.symbol, "pop"), `โอกาสได้เงินเต็ม ${rowLabel(row)}`);
+  return (
+    <div ref={ref}>
+      <div className="section-title">PROBABILITY MODEL</div>
+      <div style={{ display: "flex", gap: 3, height: 7, marginBottom: 8 }}>
+        <div style={{ flex: (row.pop ?? 0), background: "#13a98a" }} />
+        <div style={{ flex: 0.1, background: "#d9a64b" }} />
+        <div style={{ flex: 1, background: "#cc4869" }} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "9.5", color: "#9bacc7" }}>
+        <span>OTM {((row.pop ?? 0) * 100).toFixed(0)}%</span>
+        <span>Near 10%</span>
+        <span>ITM {((row.p_itm ?? 0) * 100).toFixed(0)}%</span>
+      </div>
+    </div>
+  );
+}
+
 // ---------- main app ----------
 
 export default function App() {
@@ -220,10 +325,6 @@ export default function App() {
 
   // AI copilot — its configuration is INDEPENDENT of the data feed
   const [llmInfo, setLlmInfo] = useState<{ label: string; model: string } | null>(null);
-  const [chat, setChat] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
-  const [chatInput, setChatInput] = useState("");
-  const [chatBusy, setChatBusy] = useState(false);
-  const [chatError, setChatError] = useState("");
 
   // Connect listeners + restore last session once
   useEffect(() => {
@@ -323,25 +424,6 @@ export default function App() {
       .catch(() => {});
   }, [tauriReady, showSetup]);
 
-  // Send a question to the copilot (function-calling over live engine data)
-  const sendChat = useCallback(async () => {
-    const q = chatInput.trim();
-    if (!q || chatBusy || !hasTauri) return;
-    setChatInput("");
-    setChatError("");
-    const next = [...chat, { role: "user" as const, content: q }];
-    setChat(next);
-    setChatBusy(true);
-    try {
-      const answer = await tauriInvoke<string>("ask_copilot", { messages: next });
-      setChat([...next, { role: "assistant", content: answer }]);
-    } catch (e) {
-      setChatError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setChatBusy(false);
-    }
-  }, [chat, chatInput, chatBusy]);
-
   /** Switch easy/pro: the mode applies immediately and is saved by the
    *  dedicated `set_ui_mode` command, which changes only `ui_mode`. */
   const switchMode = useCallback((next: "easy" | "pro") => {
@@ -387,6 +469,49 @@ export default function App() {
       ?? (hasTauri ? [] : (MOCK_ROWS as EnrichedRow[]).filter(r => r.q.underlying.toUpperCase() === symbol.toUpperCase())),
     [snap, symbol],
   );
+
+  // ---------- agent ui wiring (pro) ----------
+  // the handlers are registered once per mode switch and must read fresh
+  // table state, so rows goes through a ref like symbol above
+  const rowsRef = useRef(rows);
+  useEffect(() => { rowsRef.current = rows; }, [rows]);
+
+  useEffect(() => {
+    if (uiMode !== "pro") return;
+    const VALID_TABS: MainTab[] = ["home", "market", "monitor", "lab", "portfolio", "watchlist"];
+    const unGo = registerUiHandler("go", a => {
+      if (a.mode !== "pro") return { ok: false, detail: "คำสั่งนี้เป็นของโหมดง่าย — สลับไปโหมดง่ายก่อน" };
+      if (!VALID_TABS.includes(a.page as MainTab)) {
+        return { ok: false, detail: `ไม่มีหน้า "${a.page}" ในโหมดละเอียด — มี home, market, monitor, lab, portfolio, watchlist` };
+      }
+      if (a.symbol) {
+        if (a.page !== "monitor") return { ok: false, detail: "ระบุหุ้นได้เฉพาะหน้าออปชัน (monitor) — หน้าอื่นไม่ผูกกับหุ้นตัวเดียว" };
+        setSymbol(a.symbol.toUpperCase());
+      }
+      setMainTab(a.page as MainTab);
+      return { ok: true };
+    });
+    const unSelect = registerUiHandler("select", a => {
+      if (!rowsRef.current.some(r => r.q.symbol === a.ref)) {
+        return { ok: false, detail: `ไม่พบสัญญา ${a.ref} ในตาราง — สแกนหุ้นตัวนั้นก่อน (หรือรอข้อมูลโหลดเสร็จ)` };
+      }
+      setSelected(a.ref);
+      if (a.open === "detail") setMainTab("monitor");
+      if (a.open === "what_if") {
+        setMainTab("lab");
+        return a.price != null ? { ok: true, detail: "เปิดแล็บแล้ว ราคาต้องตั้งเอง" } : { ok: true };
+      }
+      return { ok: true };
+    });
+    return () => { unGo(); unSelect(); };
+  }, [uiMode]);
+
+  // publish the pro workspace to the agent (easy mode publishes itself)
+  useScreenState(uiMode === "pro" ? { mode: "pro", page: mainTab, symbol, selected } : {});
+
+  // a page change (or mode switch) invalidates whatever the agent pointed at
+  useEffect(() => { clearPointing(); }, [mainTab, uiMode]);
+
   const toggleSort = (key: SortKey) => setSort(current =>
     current?.key !== key ? { key, dir: 1 } : current.dir === 1 ? { key, dir: -1 } : null,
   );
@@ -567,17 +692,19 @@ export default function App() {
           loading={loading}
           scanMsg={scanMsg}
           stock={stock}
+          llmInfo={llmInfo}
+          openSetup={() => { setSetupMode("edit"); setShowSetup(true); }}
         />
       ) : (
       <div className="workspace">
         {/* ---- Icon Rail ---- */}
         <nav className="iconbar">
-          <button className={`iconbtn ${mainTab === "home" ? "on" : ""}`} title="หน้าแรก" onClick={() => setMainTab("home")}><span className="ic">⌂</span><span className="iclabel">หน้าแรก</span></button>
-          <button className={`iconbtn ${mainTab === "market" ? "on" : ""}`} title="Market · ภาพรวมตลาด (หุ้นขึ้นแรง ลงแรง ซื้อขายหนาแน่น และ sector)" onClick={() => setMainTab("market")}><span className="ic">◔</span><span className="iclabel">ตลาด</span></button>
-          <button className={`iconbtn ${mainTab === "monitor" ? "on" : ""}`} title="Options Monitor" onClick={() => setMainTab("monitor")}><span className="ic">|||</span><span className="iclabel">ออปชัน</span></button>
-          <button className={`iconbtn ${mainTab === "lab" ? "on" : ""}`} title="Option Lab" onClick={() => setMainTab("lab")}><span className="ic">⚗</span><span className="iclabel">แล็บ</span></button>
-          <button className={`iconbtn ${mainTab === "watchlist" ? "on" : ""}`} title="Watchlists" onClick={() => setMainTab("watchlist")}><span className="ic">≡</span><span className="iclabel">ลิสต์</span></button>
-          <button className={`iconbtn ${mainTab === "portfolio" ? "on" : ""}`} title="Portfolio · พอร์ตจริง (อ่านอย่างเดียว)" onClick={() => setMainTab("portfolio")}><span className="ic">◫</span><span className="iclabel">พอร์ต</span></button>
+          <IconTab id="home" icon="⌂" label="หน้าแรก" title="หน้าแรก" on={mainTab === "home"} onClick={() => setMainTab("home")} />
+          <IconTab id="market" icon="◔" label="ตลาด" title="Market · ภาพรวมตลาด (หุ้นขึ้นแรง ลงแรง ซื้อขายหนาแน่น และ sector)" on={mainTab === "market"} onClick={() => setMainTab("market")} />
+          <IconTab id="monitor" icon="|||" label="ออปชัน" title="Options Monitor" on={mainTab === "monitor"} onClick={() => setMainTab("monitor")} />
+          <IconTab id="lab" icon="⚗" label="แล็บ" title="Option Lab" on={mainTab === "lab"} onClick={() => setMainTab("lab")} />
+          <IconTab id="watchlist" icon="≡" label="ลิสต์" title="Watchlists" on={mainTab === "watchlist"} onClick={() => setMainTab("watchlist")} />
+          <IconTab id="portfolio" icon="◫" label="พอร์ต" title="Portfolio · พอร์ตจริง (อ่านอย่างเดียว)" on={mainTab === "portfolio"} onClick={() => setMainTab("portfolio")} />
           <button
             className="iconbar bottom iconbtn"
             title="Settings / API keys"
@@ -759,16 +886,14 @@ export default function App() {
                   </div>
                 ))
               : oppCards.map((o, i) => (
-              <button key={o.label} className={`opportunity ${i === 1 ? "on" : ""} ${opps ? "" : "muted-card"}`} onClick={() => { if (o.symbol) setSelected(o.symbol); }}>
-                <div className="otop"><span>{o.label}</span><span className={`otag ${o.tagWarn ? "warn" : ""}`}>{o.tag}</span></div>
-                <div className="ocontract">{o.contract}</div>
-                <div className="ometas">
-                  {o.gain != null && o.period != null
-                    ? <><b className="pos">ได้ {o.gain}</b> · {o.period}{o.ann != null && <span className="oann"> · {o.ann}</span>}</>
-                    : " "}
-                </div>
-              </button>
-            ))}
+                <OppCardBtn
+                  key={o.label}
+                  o={o}
+                  featured={i === 1}
+                  muted={!opps}
+                  onSelect={() => { if (o.symbol) setSelected(o.symbol); }}
+                />
+              ))}
           </div>
 
           {/* Scanner Table */}
@@ -849,38 +974,12 @@ export default function App() {
                       );
                     }
                     return visible.map(r => (
-                      <tr
+                      <ScreenerRow
                         key={r.q.symbol}
-                        className={r.q.symbol === selectedRow?.q.symbol ? "selected" : ""}
-                        onClick={() => setSelected(r.q.symbol)}
-                      >
-                        <td><GradeBadge grade={r.grade} /></td>
-                        <td style={{ color: r.q.option_type === "P" ? "#f4788c" : "#24c99a", fontWeight: 650 }}>
-                          {r.q.option_type === "P" ? "Put" : "Call"}
-                        </td>
-                        <td>{r.q.expiry.slice(5).replace("-", "/")} <small style={{ color: "#6b7d98" }}>({Math.round(r.dte)}d)</small></td>
-                        <td>
-                          <button
-                            type="button"
-                            className="contract-select"
-                            aria-label={`Inspect ${r.q.option_type === "P" ? "put" : "call"} ${r.q.strike}, expires ${r.q.expiry}`}
-                            aria-pressed={r.q.symbol === selectedRow?.q.symbol}
-                            onClick={event => {
-                              event.stopPropagation();
-                              setSelected(r.q.symbol);
-                            }}
-                          >{r.q.strike}</button>
-                        </td>
-                        <td>{r.delta?.toFixed(2)}</td>
-                        <td className={((r.p_itm ?? 0) > 0.25) ? "neg" : ""}>{((r.p_itm ?? 0) * 100).toFixed(0)}%</td>
-                        <td className="pos">+{r.credit?.toFixed(0)}</td>
-                        <td>{((r.prem ?? 0) / (r.q.strike ?? 1) * 100).toFixed(2)}%</td>
-                        <td className="pos">{r.ann?.toFixed(0)}%</td>
-                        <td>${r.collateral?.toLocaleString()}</td>
-                        <td>{r.be?.toFixed(2)}</td>
-                        <td>{r.q.oi?.toLocaleString()}</td>
-                        <td><SourceDot src={r.q.src} /></td>
-                      </tr>
+                        r={r}
+                        selected={r.q.symbol === selectedRow?.q.symbol}
+                        onSelect={() => setSelected(r.q.symbol)}
+                      />
                     ));
                   })()}
                 </tbody>
@@ -1002,17 +1101,7 @@ export default function App() {
                       </>
                     );
                   })()}
-                  <div className="section-title">PROBABILITY MODEL</div>
-                  <div style={{ display: "flex", gap: 3, height: 7, marginBottom: 8 }}>
-                    <div style={{ flex: (selectedRow.pop ?? 0), background: "#13a98a" }} />
-                    <div style={{ flex: 0.1, background: "#d9a64b" }} />
-                    <div style={{ flex: 1, background: "#cc4869" }} />
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "9.5", color: "#9bacc7" }}>
-                    <span>OTM {((selectedRow.pop ?? 0) * 100).toFixed(0)}%</span>
-                    <span>Near 10%</span>
-                    <span>ITM {((selectedRow.p_itm ?? 0) * 100).toFixed(0)}%</span>
-                  </div>
+                  <ProbModel row={selectedRow} />
                   <div className="section-title">RISK NOTE</div>
                   <div style={{ fontSize: 10, color: "#ebc591", lineHeight: 1.6, borderLeft: "2px solid #bc8c45", paddingLeft: 8 }}>
                     {selectedRow.iv != null
@@ -1034,20 +1123,14 @@ export default function App() {
       </div>
       )}
 
-      {/* Radar Assistant — floating button + chat that keeps the conversation
-          while closed (pro mode; easy mode has its own ask-the-agent chips) */}
+      {/* Agent chat — floating button + streaming panel that keeps the
+          conversation while closed (both modes mount their own panel) */}
       {uiMode === "pro" && (
-      <RadarAssistant
-        llmInfo={llmInfo}
-        isLive={isLive}
-        chat={chat}
-        chatBusy={chatBusy}
-        chatError={chatError}
-        chatInput={chatInput}
-        setChatInput={setChatInput}
-        sendChat={sendChat}
-        openSetup={() => { setSetupMode("edit"); setShowSetup(true); }}
-      />
+        <AgentPanel
+          mode="pro"
+          llmInfo={llmInfo}
+          openSetup={() => { setSetupMode("edit"); setShowSetup(true); }}
+        />
       )}
 
       {/* ============ STATUS BAR ============ */}
