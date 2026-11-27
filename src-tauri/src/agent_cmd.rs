@@ -11,6 +11,7 @@ use radar_core::agent::{AgentEvent, AgentOutcome, AgentRequest, Mode, Registry, 
 use radar_core::copilot::ChatMessage;
 use serde::Deserialize;
 
+use crate::agent_tools::{ToolCtx, dispatch};
 use crate::{AppState, lock, off_ui_thread};
 
 /// One agent question: the chat history plus whatever the frontend knows
@@ -21,13 +22,20 @@ pub struct AgentAskInput {
     pub screen_context: Option<serde_json::Value>,
 }
 
-/// The agent's tool registry. Today it holds the three screener tools the
-/// copilot already serves; later phases register their tool families here
-/// too. A registration failure is a programming bug (bad or duplicate
-/// spec name), so it surfaces as the command's Err — never a panic.
+/// The agent's tool registry: every tool family's specs. A registration
+/// failure is a programming bug (bad or duplicate spec name), so it
+/// surfaces as the command's Err — never a panic.
 pub fn build_registry() -> Result<Registry, String> {
+    use radar_core::agent::tools::{ideas, market, mine, playbook, screener};
     let mut registry = Registry::new();
-    for spec in radar_core::agent::tools::screener::screener_specs() {
+    let families = [
+        screener::screener_specs(),
+        market::specs(),
+        ideas::specs(),
+        mine::specs(),
+        playbook::specs(),
+    ];
+    for spec in families.into_iter().flatten() {
         registry.register(spec)?;
     }
     Ok(registry)
@@ -101,20 +109,31 @@ impl Drop for RunningGuard<'_> {
 /// rejected with a Thai message.
 #[tauri::command]
 pub async fn agent_ask(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     input: AgentAskInput,
     on_event: tauri::ipc::Channel<AgentEvent>,
 ) -> Result<String, String> {
-    let (cfg, mode) = {
+    let (cfg, mode, settings) = {
         let settings = lock(&state.settings);
-        (settings.llm_config(), Mode::from_ui_mode(&settings.ui_mode))
+        (
+            settings.llm_config(),
+            Mode::from_ui_mode(&settings.ui_mode),
+            settings.clone(),
+        )
     };
     let cfg = cfg.ok_or("ยังไม่ได้ตั้งค่า AI — เปิดหน้า Setup (ไอคอน ⚙) เพื่อใส่ LLM")?;
     let registry = build_registry()?;
     let _running = state.agent.begin_run()?;
 
-    let engine = state.engine.clone();
     let cancel = state.agent.cancel.clone();
+    let ctx = ToolCtx {
+        engine: state.engine.clone(),
+        settings,
+        app_data_dir: state.app_data_dir.clone(),
+        cancel: cancel.clone(),
+        app: Some(app),
+    };
     let req = AgentRequest {
         mode,
         system_prompt: radar_core::copilot::system_prompt(),
@@ -143,14 +162,7 @@ pub async fn agent_ask(
             &req,
             &limits,
             &cancel,
-            &mut |spec, args| {
-                let mut engine = lock(&engine);
-                Ok(radar_core::copilot::execute_tool(
-                    &spec.name,
-                    &args.to_string(),
-                    &mut engine,
-                ))
-            },
+            &mut |spec, args| dispatch(&ctx, spec, args),
             &mut emit,
         )
     })

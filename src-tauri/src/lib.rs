@@ -5,6 +5,7 @@ use std::sync::Mutex;
 
 use chrono::Utc;
 pub mod agent_cmd;
+pub mod agent_tools;
 pub mod easy_universe;
 pub mod recorder_api;
 pub mod scan;
