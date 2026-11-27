@@ -42,7 +42,7 @@ const EASY_TOOLS: &str = r#"## tool ของโหมดนี้ — ใช้
 - ui_point — ชี้/ไฮไลต์สิ่งที่อยู่บนหน้าจอเดิม
 - present_idea — แสดงการ์ดคำแนะนำสัญญาหนึ่งตัว"#;
 
-/// The full 16-tool set (everything the registry exposes in Pro).
+/// The full 17-tool set (everything the registry exposes in Pro).
 const PRO_TOOLS: &str = r#"## tool ของโหมดนี้ — ใช้ตัวไหนเมื่อไหร่
 
 - market_pulse — ภาพรวมตลาดวันนี้ (watchlist, gainers/losers, sectors)
@@ -56,6 +56,7 @@ const PRO_TOOLS: &str = r#"## tool ของโหมดนี้ — ใช้�
 - my_portfolio — พอร์ตที่ถืออยู่จริง เงินคงเหลือ คำสั่งที่ยังค้าง
 - my_profile — โปรไฟล์ความชอบของโหมด Easy
 - my_watchlists — watchlists ของแอปและของโบรกเกอร์
+- save_watchlist — เพิ่ม/เอาหุ้นออกจากลิสต์ของแอปเอง — ผู้ใช้ต้องกดอนุญาตบนการ์ดยืนยันก่อนเสมอ ถ้าผู้ใช้กด 'ไม่' ให้รับทราบและห้ามขอซ้ำในคำถามเดียวกัน
 - read_playbook — อ่านคู่มือของแอป (five-answers, assignment, oi-trader, tone-easy, tone-pro)
 - ui_go — พาผู้ใช้ไปหน้าที่ขอ (home, market, monitor, lab, portfolio, watchlist)
 - ui_select — เลือกสัญญาบนหน้าจอ (เปิด detail หรือ what_if เลยก็ได้)

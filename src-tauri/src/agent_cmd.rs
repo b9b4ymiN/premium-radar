@@ -244,9 +244,9 @@ mod tests {
         }
     }
 
-    /// The tools each mode sees after P4-T1: the P3 set plus `present_idea`
-    /// (Easy 12 = 8 read + 3 ui + 1 present; Pro 16). P4's save_watchlist
-    /// lands later.
+    /// The tools each mode sees after P4-T3: the P3 set plus `present_idea`
+    /// (Easy 12 = 8 read + 3 ui + 1 present) and `save_watchlist` (Pro 17) —
+    /// the first Tier::WriteLocal tool, gated by a user confirm card.
     #[test]
     fn p4_tools_per_mode() {
         let registry = build_registry().expect("all tool families register cleanly");
@@ -278,6 +278,7 @@ mod tests {
             "chain_stats",
             "my_watchlists",
             "price_behavior",
+            "save_watchlist",
             "scan_chain",
         ]);
         pro.sort_unstable();
@@ -290,6 +291,17 @@ mod tests {
                 Some(radar_core::agent::Tier::Ui)
             );
         }
+        // the local write is its own tier and stays out of Easy
+        assert_eq!(
+            registry.get("save_watchlist").map(|spec| spec.tier),
+            Some(radar_core::agent::Tier::WriteLocal)
+        );
+        assert!(
+            !registry
+                .for_mode(Mode::Easy)
+                .iter()
+                .any(|spec| spec.name == "save_watchlist")
+        );
     }
 
     /// The guard must free the slot on ANY exit — an early `?`/Err return

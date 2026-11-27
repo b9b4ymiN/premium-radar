@@ -1,8 +1,11 @@
 /** Agent bus (W6 P3) — the single frontend entry point for an agent turn: it
  *  streams AgentEvents from the Tauri `agent_ask` command, executes ui actions
  *  through per-kind handlers, and acks every action with `agent_ui_result`
- *  (plus a fresh screen context) within the backend's 5 s budget. Pointing is
- *  just another handler kind, registered later — this module never imports it. */
+ *  (plus a fresh screen context) within the backend's 5 s budget — except
+ *  `confirm`, which waits for a human tap on the approval card (P4-T3): the
+ *  backend parks up to 120 s, so that handler gets its own, longer budget.
+ *  Pointing is just another handler kind, registered later — this module
+ *  never imports it. */
 
 import { getScreenContext } from "./anchors";
 import type { AgentEvent, UiAction, UiResult } from "./types";
@@ -23,8 +26,17 @@ const NO_TAURI_TH = "ต้องเปิดจากในแอปก่อ�
 const NO_HANDLER_TH = "หน้าจอนี้ยังทำคำสั่งนี้ไม่ได้";
 const HANDLER_TIMEOUT_TH = "ใช้เวลานานเกินไป";
 
-/** Handler budget: 4 s + settle ≤ 250 ms keeps the ack inside the 5 s limit. */
-const HANDLER_TIMEOUT_MS = 4_000;
+/** Handler budget per action kind: 4 s + settle ≤ 250 ms keeps the ack inside
+ *  the backend's 5 s limit. `confirm` instead waits for a human tap, so it gets
+ *  115 s — the ack (ok:false on timeout) still lands before the backend's own
+ *  120 s confirm budget expires. */
+const HANDLER_TIMEOUT_MS_BY_KIND: Record<UiAction["kind"], number> = {
+  go: 4_000,
+  select: 4_000,
+  point: 4_000,
+  card: 4_000,
+  confirm: 115_000,
+};
 const SETTLE_CAP_MS = 250;
 
 export interface UiActionOutcome {
@@ -94,7 +106,7 @@ async function executeUiAction(uiId: string, action: UiAction): Promise<void> {
     try {
       const outcome = await withTimeout(
         Promise.resolve(handler(action)),
-        HANDLER_TIMEOUT_MS,
+        HANDLER_TIMEOUT_MS_BY_KIND[action.kind],
         HANDLER_TIMEOUT_TH,
       );
       ok = outcome.ok;

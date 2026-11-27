@@ -9,7 +9,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ForgeBird } from "../components/RadarAssistant/ForgeBird";
 import { getAnchorElement } from "./anchors";
-import { cancelAgent, registerUiHandler, runAgentTurn, type ChatMessage } from "./bus";
+import { cancelAgent, registerUiHandler, runAgentTurn, type ChatMessage, type UiActionOutcome } from "./bus";
 import { IdeaCard } from "./IdeaCard";
 import { point } from "./point";
 import type { AgentEvent, IdeaCardData } from "./types";
@@ -34,6 +34,7 @@ const TOOL_LABELS: Record<string, string> = {
   my_portfolio: "ดูพอร์ต",
   my_profile: "ดูโปรไฟล์",
   my_watchlists: "ดูลิสต์หุ้น",
+  save_watchlist: "แก้ลิสต์หุ้น",
   read_playbook: "เปิดคู่มือ",
   ui_go: "พาไปหน้าจอ",
   ui_select: "เลือกสัญญา",
@@ -48,6 +49,16 @@ interface TimelineStep {
   ms?: number;
 }
 
+/** One pending local-write approval inside a turn (P4-T3). `resolve` settles
+ *  the bus confirm handler when the user taps a button (a promise swallows
+ *  later calls, so re-resolving on turn end or Stop is a safe no-op). */
+interface ConfirmState {
+  title: string;
+  detail: string;
+  state: "wait" | "ok" | "no";
+  resolve: (o: UiActionOutcome) => void;
+}
+
 interface TurnItem {
   id: number;
   question: string;
@@ -55,6 +66,8 @@ interface TurnItem {
   collapsed: boolean;
   /** The recommendation card `present_idea` attached to this turn. */
   card: IdeaCardData | null;
+  /** The approval card `save_watchlist` (or any confirm action) attached here. */
+  confirm: ConfirmState | null;
   answer: { text: string; unverified: boolean; ungrounded: string[] } | null;
   error: string | null;
   cancelled: boolean;
@@ -80,6 +93,14 @@ function useTurns(): TurnItem[] {
     },
     () => store.turns,
   );
+}
+
+/** A turn that ended must not leave a tappable approval card behind: settle
+ *  any still-waiting confirm as not allowed and freeze it read-only. */
+function freezeConfirm(t: TurnItem): ConfirmState | null {
+  if (!t.confirm || t.confirm.state !== "wait") return t.confirm;
+  t.confirm.resolve({ ok: false, detail: "ผู้ใช้ไม่อนุญาต" });
+  return { ...t.confirm, state: "no" };
 }
 
 /** Fold one streamed event into the running turn. */
@@ -108,11 +129,12 @@ function applyEvent(t: TurnItem, ev: AgentEvent): TurnItem {
         answer: { text: ev.text, unverified: ev.unverified, ungrounded: ev.ungrounded },
         running: false,
         collapsed: true,
+        confirm: freezeConfirm(t),
       };
     case "error":
-      return { ...t, error: ev.message, running: false };
+      return { ...t, error: ev.message, running: false, confirm: freezeConfirm(t) };
     case "cancelled":
-      return { ...t, cancelled: true, running: false };
+      return { ...t, cancelled: true, running: false, confirm: freezeConfirm(t) };
     case "ui_action":
       // the bus executes the action itself; the timeline follows the
       // ui_go/ui_select/ui_point tool_start/tool_end pair around it
@@ -172,6 +194,24 @@ export function AgentPanel(p: Props) {
     return { ok: true };
   }), []);
   useEffect(() => registerUiHandler("point", a => point(a.steps, getAnchorElement)), []);
+  // a confirm action parks the tool until the user taps อนุญาต/ไม่ on the
+  // card attached to the turn that asked (running turn, or the newest one as
+  // a fallback); the promise settles only when a choice is made — resolving
+  // inside the state updater is safe because promises ignore re-resolves
+  useEffect(() => registerUiHandler("confirm", a =>
+    new Promise<UiActionOutcome>(resolve => {
+      setTurns(prev => {
+        if (prev.length === 0) {
+          resolve({ ok: false, detail: "ผู้ใช้ไม่อนุญาต" });
+          return prev;
+        }
+        const running = prev.findIndex(t => t.running);
+        const target = running === -1 ? prev.length - 1 : running;
+        return prev.map((t, i) => (i === target
+          ? { ...t, confirm: { title: a.title, detail: a.detail, state: "wait" as const, resolve } }
+          : t));
+      });
+    })), []);
 
   useEffect(() => {
     try { localStorage.setItem(OPEN_KEY, open ? "1" : "0"); } catch { /* ignore */ }
@@ -213,6 +253,7 @@ export function AgentPanel(p: Props) {
       steps: [],
       collapsed: false,
       card: null,
+      confirm: null,
       answer: null,
       error: null,
       cancelled: false,
@@ -236,6 +277,16 @@ export function AgentPanel(p: Props) {
   const undoLast = () => {
     if (busy || turns.length === 0) return;
     setTurns(prev => prev.slice(0, -1));
+  };
+
+  /** Settle one turn's approval card: resolves the parked confirm handler and
+   *  freezes the card read-only ("wait" only — a decided card is history). */
+  const settleConfirm = (id: number, approved: boolean) => {
+    setTurns(prev => prev.map(t => {
+      if (t.id !== id || !t.confirm || t.confirm.state !== "wait") return t;
+      t.confirm.resolve(approved ? { ok: true } : { ok: false, detail: "ผู้ใช้ไม่อนุญาต" });
+      return { ...t, confirm: { ...t.confirm, state: approved ? "ok" as const : "no" as const } };
+    }));
   };
 
   // drag by the header; the panel is anchored to the bottom-right corner
@@ -353,6 +404,30 @@ export function AgentPanel(p: Props) {
                       </>
                     )}
                     {t.card && <IdeaCard card={t.card} mode={p.mode} />}
+                    {t.confirm && (
+                      <div className={`agent-confirm ${t.confirm.state}`}>
+                        <b className="agent-confirm-title">{t.confirm.title}</b>
+                        <p className="agent-confirm-detail">{t.confirm.detail}</p>
+                        {t.confirm.state === "wait" ? (
+                          <div className="agent-confirm-actions">
+                            <button
+                              type="button"
+                              className="agent-confirm-allow"
+                              onClick={() => settleConfirm(t.id, true)}
+                            >อนุญาต</button>
+                            <button
+                              type="button"
+                              className="agent-confirm-deny"
+                              onClick={() => settleConfirm(t.id, false)}
+                            >ไม่</button>
+                          </div>
+                        ) : (
+                          <div className={`agent-confirm-note${t.confirm.state === "ok" ? " ok" : ""}`}>
+                            {t.confirm.state === "ok" ? "อนุญาตแล้ว" : "ไม่อนุญาต"}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {t.answer && (
                       <div className="bubble assistant">
                         <Markdown remarkPlugins={[remarkGfm]}>{t.answer.text}</Markdown>
@@ -374,8 +449,15 @@ export function AgentPanel(p: Props) {
               {busy && currentStep && (
                 <div className="agent-panel-status" role="status">
                   <span className="agent-panel-dot" aria-hidden="true" />
-                  <span>AI กำลัง…{currentStep}</span>
-                  <button type="button" className="agent-panel-stop" onClick={() => { void cancelAgent(); }}>หยุด</button>
+                  <span>{runningTurn?.confirm?.state === "wait" ? "รอคุณกดอนุญาต…" : `AI กำลัง…${currentStep}`}</span>
+                  <button
+                    type="button"
+                    className="agent-panel-stop"
+                    onClick={() => {
+                      if (runningTurn?.confirm?.state === "wait") settleConfirm(runningTurn.id, false);
+                      void cancelAgent();
+                    }}
+                  >หยุด</button>
                 </div>
               )}
               <div className="chatinput">
