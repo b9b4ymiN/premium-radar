@@ -25,6 +25,37 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 fn test_registry() -> Registry {
     let mut registry = Registry::new();
+    // The agent no longer ships `top_candidates` (scan_chain replaced it),
+    // but these loop tests exercise validated dispatch against its exact
+    // shape (defaults, enum, bounds) — so they carry their own local copy.
+    registry
+        .register(ToolSpec {
+            name: "top_candidates".into(),
+            tier: Tier::Read,
+            modes: vec![Mode::Easy, Mode::Pro],
+            description: "ทดสอบ".into(),
+            examples: vec![],
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 20,
+                        "default": 5
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["all", "put", "call"],
+                        "default": "all"
+                    }
+                },
+                "additionalProperties": false
+            }),
+            timeout_ms: 1000,
+            webull_cost: 0,
+        })
+        .expect("register top_candidates fixture");
     for spec in screener_specs() {
         registry.register(spec).expect("register screener spec");
     }
@@ -33,7 +64,9 @@ fn test_registry() -> Registry {
 
 fn agent_request() -> AgentRequest {
     AgentRequest {
-        mode: Mode::Easy,
+        // Pro: the loop tests call chain_stats, which is Pro-only now that
+        // the agent drives the screen through scan_chain instead
+        mode: Mode::Pro,
         system_prompt: "test".into(),
         history: vec![ChatMessage::user("ถาม")],
         screen_context: None,
