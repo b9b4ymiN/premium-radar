@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { EasyIdeas, EasyProfile, Stance, UniverseIdeas } from "../types/easy";
+import type { EasyIdeas, EasyProfile, RiskLevel, Stance, UniverseIdeas } from "../types/easy";
 import { Onboarding } from "./Onboarding";
 import { EasyHome, type HeldContract } from "./EasyHome";
 import { IdeasStep } from "./IdeasStep";
@@ -377,6 +377,12 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
     });
   };
 
+  // the risk-mode switch on home: saved like a stance answer; the universe
+  // refetch below keys on `${cash}|${risk}` so the picks reload for the new mode
+  const onRisk = (risk: RiskLevel) => {
+    setProfile(cur => (cur.risk === risk ? cur : { ...cur, risk }));
+  };
+
   // ---------- flow bar ----------
   const flow = (() => {
     if (screen === "ob1") return { total: 2, step: 1, label: "ตั้งค่า 1 จาก 2" };
@@ -425,6 +431,7 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
             onRetry={retryUniverse}
             onOpenPick={openPick}
             onStance={onStance}
+            onRisk={onRisk}
             onGo={s => go(s)}
           />
         )}

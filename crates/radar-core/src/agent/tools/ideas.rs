@@ -681,8 +681,10 @@ mod tests {
             source: "LOCAL".into(),
             scanned_symbols: 40,
             candidate_symbols: 6,
+            mode_counts: Vec::new(),
             market_note_th: String::new(),
             picks: vec![pick(1), pick(2), pick(3)],
+            near_misses: Vec::new(),
             budget_short: None,
             watch_cash: vec![
                 WatchCash {
@@ -739,6 +741,8 @@ mod tests {
             source: "API".into(),
             scanned_symbols: 40,
             candidate_symbols: 0,
+            mode_counts: Vec::new(),
+            near_misses: Vec::new(),
             market_note_th: String::new(),
             picks: vec![],
             budget_short: Some(BudgetShort {

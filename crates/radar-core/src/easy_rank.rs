@@ -74,12 +74,13 @@ impl Weights {
     }
 }
 
-/// DTE window ต่อระดับความสบายใจ (วัน, inclusive)
+/// DTE window ต่อระดับความสบายใจ (วัน, inclusive) — practitioner ขาย
+/// cash-secured put ส่วนใหญ่อยู่ราว 30–45 DTE; risk 1–2 ใช้ 14–45 เพื่อไม่รับ
+/// สัญญาใกล้หมดอายุที่ราคาแกว่งแรง ส่วน risk 3 ลงไปถึง 10 วันได้เพื่อค่าตอบแทนต่อวันที่สูงกว่า
 fn dte_window(risk: u8) -> (f64, f64) {
     match risk.clamp(1, 3) {
-        1 => (14.0, 45.0),
-        2 => (10.0, 45.0),
-        _ => (7.0, 45.0),
+        1 | 2 => (14.0, 45.0),
+        _ => (10.0, 45.0),
     }
 }
 
@@ -202,6 +203,65 @@ pub struct WatchCash {
     pub text_th: String,
 }
 
+/// จำนวนไอเดียของคืนนี้ต่อระดับความเสี่ยง 1–3 — คำนวณจากข้อมูลและโปรไฟล์
+/// ชุดเดียวกัน เปลี่ยนเฉพาะ `risk` (งบเงินเดิม) เพื่อให้ปุ่มสลับโหมดบอกได้
+/// ว่าแต่ละโหมด "คืนนี้เหลือกี่ไอเดีย" ก่อนผู้ใช้กดสลับ
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ModeCount {
+    pub risk: u8,
+    /// จำนวน picks ที่โหมดนี้จะแสดง (เหมือน `UniverseIdeas.picks` ของโหมดนั้น)
+    pub picks: u32,
+    /// จำนวน symbol ที่มีสัญญาผ่านเกณฑ์และจ่ายไหวอย่างน้อย 1 ตัวในโหมดนี้
+    pub candidate_symbols: u32,
+}
+
+/// ผลตรวจ 5 ข้อของสัญญาที่เกือบผ่าน (เกณฑ์เดียวกับ gate ของ pipeline)
+/// `cap_pct` คือเพดานโอกาสต้องซื้อหุ้นของโหมดปัจจุบัน (15/25/30)
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NearMissChecks {
+    pub days_ok: bool,
+    pub has_buyer: bool,
+    pub credit_ok: bool,
+    pub liquidity_ok: bool,
+    pub assign_ok: bool,
+    pub cap_pct: f64,
+}
+
+impl NearMissChecks {
+    fn failed_count(self) -> u8 {
+        (!self.days_ok) as u8
+            + (!self.has_buyer) as u8
+            + (!self.credit_ok) as u8
+            + (!self.liquidity_ok) as u8
+            + (!self.assign_ok) as u8
+    }
+}
+
+/// สัญญาพุตที่ผู้ใช้จ่ายไหวแต่ตกเกณฑ์อย่างน้อย 1 ข้อของคืนนี้ — ใช้อธิบาย
+/// ว่า "ทำไม" ยังไม่แนะนำ ไม่ใช่แค่บอกว่าไม่มีไอเดีย (เงินทุกตัวต่อ 1 สัญญา ×100)
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NearMiss {
+    pub ref_occ: String,
+    pub symbol: String,
+    pub strike: f64,
+    pub expiry: String,
+    pub days: f64,
+    pub spot: f64,
+    /// เงินที่ต้องกัน = strike×100 (แสดงเฉพาะตัวที่จ่ายไหวอยู่แล้ว)
+    pub cash_needed_usd: f64,
+    /// เงินสดที่ได้ทันทีฝั่ง bid
+    pub credit_usd: f64,
+    /// โอกาสต้องซื้อหุ้น (%/สัญญา) — ไม่มีข้อมูลคือ 100 (ตกเกณฑ์แน่นอน)
+    pub assign_pct: f64,
+    /// ask − bid ต่อหุ้น (ช่องว่างราคาเป็นเงิน)
+    pub gap_usd: f64,
+    pub bid_usd: f64,
+    pub ask_usd: f64,
+    /// ช่องว่างราคาเป็น % ของราคากลาง (None = ขาดราคาฝั่งใดฝั่งหนึ่ง)
+    pub spread_pct: Option<f64>,
+    pub checks: NearMissChecks,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UniverseIdeas {
     pub session_date: Option<String>,
@@ -210,8 +270,13 @@ pub struct UniverseIdeas {
     pub source: String,
     pub scanned_symbols: u32,
     pub candidate_symbols: u32,
+    /// จำนวนไอเดียคืนนี้ต่อ risk 1–3 (สำหรับปุ่มสลับโหมดหน้าบ้าน)
+    pub mode_counts: Vec<ModeCount>,
     pub market_note_th: String,
     pub picks: Vec<UniversePick>,
+    /// สัญญาที่จ่ายไหวแต่ยังไม่ผ่านเกณฑ์ — มีค่าเฉพาะเมื่อ picks ว่าง
+    /// (งบไม่พอเลยมี budget_short อธิบายแทน จึงเว้นว่างไว้)
+    pub near_misses: Vec<NearMiss>,
     pub budget_short: Option<BudgetShort>,
     /// เงินที่ต้องมีต่อหุ้นที่ user สนใจ (อาจว่างเมื่อไม่มี watch symbol)
     pub watch_cash: Vec<WatchCash>,
@@ -335,18 +400,72 @@ pub fn rank_universe_with_watch(
 
     let watch_cash = watch_cash_list(&pipe, profile, watch);
 
+    // mode_counts: จำนวนไอเดียคืนนี้ของแต่ละ risk — โหมดที่กำลังใช้อยู่เอาจาก
+    // pipeline หลักโดยตรง, อีกสองโหมดรัน pipeline ใหม่เฉพาะครั้งเดียว
+    // (extras ไม่มีผลกับจำนวน เพราะกระทบแค่คะแนนเรียงลำดับ ไม่กระทบว่า
+    // symbol ไหนผ่านเกณฑ์และจ่ายไหว)
+    let cur_risk = profile.risk.clamp(1, 3);
+    let mode_counts = [1u8, 2, 3]
+        .map(|r| {
+            if r == cur_risk {
+                mode_count(r, &pipe.best_affordable)
+            } else {
+                let mut prof = profile.clone();
+                prof.risk = r;
+                let other = run_pipeline(input, &prof, now, false);
+                mode_count(r, &other.best_affordable)
+            }
+        })
+        .to_vec();
+
+    // near_misses: มีค่าเฉพาะเมื่อไม่มี picks — เรียงตัวที่พลาดน้อยเกณฑ์
+    // สุดก่อน แล้วตัวที่โอกาสต้องซื้อหุ้นใกล้เพดานของโหมดสุด (เกือบผ่าน
+    // ที่สุดขึ้นหน้า), tie เรียงตาม occ เพื่อให้ deterministic
+    let near_misses = if picks.is_empty() {
+        let cap = comfort_cap(Stance::Want, cur_risk);
+        let mut cands = pipe.near_rows;
+        cands.sort_by(|a, b| {
+            a.checks
+                .failed_count()
+                .cmp(&b.checks.failed_count())
+                .then_with(|| {
+                    (a.assign_pct - cap)
+                        .abs()
+                        .partial_cmp(&(b.assign_pct - cap).abs())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| a.ref_occ.cmp(&b.ref_occ))
+        });
+        cands.truncate(3);
+        cands
+    } else {
+        Vec::new()
+    };
+
     UniverseIdeas {
         session_date: pipe.session_date.map(|d| d.format("%Y-%m-%d").to_string()),
         as_of: pipe.as_of.map(|t| t.to_rfc3339()),
         source: input.source.clone(),
         scanned_symbols: pipe.scanned_symbols,
         candidate_symbols: pipe.candidate_symbols,
+        mode_counts,
         market_note_th,
         picks,
+        near_misses,
         budget_short,
         watch_cash,
         agent_say_th,
         computed_at: now.to_rfc3339(),
+    }
+}
+
+/// picks ของโหมด = min(3, จำนวน symbol ที่ผ่านเกณฑ์และจ่ายไหว) —
+/// best_affordable เก็บ symbol ละตัวอยู่แล้ว so len คือจำนวน symbol
+fn mode_count(risk: u8, best: &[Cand]) -> ModeCount {
+    ModeCount {
+        risk,
+        picks: u32::try_from(best.len().min(3)).unwrap_or(u32::MAX),
+        candidate_symbols: u32::try_from(best.len()).unwrap_or(u32::MAX),
     }
 }
 
@@ -455,6 +574,10 @@ struct PipeOut {
     /// ต่อ symbol ที่สแกน (มี spot + quote): เงินที่ต้องกันต่ำสุดแบบผ่าน gate
     /// และแบบไม่สน gate — ใช้ทำ watch_cash
     sym_cash: HashMap<String, SymCash>,
+    /// พุตทุกตัวที่ผู้ใช้จ่ายไหว (collateral ≤ งบ) พร้อมผลตรวจ 5 ข้อ —
+    /// คัดเหลือ 3 ตัวเป็น near_misses เมื่อไม่มี picks; ตัวที่คำนวณเงินที่
+    /// ต้องกันไม่ได้ (ไม่มีราคาเลย) ถูกเว้นเพราะตัดสินความจ่ายไหวไม่ได้
+    near_rows: Vec<NearMiss>,
 }
 
 fn run_pipeline(
@@ -537,6 +660,7 @@ fn run_pipeline(
     let mut cands: Vec<Cand> = Vec::new();
     let mut cheapest: Option<(f64, String)> = None;
     let mut sym_cash: HashMap<String, SymCash> = HashMap::new();
+    let mut near_rows: Vec<NearMiss> = Vec::new();
     for sym in &symbols {
         let spot = match &stock[sym].kind {
             ObsKind::StockQuote { price, .. } => price.expect("spot filtered > 0"),
@@ -601,6 +725,31 @@ fn run_pipeline(
             }
             if gated && let Some(col) = row.collateral {
                 min_gated = Some(min_gated.map_or(col, |m| m.min(col)));
+            }
+            if let Some(col) = row.collateral.filter(|c| *c <= profile.cash) {
+                near_rows.push(NearMiss {
+                    ref_occ: row.q.symbol.clone(),
+                    symbol: row.q.underlying.clone(),
+                    strike: row.q.strike,
+                    expiry: row.q.expiry.format("%Y-%m-%d").to_string(),
+                    days: row.dte,
+                    spot,
+                    cash_needed_usd: col,
+                    credit_usd: row.credit.unwrap_or_default(),
+                    assign_pct: row.p_itm.map(|p| p * 100.0).unwrap_or(100.0),
+                    gap_usd: row.q.ask - row.q.bid,
+                    bid_usd: row.q.bid,
+                    ask_usd: row.q.ask,
+                    spread_pct: row.spread_pct,
+                    checks: NearMissChecks {
+                        days_ok: (dte_lo..=dte_hi).contains(&row.dte),
+                        has_buyer: row.q.bid > 0.0,
+                        credit_ok: row.credit.is_some_and(|c| c >= MIN_CREDIT * 100.0),
+                        liquidity_ok: spread_ok(&row),
+                        assign_ok: row.p_itm.is_some_and(|p| p * 100.0 <= gate_cap_pct),
+                        cap_pct: gate_cap_pct,
+                    },
+                });
             }
             if !gated {
                 continue;
@@ -738,6 +887,7 @@ fn run_pipeline(
         latest,
         prev_oi,
         sym_cash,
+        near_rows,
     }
 }
 
@@ -1148,7 +1298,7 @@ mod tests {
         assert_eq!(out.candidate_symbols, 6, "gates ผ่าน เฉพาะงบที่ไม่พอ");
     }
 
-    /// risk1 (dte 14-45, cap 15%) vs risk3 (dte 7-45, cap 35%): AAA ตกเพราะ
+    /// risk1 (dte 14-45, cap 15%) vs risk3 (dte 10-45, cap 30%): AAA ตกเพราะ
     /// dte 12, BBB ตกเพราะ p_itm ~21% — risk1 เหลือ CCC อย่างเดียว,
     /// risk3 ได้ครบและตัวท็อปเปลี่ยน
     fn risk_today() -> Vec<Observation> {
@@ -1373,8 +1523,10 @@ mod tests {
             "source",
             "scanned_symbols",
             "candidate_symbols",
+            "mode_counts",
             "market_note_th",
             "picks",
+            "near_misses",
             "budget_short",
             "watch_cash",
             "agent_say_th",
@@ -1433,12 +1585,14 @@ mod tests {
 
     /// ตัวท็อปของ symbol เกินงบ ไม่ตัดทั้ง symbol — ต้องได้ strike ที่จ่ายไหวแทน
     /// (งบเล็กเป็นเคสหลักของ Easy Mode) — risk 3 เพื่อให้ put ตื้นของ MIX
-    /// (p_itm ~31%) ผ่าน gate และเป็นตัวท็อปด้วยน้ำหนัก premium
+    /// (p_itm ~28% ≤ cap 30) ผ่าน gate และเป็นตัวท็อปด้วยน้ำหนัก premium
+    /// (spot 34 แทน 32: cap 30 ของ risk3 แคบลงจาก 35 ดังนั้นเลื่อน spot
+    /// ให้พ้นเพดานเดิมที่ ~31%)
     #[test]
     fn symbol_falls_back_to_affordable_strike_when_best_is_too_rich() {
         let (e, t) = (exp_dec24(), at(21, 0));
         let today = vec![
-            stock("MIX", 32.0, t),
+            stock("MIX", 34.0, t),
             // ตัวท็อปของ MIX: premium แพงกว่า + spread แคบกว่า ⇒ คะแนนสูงสุด
             // แต่กันเงิน $3,100 เกินงบ $3,000
             put("MIX", 31.0, e, t, 0.36, 0.40, 4000.0),
@@ -1655,5 +1809,109 @@ mod tests {
         let out = rank_universe(&input(base_today()), &prof, now());
         let syms: Vec<&str> = out.watch_cash.iter().map(|w| w.symbol.as_str()).collect();
         assert_eq!(syms, ["F", "NOPE"], "uppercase ตามลำดับ profile");
+    }
+
+    // ---------- mode_counts / near_misses ----------
+
+    /// mode_counts บอกจำนวนไอเดียของคืนนี้ต่อ risk 1–3 จากข้อมูลชุดเดียวกัน:
+    /// AAA (dte 12) เข้าได้เฉพาะ risk3 ที่หน้าต่างเริ่ม 10 วัน, BBB (p_itm ~21%)
+    /// เข้าเมื่อ cap 25/30, CCC เข้าทุกโหมด — และโหมดที่ใช้อยู่ต้องตรงกับ picks
+    #[test]
+    fn mode_counts_report_each_risk_from_same_data() {
+        let inp = input(risk_today());
+        let out = rank_universe(&inp, &profile(50_000.0, 1), now());
+        assert_eq!(
+            out.mode_counts.iter().map(|m| m.risk).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        let picks_of = |out: &UniverseIdeas, r: u8| {
+            out.mode_counts.iter().find(|m| m.risk == r).unwrap().picks
+        };
+        assert_eq!(picks_of(&out, 1), 1, "risk1: CCC เท่านั้น");
+        assert_eq!(picks_of(&out, 2), 2, "risk2: BBB+CCC");
+        assert_eq!(
+            picks_of(&out, 3),
+            3,
+            "risk3: ครบ (AAA เข้าเมื่อหน้าต่างเริ่ม 10 วัน)"
+        );
+        assert_eq!(picks_of(&out, 1), out.picks.len() as u32, "โหมดปัจจุบัน = จอ");
+
+        let out3 = rank_universe(&inp, &profile(50_000.0, 3), now());
+        assert_eq!(out3.mode_counts[2].picks, out3.picks.len() as u32);
+        assert_eq!(out3.mode_counts[2].candidate_symbols, 3);
+    }
+
+    /// ไม่มี picks เพราะตัวเดียวที่จ่ายไหวตกแค่เกณฑ์ความคล่องการซื้อขาย —
+    /// near_miss ต้องพาตัวเลขจริง (เงินที่ต้องกัน, เงินที่ได้, ช่องว่างราคา)
+    /// ไปให้หน้าบ้านอธิบายเป็นประโยค
+    #[test]
+    fn near_miss_when_only_affordable_row_fails_only_liquidity() {
+        let now = Utc.with_ymd_and_hms(2026, 11, 26, 22, 0, 0).unwrap();
+        let t = Utc.with_ymd_and_hms(2026, 11, 26, 21, 0, 0).unwrap();
+        let today = vec![
+            stock("PFE", 28.46, t),
+            // bid .06 ask .18: ช่องว่าง $0.12/หุ้น > $0.05 และ ~100% > 25% ⇒ ตก liquidity
+            put("PFE", 26.0, exp_dec24(), t, 0.06, 0.18, 5_000.0),
+        ];
+        let out = rank_universe(&input(today), &profile(3_000.0, 1), now);
+        assert!(out.picks.is_empty());
+        assert!(out.budget_short.is_none());
+        assert_eq!(out.near_misses.len(), 1);
+        let nm = &out.near_misses[0];
+        assert_eq!(nm.symbol, "PFE");
+        assert_eq!(nm.strike, 26.0);
+        assert_eq!(nm.cash_needed_usd, 2_600.0, "26 × 100 ≤ งบ 3,000");
+        assert_eq!(nm.credit_usd, 6.0, "bid 0.06 × 100 ยัง ≥ ขั้นต่ำ $5");
+        assert!((nm.gap_usd - 0.12).abs() < 1e-9, "ask − bid ต่อหุ้น");
+        assert_eq!(nm.bid_usd, 0.06);
+        assert_eq!(nm.ask_usd, 0.18);
+        assert!(nm.spread_pct.is_some_and(|sp| sp > 25.0));
+        assert_eq!(nm.expiry, "2026-12-24");
+        assert_eq!(nm.checks.cap_pct, 15.0, "risk 1");
+        assert!(
+            nm.checks.days_ok && nm.checks.has_buyer && nm.checks.credit_ok && nm.checks.assign_ok
+        );
+        assert!(!nm.checks.liquidity_ok, "ตกแค่ liquidity ข้อเดียว");
+        assert!(nm.assign_pct <= 15.0, "assign ผ่าน: {}", nm.assign_pct);
+    }
+
+    /// เรียงตามจำนวนเกณฑ์ที่พลาด แล้วตามโอกาสต้องซื้อหุ้นใกล้เพดานของโหมด —
+    /// ไม่เกิน 3 ตัว, ว่างเมื่อมี picks, และว่างเมื่อไม่มีพุตที่จ่ายไหวเลย
+    /// (budget_short อธิบายแทน)
+    #[test]
+    fn near_misses_rank_by_fewest_failures_then_cap_distance() {
+        let (t, near) = (at(21, 0), NaiveDate::from_ymd_opt(2026, 11, 28).unwrap());
+        let today = vec![
+            stock("WIDE", 28.46, t),
+            put("WIDE", 26.0, exp_dec24(), t, 0.06, 0.18, 5_000.0), // liquidity (1)
+            stock("DEEP", 50.0, t),
+            put("DEEP", 10.0, exp_dec24(), t, 0.02, 0.03, 5_000.0), // credit (1, p_itm ไกลเพดาน)
+            stock("ATM", 50.0, t),
+            put("ATM", 50.0, near, t, 0.92, 0.98, 5_000.0), // days + assign (2)
+            stock("ZERO", 28.46, t),
+            put("ZERO", 26.0, near, t, 0.02, 0.18, 5_000.0), // 4 ข้อ และถูกตัดที่ 3 ตัว
+        ];
+        let out = rank_universe(&input(today), &profile(6_000.0, 1), now());
+        assert!(out.picks.is_empty());
+        assert_eq!(
+            out.near_misses
+                .iter()
+                .map(|n| n.symbol.as_str())
+                .collect::<Vec<_>>(),
+            vec!["WIDE", "DEEP", "ATM"],
+            "พลาดน้อยก่อน แล้วใกล้เพดาน cap ก่อน; ZERO ตัดที่ cap 3 ตัว"
+        );
+        assert!(out.near_misses.iter().all(|n| n.cash_needed_usd <= 6_000.0));
+
+        // มี picks ⇒ near_misses ว่าง
+        let rich = rank_universe(&input(base_today()), &profile(50_000.0, 2), now());
+        assert!(!rich.picks.is_empty());
+        assert!(rich.near_misses.is_empty());
+
+        // ไม่มีพุตที่จ่ายไหวเลย ⇒ budget_short อธิบายแทน
+        let broke = rank_universe(&input(base_today()), &profile(900.0, 2), now());
+        assert!(broke.picks.is_empty());
+        assert!(broke.budget_short.is_some());
+        assert!(broke.near_misses.is_empty());
     }
 }

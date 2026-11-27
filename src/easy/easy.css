@@ -319,6 +319,8 @@
   .ez-outcome { grid-template-columns: 1fr; }
   .ez-outcome .ez-money { font-size: 34px; }
   .ez-stockrow { grid-template-columns: 1fr; }
+  .ez-mode { min-width: 100%; }
+  .ez-nm { padding: 12px 14px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -353,6 +355,40 @@
   margin-top: 10px;
 }
 .ez-wmark { font-weight: 700; font-size: 15px; }
+
+/* ---------- risk mode switch (home, under the clock) ---------- */
+.ez-modebox { margin-top: 18px; }
+.ez-modebar { display: flex; gap: 8px; flex-wrap: wrap; }
+.ez-mode {
+  flex: 1; min-width: 110px; display: grid; gap: 1px; justify-items: start;
+  padding: 10px 14px; border-radius: 12px; border: 1px solid var(--border);
+  background: var(--surface2); color: var(--secondary); text-align: left;
+  font-size: 15px; line-height: 1.4; transition: border-color .2s, background .2s;
+}
+.ez-mode:hover { border-color: var(--border-strong); }
+.ez-mode:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.ez-mode[aria-checked="true"] { border-color: var(--blue); background: #15243a; color: var(--text); }
+.ez-mode-name { font-weight: 600; }
+.ez-mode-count { font-size: 13px; color: var(--dim); }
+.ez-mode-desc { margin: 8px 0 0; font-size: 14px; line-height: 1.55; }
+
+/* ---------- near-miss cards (home, only when nothing qualified) ---------- */
+.ez-nm-title { font-weight: 700; font-size: 16px; color: var(--text); margin-top: 18px; }
+.ez-nm {
+  border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
+  margin-top: 10px; background: var(--surface);
+}
+.ez-nm-head { font-weight: 600; color: var(--text); font-size: 15px; }
+.ez-nm-checks { margin-top: 10px; display: grid; gap: 8px; }
+.ez-nm-line {
+  display: grid; grid-template-columns: 24px 1fr; gap: 8px; align-items: start;
+  color: var(--secondary); font-size: 15px; line-height: 1.55;
+}
+.ez-nm-line > span[role="img"] { text-align: center; }
+.ez-nm-line .ez-neg { color: var(--red); }
+.ez-nm-why { margin: 6px 0 0; }
+.ez-nm-why summary { font-size: 14px; }
+.ez-nm-why .ez-c100-body p { font-size: 14px; }
 
 /* easy mode on narrow windows: keep the mode switch and data badge visible */
 @media (max-width: 640px) {

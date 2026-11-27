@@ -158,6 +158,54 @@ export interface WatchCash {
   text_th: string;
 }
 
+/** Tonight's outcome count for one risk mode — Rust reruns the same data
+ *  with only `risk` changed, so the mode buttons can show each mode's count
+ *  before the user switches. */
+export interface ModeCount {
+  risk: 1 | 2 | 3;
+  /** How many picks that mode would show tonight (same rule as `picks`). */
+  picks: number;
+  /** Symbols with at least one contract passing that mode's gates AND the budget. */
+  candidate_symbols: number;
+}
+
+/** The five plain-language quality checks behind a near miss; `cap_pct` is the
+ *  assign-chance ceiling of the current mode (15 / 25 / 30). */
+export interface NearMissChecks {
+  days_ok: boolean;
+  has_buyer: boolean;
+  credit_ok: boolean;
+  liquidity_ok: boolean;
+  assign_ok: boolean;
+  cap_pct: number;
+}
+
+/** A put the user can afford that failed at least one gate tonight — shown
+ *  only when there are no picks, to explain WHY nothing qualified. All money
+ *  figures in USD for ONE contract (100 shares), computed in Rust. */
+export interface NearMiss {
+  ref_occ: string;
+  symbol: string;
+  strike: number;
+  /** ISO date "2026-12-18". */
+  expiry: string;
+  days: number;
+  spot: number;
+  /** Cash to set aside: strike × 100 (always ≤ profile cash here). */
+  cash_needed_usd: number;
+  /** Cash received now (bid side). */
+  credit_usd: number;
+  /** Chance of having to buy the shares, 0–100 (100 = no data). */
+  assign_pct: number;
+  /** ask − bid per share. */
+  gap_usd: number;
+  bid_usd: number;
+  ask_usd: number;
+  /** Bid-ask gap as % of the mid; null when a side is missing. */
+  spread_pct: number | null;
+  checks: NearMissChecks;
+}
+
 export interface UniverseIdeas {
   session_date: string | null;
   /** RFC3339 */
@@ -166,8 +214,13 @@ export interface UniverseIdeas {
   source: string;
   scanned_symbols: number;
   candidate_symbols: number;
+  /** Tonight's idea count per risk mode (1–3), for the mode switch. */
+  mode_counts: ModeCount[];
   market_note_th: string;
   picks: UniversePick[];
+  /** Affordable puts that failed ≥1 check — non-empty only when picks is
+   *  empty (budget_short already covers the "cannot afford any" case). */
+  near_misses: NearMiss[];
   budget_short: BudgetShort | null;
   /** Money needed per watched stock; may be empty. */
   watch_cash: WatchCash[];
