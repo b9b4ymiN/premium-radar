@@ -1,16 +1,21 @@
 /** Step 3 — the five questions card, the what-if slider and the ask-agent
  *  chips, ported from the prototype. Money figures come from the EasyIdea
  *  contract; the "why now" sentence comes from `why_now.text_th`. Ask-agent
- *  answers call the app's copilot command (`ask_copilot`) with the question
- *  plus a short context string; the browser preview shows the prototype's
- *  canned answers, labelled as sample. */
+ *  answers run one agent turn (`runAgentTurn`) with the question plus a
+ *  short context string and render as Markdown; only the browser preview's
+ *  canned answers are trusted HTML, labelled as sample. */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { EasyIdea, EasyIdeas, EasyProfile } from "../types/easy";
+import { anchorId, useAgentAnchor } from "../agent/anchors";
+import { runAgentTurn } from "../agent/bus";
 import { EzIcon } from "./icons";
 import { WhatIf } from "./WhatIf";
+import { Lesson, lessonSeen, markLessonSeen } from "./Lesson";
 import { LEVEL_TH, badgeText, expiryTh, signed, usd } from "./util";
-import { easyHasTauri, easyInvoke } from "./invoke";
+import { easyHasTauri } from "./invoke";
 import { sampleAnswer } from "./sample";
 
 const ASK_QUESTIONS = [
@@ -19,6 +24,14 @@ const ASK_QUESTIONS = [
   "ถ้าหุ้นลงก่อนวันหมดอายุล่ะ?",
   "เปลี่ยนใจกลางทางได้ไหม?",
 ];
+
+/** One answered chip in the thread. Only the browser preview's canned
+ *  answers are trusted HTML — agent answers and error texts are LLM /
+ *  backend output that must never reach innerHTML. */
+type ThreadEntry =
+  | { kind: "sample"; q: string; a: string }
+  | { kind: "answer"; q: string; a: string; unverified: boolean }
+  | { kind: "error"; q: string; a: string };
 
 interface Props {
   idea: EasyIdea;
@@ -34,24 +47,48 @@ export function FiveQuestions(p: Props) {
   const want = d.stance === "want";
   const sample = p.browserPreview || d.source === "DEMO";
 
-  const [thread, setThread] = useState<Array<{ q: string; a: string; sample: boolean }>>([]);
+  const [thread, setThread] = useState<ThreadEntry[]>([]);
   const [busy, setBusy] = useState(false);
+
+  // the lesson opens by itself the first time the user ever opens an idea;
+  // any open (auto or via the button) marks the flag so it never nags again
+  const [lessonOpen, setLessonOpen] = useState(() => !lessonSeen());
+  useEffect(() => {
+    if (lessonOpen) markLessonSeen();
+  }, [lessonOpen]);
+
+  // one anchor per answer block, in the fixed order of the five questions
+  const when = expiryTh(o.expiry).replace(/^\S+ /, "");
+  const q1Ref = useAgentAnchor(anchorId("five", o.occ, "q1"), `ได้เงินเท่าไร ${o.symbol} ${o.strike} (${when})`);
+  const q2Ref = useAgentAnchor(anchorId("five", o.occ, "q2"), `แลกกับอะไร ${o.symbol} ${o.strike} (${when})`);
+  const q3Ref = useAgentAnchor(anchorId("five", o.occ, "q3"), `โอกาสแค่ไหน ${o.symbol} ${o.strike} (${when})`);
+  const q4Ref = useAgentAnchor(anchorId("five", o.occ, "q4"), `ทำไมช่วงนี้ ${o.symbol} ${o.strike} (${when})`);
+  const q5Ref = useAgentAnchor(anchorId("five", o.occ, "q5"), `แย่สุดคืออะไร ${o.symbol} ${o.strike} (${when})`);
 
   const ask = async (q: string) => {
     if (busy) return;
     if (!easyHasTauri) {
-      setThread(t => [...t, { q, a: sampleAnswer(q, o, d, profile), sample: true }]);
+      setThread(t => [...t, { kind: "sample", q, a: sampleAnswer(q, o, d, profile) }]);
       return;
     }
     setBusy(true);
     const context = `(${d.symbol}, ยอมซื้อหุ้นที่ $${o.strike}, หมดอายุ ${o.expiry}, ได้เงิน ${usd(o.credit)}, กันเงิน ${usd(o.cost)})`;
+    let answerText = "";
+    let unverified = false;
     try {
-      const answer = await easyInvoke<string>("ask_copilot", {
-        messages: [{ role: "user", content: `${q} ${context}` }],
+      await runAgentTurn([{ role: "user", content: `${q} ${context}` }], (ev) => {
+        if (ev.type === "answer") {
+          answerText = ev.text;
+          unverified = ev.unverified;
+        }
       });
-      setThread(t => [...t, { q, a: answer, sample: false }]);
+      if (!answerText) {
+        setThread(t => [...t, { kind: "error", q, a: "หยุดก่อนได้คำตอบ — ลองถามใหม่อีกครั้ง" }]);
+        return;
+      }
+      setThread(t => [...t, { kind: "answer", q, a: answerText, unverified }]);
     } catch (e) {
-      setThread(t => [...t, { q, a: `ถามผู้ช่วยไม่สำเร็จ — ${e instanceof Error ? e.message : String(e)}`, sample: false }]);
+      setThread(t => [...t, { kind: "error", q, a: `ถามผู้ช่วยไม่สำเร็จ — ${e instanceof Error ? e.message : String(e)}` }]);
     } finally {
       setBusy(false);
     }
@@ -69,15 +106,21 @@ export function FiveQuestions(p: Props) {
         <span className={`ez-src${sample ? " amber" : ""}`}>{badgeText(d.source, sample)}</span>
       </p>
 
+      <div className="ez-lesson-entry">
+        <button className="ez-btn ghost" onClick={() => setLessonOpen(true)}>
+          <EzIcon name="info" />เรียนพื้นฐานก่อนตัดสินใจ (5 นาที)
+        </button>
+      </div>
+
       <div className="ez-panel ez-gap-l" style={{ paddingTop: 8 }}>
-        <div className="ez-q5">
+        <div className="ez-q5" ref={q1Ref}>
           <h2>ได้เงินเท่าไร</h2>
           <div className="ez-ans">
             <span className="ez-money ez-pos">{usd(o.credit)} ทันที</span>
             เงินเข้าบัญชีวันนี้ และเป็นของคุณไม่ว่าจะเกิดอะไรขึ้น คิดเป็น {o.period_pct.toFixed(2)}% ของเงินที่กันไว้ ใน {o.days} วัน
           </div>
         </div>
-        <div className="ez-q5">
+        <div className="ez-q5" ref={q2Ref}>
           <h2>แลกกับอะไร</h2>
           <div
             className="ez-ans"
@@ -86,7 +129,7 @@ export function FiveQuestions(p: Props) {
             }}
           />
         </div>
-        <div className="ez-q5">
+        <div className="ez-q5" ref={q3Ref}>
           <h2>โอกาสแค่ไหน</h2>
           <div className="ez-ans">
             <div className="ez-cases">
@@ -108,11 +151,11 @@ export function FiveQuestions(p: Props) {
             </div>
           </div>
         </div>
-        <div className="ez-q5">
+        <div className="ez-q5" ref={q4Ref}>
           <h2>ทำไมช่วงนี้น่าทำ</h2>
           <div className="ez-ans" dangerouslySetInnerHTML={{ __html: d.why_now.text_th }} />
         </div>
-        <div className="ez-q5">
+        <div className="ez-q5" ref={q5Ref}>
           <h2>แย่สุดคืออะไร</h2>
           <div
             className="ez-ans"
@@ -137,8 +180,15 @@ export function FiveQuestions(p: Props) {
             <div key={i}>
               <div className="ez-q">{m.q}</div>
               <div className="ez-a">
-                <span dangerouslySetInnerHTML={{ __html: m.a }} />
-                {m.sample && <div className="ez-dim" style={{ fontSize: 13, marginTop: 6 }}>คำตอบตัวอย่างใน prototype</div>}
+                {m.kind === "sample" && <span dangerouslySetInnerHTML={{ __html: m.a }} />}
+                {m.kind === "answer" && (
+                  <span>
+                    <Markdown remarkPlugins={[remarkGfm]}>{m.a}</Markdown>
+                    {m.unverified && <span className="ez-dim">⚠ ตัวเลขบางตัวยังหาที่มาไม่ได้ — ตรวจกับหน้าจอก่อนตัดสินใจ</span>}
+                  </span>
+                )}
+                {m.kind === "error" && <span>{m.a}</span>}
+                {m.kind === "sample" && <div className="ez-dim" style={{ fontSize: 13, marginTop: 6 }}>คำตอบตัวอย่างใน prototype</div>}
               </div>
             </div>
           ))}
@@ -154,6 +204,8 @@ export function FiveQuestions(p: Props) {
         <EzIcon name="info" />
         <span>คุณตั้งเงินไว้ {usd(profile.cash)} · สัญญานี้ต้องกันเงิน {usd(o.cost)}</span>
       </p>
+
+      {lessonOpen && <Lesson idea={o} ideas={d} onClose={() => setLessonOpen(false)} />}
     </section>
   );
 }

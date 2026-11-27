@@ -4,13 +4,15 @@
 use std::sync::Mutex;
 
 use chrono::Utc;
+pub mod agent_cmd;
+pub mod agent_tools;
 pub mod easy_universe;
 pub mod recorder_api;
 pub mod scan;
 pub mod settings;
 
 use radar_core::easy::{EasyIdeas, EasyProfile, build_ideas, normalise_profile, source_token};
-use radar_core::easy_rank::{UniverseIdeas, rank_universe};
+use radar_core::easy_rank::{UniverseIdeas, rank_universe_with_watch};
 use radar_core::engine::{Engine, EngineSnapshot};
 use radar_core::quant::realized_vol;
 use radar_core::screener::{Filters, Mode};
@@ -30,6 +32,9 @@ pub struct AppState {
     /// native; `save_credentials` picks it up (typed > pending > saved) and
     /// clears it once the save commits.
     pub pending_token: Mutex<Option<String>>,
+    /// One agent run at a time plus the shared stop flag (`agent_ask` /
+    /// `agent_cancel`).
+    pub agent: agent_cmd::AgentControl,
 }
 
 // ---------- Tauri commands ----------
@@ -80,6 +85,17 @@ fn start_scan(
     state: tauri::State<'_, AppState>,
     symbol: String,
 ) -> Result<(), String> {
+    start_scan_for(&app, &state, &symbol)
+}
+
+/// Body of the `start_scan` command, shared with the agent's
+/// `ensure_scanned` (agent_tools::ideas) so a tool-driven scan goes through
+/// exactly the same checks and persistence as the button on the main screen.
+pub(crate) fn start_scan_for(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    symbol: &str,
+) -> Result<(), String> {
     let symbol = symbol.trim().to_uppercase();
     if symbol.is_empty() {
         return Err("กรุณาระบุ symbol".into());
@@ -96,7 +112,7 @@ fn start_scan(
 
     state
         .scan
-        .spawn(app, state.engine.clone(), settings, symbol.clone());
+        .spawn(app.clone(), state.engine.clone(), settings, symbol.clone());
 
     // remember the last symbol for the next session (persist goes through
     // the keyring path so the scrubbed file never regains plaintext secrets;
@@ -1530,30 +1546,6 @@ fn lab_predictions(state: tauri::State<'_, AppState>) -> Result<Vec<serde_json::
         .collect())
 }
 
-/// Ask the AI copilot a question, grounded in the live engine data via
-/// function calling (top_candidates / contract_detail / chain_stats).
-#[tauri::command]
-async fn ask_copilot(
-    state: tauri::State<'_, AppState>,
-    messages: Vec<radar_core::copilot::ChatMessage>,
-) -> Result<String, String> {
-    let cfg = lock(&state.settings)
-        .llm_config()
-        .ok_or("ยังไม่ได้ตั้งค่า AI — เปิดหน้า Setup (ไอคอน ⚙) เพื่อใส่ LLM")?;
-    // the model call takes seconds to a minute — off the UI thread. The
-    // engine lock is taken only while a tool executes inside the runner and
-    // released before each LLM HTTP round-trip, so `get_snapshot` polling
-    // and the scan worker never block on a slow answer.
-    let engine = state.engine.clone();
-    off_ui_thread(move || {
-        radar_core::copilot::chat_with_tool_runner(&cfg, &messages, &mut |name, arguments| {
-            let mut engine = lock(&engine);
-            radar_core::copilot::execute_tool(name, arguments, &mut engine)
-        })
-    })
-    .await
-}
-
 /// Probe the LLM endpoint with either the given values (setup screen,
 /// unsaved) or the stored settings — one tiny chat completion.
 #[tauri::command]
@@ -1816,7 +1808,20 @@ async fn easy_universe_ideas(state: tauri::State<'_, AppState>) -> Result<Univer
     let app_data_dir = state.app_data_dir.clone();
     let input =
         off_ui_thread(move || easy_universe::load_rank_input(&settings, &app_data_dir)).await?;
-    Ok(rank_universe(&input, &profile, Utc::now()))
+    // watch list ของ "เงินที่ต้องมี": หุ้นในโปรไฟล์ต่อด้วย watchlist ที่ active
+    let mut watch: Vec<String> = profile.stocks.iter().map(|s| s.symbol.clone()).collect();
+    watch.extend(
+        load_watchlists(&state.app_data_dir)
+            .active_list()
+            .map(|list| list.symbols.clone())
+            .unwrap_or_default(),
+    );
+    Ok(rank_universe_with_watch(
+        &input,
+        &profile,
+        &watch,
+        Utc::now(),
+    ))
 }
 
 /// Save the Easy Mode onboarding answers: symbols are normalised and
@@ -2132,6 +2137,7 @@ mod tests {
             scan: ScanControl::default(),
             app_data_dir: String::new(),
             pending_token: Mutex::new(None),
+            agent: agent_cmd::AgentControl::new(),
         };
         let lock = &state.settings;
         std::thread::scope(|scope| {
@@ -2306,6 +2312,7 @@ pub fn run() {
             scan: ScanControl::default(),
             app_data_dir,
             pending_token: Mutex::new(None),
+            agent: agent_cmd::AgentControl::new(),
         })
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
@@ -2338,7 +2345,9 @@ pub fn run() {
             lab_analyze,
             lab_freeze_prediction,
             lab_predictions,
-            ask_copilot,
+            agent_cmd::agent_ask,
+            agent_cmd::agent_cancel,
+            agent_cmd::agent_ui_result,
             test_llm,
             save_lab_source,
             recorder_test_connection,

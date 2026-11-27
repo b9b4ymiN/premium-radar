@@ -1,4 +1,7 @@
-//! AI Copilot — LLM function calling grounded in live screener data.
+//! Shared LLM plumbing + the engine tool executor the agent harness reuses.
+//! `LlmConfig`/`ChatMessage`/`ToolDef` are the OpenAI-compatible wire types
+//! (agent runner, settings UI), `execute_tool` answers screener questions
+//! against the live engine snapshot, and `ping` probes a config.
 //! Fully provider-agnostic: any OpenAI-compatible chat completions endpoint
 //! works (Z.ai, OpenAI, Anthropic via proxy, Ollama, LM Studio, etc.).
 //! Configure via env vars or the settings UI — nothing is hardcoded.
@@ -182,75 +185,6 @@ pub struct ToolFunction {
     pub parameters: Value, // JSON Schema
 }
 
-/// The three tools the copilot can call — grounded in real screener data.
-pub fn screener_tools() -> Vec<ToolDef> {
-    vec![
-        ToolDef {
-            r#type: "function".into(),
-            function: ToolFunction {
-                name: "top_candidates".into(),
-                description: "Get the top N option contracts that pass the screener filters. Returns symbol, grade, strike, expiry, premium, annualized return, probability of profit, and assignment risk.".into(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "count": { "type": "integer", "description": "Number of candidates to return (1-20)", "default": 5 },
-                        "type": { "type": "string", "enum": ["all", "put", "call"], "description": "Filter by option type", "default": "all" }
-                    }
-                }),
-            },
-        },
-        ToolDef {
-            r#type: "function".into(),
-            function: ToolFunction {
-                name: "contract_detail".into(),
-                description: "Get detailed analysis for a specific option contract by its OCC symbol (e.g. NVDA261218P00175000). Returns all economics fields including breakeven, cushion, greeks, and grade reasoning.".into(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "symbol": { "type": "string", "description": "OCC symbol of the contract" }
-                    },
-                    "required": ["symbol"]
-                }),
-            },
-        },
-        ToolDef {
-            r#type: "function".into(),
-            function: ToolFunction {
-                name: "chain_stats".into(),
-                description: "Get chain-level statistics: ATM implied volatility, expected move (±1σ), and put-call skew for the current expiry.".into(),
-                parameters: serde_json::json!({ "type": "object", "properties": {} }),
-            },
-        },
-    ]
-}
-
-/// System prompt for the copilot — Thai-first, grounded in real data.
-pub fn system_prompt() -> String {
-    "คุณคือผู้ช่วย AI ของแอป PREMIUM RADAR — เครื่องมือคัดกรองสัญญา options สำหรับขายพรีเมียม (CSP/Covered Call).\n\n\
-     กติกาสำคัญ:\n\
-     1. ตอบคำถามโดยอ้างอิงข้อมูลจริงจากตารางเสมอ — ใช้ function calling เพื่อดึงข้อมูลก่อนตอบ\n\
-     2. อธิบายเป็นภาษาไทยที่เข้าใจง่ายสำหรับคนที่ไม่ใช่นักวิเคราะห์\n\
-     3. ไม่แนะนำการซื้อขายโดยตรง — ให้ข้อมูลและอธิบายความเสี่ยง\n\
-     4. ระบุที่มาของตัวเลขเสมอ (เช่น 'จากตาราง 8 สัญญาที่ผ่านเงื่อนไข')\n\
-     5. ถ้าไม่มีข้อมูลที่ต้องการ ให้บอกตรงๆ ไม่ invent ตัวเลข\n\n\
-     เมื่อผู้ใช้ถามเกี่ยวกับสัญญาที่น่าสนใจ ให้เรียก top_candidates ก่อน แล้วอธิบาย top 3 พร้อมเหตุผลว่าทำไมเกรดนั้น\n\
-     เมื่อผู้ใช้ถามเรื่องความเสี่ยง ให้อธิบาย cushion, breakeven และโอกาสโดน assign ของสัญญาที่เลือก".into()
-}
-
-/// Build the request body for a chat completion call.
-pub fn build_request(config: &LlmConfig, messages: &[ChatMessage]) -> Value {
-    let mut body = serde_json::json!({
-        "model": config.model,
-        "messages": messages,
-        "tools": screener_tools(),
-        "temperature": config.temperature,
-    });
-    if config.max_tokens > 0 {
-        body["max_tokens"] = serde_json::json!(config.max_tokens);
-    }
-    body
-}
-
 /// Parse the API response — extract either content or tool_calls.
 #[derive(Debug)]
 pub enum LlmResponse {
@@ -322,7 +256,7 @@ impl std::fmt::Debug for LlmConfig {
     }
 }
 
-// ---------- runtime: tool execution + the grounded chat loop ----------
+// ---------- runtime: engine tool execution + the connectivity probe ----------
 
 use crate::engine::Engine;
 use crate::quant::OptType;
@@ -365,7 +299,7 @@ pub fn execute_tool(name: &str, arguments: &str, engine: &mut Engine) -> String 
                         "dte": r.dte,
                         "grade": r.grade.map(|g| g.as_str()),
                         "premium_usd": r.credit,
-                        "annualized_pct": r.ann.map(|v| v * 100.0),
+                        "annualized_pct": r.ann, // already a percentage (screener.rs)
                         "pop_pct": r.pop.map(|v| v * 100.0),
                         "p_itm_pct": r.p_itm.map(|v| v * 100.0),
                         "cushion_pct": r.cushion,
@@ -449,86 +383,6 @@ pub fn ping(config: &LlmConfig) -> Result<String, String> {
         LlmResponse::Content(c) => Ok(c),
         _ => Ok("✓ (ได้รับ response แต่ไม่มี content)".into()),
     }
-}
-
-/// Full copilot round-trip with a caller-supplied tool executor: system
-/// prompt + conversation history → (tool call → `run_tool`)* → final Thai
-/// answer. The executor runs only between HTTP calls, so a caller holding
-/// the engine behind a mutex can lock inside `run_tool` alone and keep the
-/// lock out of the (slow) network path. Any OpenAI-compatible endpoint;
-/// max 6 tool rounds per question.
-#[cfg(feature = "client")]
-pub fn chat_with_tool_runner(
-    config: &LlmConfig,
-    history: &[ChatMessage],
-    run_tool: &mut dyn FnMut(&str, &str) -> String,
-) -> Result<String, String> {
-    let http = reqwest::blocking::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(90))
-        .build()
-        .map_err(|e| format!("build http client: {e}"))?;
-
-    let mut messages: Vec<ChatMessage> = vec![ChatMessage::system(system_prompt())];
-    messages.extend(history.iter().cloned());
-
-    for _round in 0..6 {
-        let body = build_request(config, &messages);
-        let resp = http
-            .post(config.chat_url())
-            .bearer_auth(&config.api_key)
-            .json(&body)
-            .send()
-            .map_err(|e| format!("เรียก LLM ไม่สำเร็จ: {e}"))?;
-        let status = resp.status().as_u16();
-        let json: Value = resp.json().unwrap_or(Value::Null);
-        if status != 200 {
-            let clip: String = json.to_string().chars().take(300).collect();
-            return Err(format!("LLM {status}: {clip}"));
-        }
-        match parse_response(&json) {
-            LlmResponse::Content(c) => return Ok(c),
-            LlmResponse::ToolCall {
-                id,
-                name,
-                arguments,
-            } => {
-                let result = run_tool(&name, &arguments);
-                messages.push(ChatMessage {
-                    role: "assistant".into(),
-                    content: String::new(),
-                    tool_calls: Some(serde_json::json!([{
-                        "id": id,
-                        "type": "function",
-                        "function": {"name": name, "arguments": arguments}
-                    }])),
-                    tool_call_id: None,
-                });
-                messages.push(ChatMessage {
-                    role: "tool".into(),
-                    content: result,
-                    tool_calls: None,
-                    tool_call_id: Some(id),
-                });
-            }
-            LlmResponse::Error(e) => return Err(format!("LLM response ผิดรูป: {e}")),
-        }
-    }
-    Err("AI เรียก tool ยาวเกิน 6 รอบ — ลองถามให้เจาะจงขึ้น".into())
-}
-
-/// Full copilot round-trip: system prompt + conversation history →
-/// (tool call → execute against the engine)* → final Thai answer.
-/// Any OpenAI-compatible endpoint; max 6 tool rounds per question.
-#[cfg(feature = "client")]
-pub fn chat_with_tools(
-    config: &LlmConfig,
-    history: &[ChatMessage],
-    engine: &mut Engine,
-) -> Result<String, String> {
-    chat_with_tool_runner(config, history, &mut |name, arguments| {
-        execute_tool(name, arguments, engine)
-    })
 }
 
 #[cfg(test)]
@@ -672,22 +526,6 @@ mod tests {
                 "the key's length must not leak: {text}"
             );
         }
-    }
-
-    #[test]
-    fn system_prompt_is_thai() {
-        let p = system_prompt();
-        assert!(p.contains("PREMIUM RADAR"));
-        assert!(p.contains("ภาษาไทย"));
-    }
-
-    #[test]
-    fn tools_have_three_functions() {
-        let tools = screener_tools();
-        assert_eq!(tools.len(), 3);
-        assert_eq!(tools[0].function.name, "top_candidates");
-        assert_eq!(tools[1].function.name, "contract_detail");
-        assert_eq!(tools[2].function.name, "chain_stats");
     }
 
     #[test]

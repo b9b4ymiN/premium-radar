@@ -1,0 +1,431 @@
+/* Agent pointing effects (W6 P3-T3). Hand-drawn circle/underline/highlight/
+   box come from rough-notation; this file is the CSS half: blink, pulse,
+   spotlight, bubble. The step color arrives as the inline --agent-mark var
+   (resolved from tokens.css by point.ts), so a future theme only needs to
+   keep defining --accent / --amber / --red for every effect to follow it. */
+
+.agent-mark {
+  outline: 3px solid var(--agent-mark, var(--accent, #4b8cf7));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Blinks the outline only — the element's own text never flickers. After 3
+   iterations the animation drops back to the static outline above. */
+.agent-blink {
+  animation: agent-blink 0.42s ease-in-out 3;
+}
+
+@keyframes agent-blink {
+  50% {
+    outline-color: transparent;
+  }
+}
+
+.agent-pulse-ring {
+  position: fixed;
+  z-index: 79;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 3px solid var(--agent-mark, var(--accent, #4b8cf7));
+  border-radius: 8px;
+}
+
+/* Rests on the static ring once the 3 pulses finish (no fill-mode). */
+.agent-pulse-ring.agent-anim {
+  transform-origin: center;
+  animation: agent-pulse 0.9s ease-out 3;
+}
+
+@keyframes agent-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  70%,
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+/* Spotlight = a transparent hole laid over the target; the huge box-shadow
+   dims everything else. Fixed + pointer-events:none, so scrolling and clicks
+   pass straight through to the app underneath. */
+.agent-spotlight-overlay {
+  position: fixed;
+  z-index: 78;
+  pointer-events: none;
+  box-sizing: border-box;
+  border-radius: 6px;
+  box-shadow: 0 0 0 200vmax rgba(5, 8, 13, 0.62);
+  animation: agent-fade-in 0.18s ease-out;
+}
+
+.agent-bubble {
+  position: fixed;
+  z-index: 90;
+  pointer-events: none;
+  box-sizing: border-box;
+  max-width: min(300px, calc(100vw - 24px));
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong, #384251);
+  border-left: 3px solid var(--agent-mark, var(--accent, #4b8cf7));
+  background: var(--surface2, #171c24);
+  color: var(--text, #f0f3f8);
+  font-family: var(--sans, "Noto Sans Thai", sans-serif);
+  font-size: 12.5px;
+  line-height: 1.5;
+  font-weight: 500;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  animation: agent-fade-in 0.18s ease-out;
+}
+
+@keyframes agent-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-blink,
+  .agent-pulse-ring.agent-anim,
+  .agent-spotlight-overlay,
+  .agent-bubble {
+    animation: none;
+  }
+}
+
+/* ---- AgentPanel (W6 P3-T4). The panel shell reuses the RadarAssistant
+   classes from App.css; everything here is additive and agent-panel
+   prefixed: live timeline, status bar, undo, unverified note. ---- */
+
+/* groups user bubble + timeline + answer of one turn without touching the
+   chatlog's flex-gap rhythm */
+.agent-panel-turn {
+  display: contents;
+}
+
+.agent-panel-steps-toggle {
+  align-self: flex-start;
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dim, #8797aa);
+  font-size: 9.5px;
+  cursor: pointer;
+}
+
+.agent-panel-steps-toggle:hover {
+  color: var(--text, #f0f3f8);
+}
+
+.agent-panel-steps {
+  margin: 0;
+  padding: 4px 8px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-left: 2px solid var(--border-strong, #384251);
+  max-width: 96%;
+}
+
+.agent-panel-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--secondary, #9bacc7);
+}
+
+.agent-panel-step i {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--dim, #8797aa);
+}
+
+.agent-panel-step.run {
+  color: var(--text, #f0f3f8);
+}
+
+.agent-panel-step.run i {
+  background: var(--accent, #4b8cf7);
+  animation: agent-panel-blink 0.9s ease-in-out infinite;
+}
+
+.agent-panel-step.done i {
+  background: var(--green, #3ddc97);
+}
+
+.agent-panel-step.fail {
+  color: var(--red, #f4788c);
+}
+
+.agent-panel-step.fail i {
+  background: var(--red, #f4788c);
+}
+
+.agent-panel-ms {
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--dim, #8797aa);
+  font-size: 9px;
+}
+
+@keyframes agent-panel-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.agent-panel-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--border, #1e2733);
+  font-size: 10px;
+  color: var(--secondary, #9bacc7);
+}
+
+.agent-panel-status .agent-panel-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #4b8cf7);
+  animation: agent-panel-blink 0.9s ease-in-out infinite;
+}
+
+.agent-panel-stop {
+  margin-left: auto;
+  height: 20px;
+  padding: 0 9px;
+  border: 1px solid var(--red, #f4788c);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--red, #f4788c);
+  font-size: 9.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.agent-panel-stop:hover {
+  background: rgba(244, 120, 140, 0.12);
+}
+
+.agent-panel-undo {
+  margin-left: auto;
+  height: 18px;
+  padding: 0 7px;
+  border: 1px solid var(--border-strong, #384251);
+  border-radius: 5px;
+  background: none;
+  color: var(--dim, #8797aa);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.agent-panel-undo:hover {
+  color: var(--text, #f0f3f8);
+  border-color: var(--amber, #f0bd70);
+}
+
+.agent-panel-unverified {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px dashed rgba(240, 189, 112, 0.4);
+  color: var(--amber, #f0bd70);
+  font-size: 9.5px;
+  cursor: help;
+}
+
+.agent-panel-note {
+  color: var(--dim, #8797aa);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-panel-step.run i,
+  .agent-panel-status .agent-panel-dot {
+    animation: none;
+  }
+}
+
+/* ---- P4-T1: recommendation card (present_idea) ---- */
+
+.agent-card {
+  margin: 6px 0;
+  padding: 10px 12px 9px;
+  border: 1px solid var(--border-strong, #384251);
+  border-radius: 10px;
+  background: rgba(75, 140, 247, 0.04);
+}
+
+.agent-card-head h3 {
+  margin: 0 0 2px;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: var(--text, #f0f3f8);
+}
+
+.agent-card-sub {
+  font-size: 9.5px;
+  color: var(--dim, #8797aa);
+  word-break: break-all;
+}
+
+.agent-card-nums {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.agent-card-num {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 7px;
+  border: 1px solid var(--border-soft, #2a323d);
+  border-radius: 7px;
+  background: rgba(127, 167, 255, 0.05);
+}
+
+.agent-card-num-label {
+  font-size: 9px;
+  color: var(--secondary);
+}
+
+.agent-card-num-value {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text, #f0f3f8);
+}
+
+.agent-card-num-value.pos { color: var(--green, #63c98c); }
+.agent-card-num-value.neg { color: var(--red, #f4788c); }
+
+.agent-card-answers {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.agent-card-answer {
+  border-top: 1px dashed var(--border-soft, #2a323d);
+  padding-top: 5px;
+}
+
+.agent-card-answer h4 {
+  margin: 0 0 2px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--secondary);
+}
+
+.agent-card-answer p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text, #f0f3f8);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-card-foot {
+  margin-top: 8px;
+  font-size: 8.5px;
+  color: var(--dim, #8797aa);
+}
+
+/* ---- P4-T3: local-write confirmation card (save_watchlist). Amber = the
+   🟡 caution token — this card is the only thing standing between the agent
+   and its first write, so it must read as "think before tapping". ---- */
+
+.agent-confirm {
+  margin: 6px 0;
+  padding: 10px 12px 9px;
+  border: 1px solid rgba(240, 189, 112, 0.5);
+  border-left: 3px solid var(--amber, #f0bd70);
+  border-radius: 10px;
+  background: rgba(240, 189, 112, 0.06);
+}
+
+.agent-confirm.ok,
+.agent-confirm.no {
+  opacity: 0.82;
+}
+
+.agent-confirm-title {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: var(--text, #f0f3f8);
+}
+
+.agent-confirm-detail {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--secondary, #9bacc7);
+}
+
+.agent-confirm-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.agent-confirm-actions button {
+  height: 24px;
+  padding: 0 14px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.agent-confirm-allow {
+  border: 1px solid var(--amber, #f0bd70);
+  background: var(--amber, #f0bd70);
+  color: #241b0c;
+}
+
+.agent-confirm-allow:hover {
+  filter: brightness(1.06);
+}
+
+.agent-confirm-deny {
+  border: 1px solid var(--border-strong, #384251);
+  background: transparent;
+  color: var(--secondary, #9bacc7);
+}
+
+.agent-confirm-deny:hover {
+  color: var(--text, #f0f3f8);
+  border-color: var(--dim, #8797aa);
+}
+
+.agent-confirm-note {
+  margin-top: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--dim, #8797aa);
+}
+
+.agent-confirm-note.ok {
+  color: var(--green, #63c98c);
+}

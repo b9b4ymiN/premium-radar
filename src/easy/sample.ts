@@ -8,10 +8,12 @@ import type {
   EasyIdeas,
   EasyProfile,
   IdeaLevel,
+  ModeCount,
   OiContext,
   ScoreParts,
   UniverseIdeas,
   UniversePick,
+  WatchCash,
 } from "../types/easy";
 import { LEVEL_TH, expiryTh, usd } from "./util";
 
@@ -284,6 +286,32 @@ export function sampleUniverse(profile: EasyProfile): UniverseIdeas {
   ];
 
   const cheapest = Math.min(...picks.map(p => p.idea.cost));
+  // mode_counts mirror the Rust rule on the sample picks: cap 15/25/30 per
+  // risk, affordability first — so the preview's mode buttons count live
+  const modeCounts: ModeCount[] = ([1, 2, 3] as const).map(risk => {
+    const cap = [0, 15, 25, 30][risk];
+    const passing = picks.filter(p => p.idea.cost <= profile.cash && p.idea.assign_pct <= cap);
+    return { risk, picks: Math.min(3, passing.length), candidate_symbols: passing.length };
+  });
+  // "เงินที่ต้องมี" demo rows — same shape/wording the Rust command returns
+  const watchCash: WatchCash[] = [
+    {
+      symbol: "NVDA",
+      spot: SAMPLE_STOCKS.NVDA.spot,
+      min_cash_usd: 16_500,
+      any_cash_usd: 16_500,
+      affordable: profile.cash >= 16_500,
+      text_th: "NVDA ราคา $182 · ขาย 1 สัญญาต้องกันเงินราว $16,500 (ยอมซื้อ 100 หุ้นที่ $165)",
+    },
+    {
+      symbol: "F",
+      spot: SAMPLE_STOCKS.F.spot,
+      min_cash_usd: 1_000,
+      any_cash_usd: 1_000,
+      affordable: profile.cash >= 1_000,
+      text_th: "F ราคา $11 · ขาย 1 สัญญาต้องกันเงินราว $1,000 (ยอมซื้อ 100 หุ้นที่ $10)",
+    },
+  ];
   if (profile.cash < cheapest) {
     const cheapestSym = picks.find(p => p.idea.cost === cheapest)!.idea.symbol;
     return {
@@ -292,13 +320,16 @@ export function sampleUniverse(profile: EasyProfile): UniverseIdeas {
       source: "DEMO",
       scanned_symbols: 104,
       candidate_symbols: 12,
+      mode_counts: modeCounts,
       market_note_th: marketNote,
       picks: [],
+      near_misses: [],
       budget_short: {
         min_cash_usd: cheapest,
         cheapest_symbol: cheapestSym,
         text_th: `งบที่ตั้งไว้ ${usd(profile.cash)} ยังน้อยกว่าราคาขั้นต่ำของคืนนี้ ตัวที่ถูกที่สุด (${cheapestSym}) ยังต้องกันเงินไว้ ${usd(cheapest)} ต่อ 1 สัญญา (ตัวอย่าง)`,
       },
+      watch_cash: watchCash,
       agent_say_th: "คืนนี้ยังไม่มีไอเดียที่งบนี้ทำได้ ลองเพิ่มงบแล้วผมจะหาใหม่ (ตัวอย่าง)",
       computed_at: now,
     };
@@ -318,9 +349,12 @@ export function sampleUniverse(profile: EasyProfile): UniverseIdeas {
     source: "DEMO",
     scanned_symbols: 104,
     candidate_symbols: 12,
+    mode_counts: modeCounts,
     market_note_th: marketNote,
     picks: fit,
+    near_misses: [],
     budget_short: null,
+    watch_cash: watchCash,
     agent_say_th,
     computed_at: now,
   };

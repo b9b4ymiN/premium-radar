@@ -20,6 +20,11 @@ use crate::logln;
 use crate::schedule::JobKind;
 use crate::status::TokenInfo;
 
+/// rule การเลือก contract ของ job ที่ scheduler สั่ง — งบเท่าเดิม (≤ 96 ตัว)
+/// แต่กัน 64 ตัวให้ put ลึกถึง ~−20 % ใต้ spot เพื่อให้ Easy หา cash-secured
+/// put ที่มีโอกาสถูก assign ต่ำได้ (near-spot-v1 เก็บ put ใกล้ spot อย่างเดียว)
+const SELECTION_RULE: &str = "put-depth-v1";
+
 /// job หนึ่งงานตามที่ caller สั่ง
 pub struct JobRequest {
     pub kind: JobKind,
@@ -176,13 +181,14 @@ pub fn run_job(cfg: &Config, secrets: &Secrets, req: JobRequest) -> JobSummary {
     sum.session = Some(session);
     let scope = req.kind.scope();
     logln(format!(
-        "job={} start: slot={} session={} refresh={} scope_windows={} band=±{}% symbols={}",
+        "job={} start: slot={} session={} refresh={} scope_windows={} band=±{}% rule={} symbols={}",
         req.kind.label(),
         req.scheduled_for_ny,
         session,
         req.refresh,
         scope.windows.len(),
         (scope.strike_pct * 100.0) as u32,
+        SELECTION_RULE,
         req.symbols.len()
     ));
     let _ = storage.log_session_event(session, &CaptureEvent::Started { at: now });
@@ -192,7 +198,7 @@ pub fn run_job(cfg: &Config, secrets: &Secrets, req: JobRequest) -> JobSummary {
         anchor,
         now,
         refresh: req.refresh,
-        selection_rule: "near-spot-v1",
+        selection_rule: SELECTION_RULE,
         scope,
     };
     let mut budgeted = BudgetedClient::new(client, cfg.max_requests_per_minute);

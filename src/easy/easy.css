@@ -319,6 +319,8 @@
   .ez-outcome { grid-template-columns: 1fr; }
   .ez-outcome .ez-money { font-size: 34px; }
   .ez-stockrow { grid-template-columns: 1fr; }
+  .ez-mode { min-width: 100%; }
+  .ez-nm { padding: 12px 14px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -329,6 +331,65 @@
 /* programmatic focus on a screen heading must not draw a ring */
 .ez-main [tabindex="-1"]:focus { outline: none; }
 
+/* "สัญญา 1 ตัว = 100 หุ้น" explainer (collapsed <details>) + the watch-cash
+   list — same surface/border look as every other panel content */
+.ez-c100 { margin-top: 14px; }
+.ez-c100 summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+  font-size: 15px;
+}
+.ez-c100 summary:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; border-radius: 4px; }
+.ez-c100-body { margin-top: 10px; display: grid; gap: 8px; }
+.ez-c100-body p { margin: 0; color: var(--secondary); font-size: 15px; line-height: 1.55; }
+
+.ez-wcash-title { font-weight: 700; font-size: 16px; color: var(--text); }
+.ez-wcash {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+  align-items: start;
+  color: var(--secondary);
+  font-size: 15px;
+  margin-top: 10px;
+}
+.ez-wmark { font-weight: 700; font-size: 15px; }
+
+/* ---------- risk mode switch (home, under the clock) ---------- */
+.ez-modebox { margin-top: 18px; }
+.ez-modebar { display: flex; gap: 8px; flex-wrap: wrap; }
+.ez-mode {
+  flex: 1; min-width: 110px; display: grid; gap: 1px; justify-items: start;
+  padding: 10px 14px; border-radius: 12px; border: 1px solid var(--border);
+  background: var(--surface2); color: var(--secondary); text-align: left;
+  font-size: 15px; line-height: 1.4; transition: border-color .2s, background .2s;
+}
+.ez-mode:hover { border-color: var(--border-strong); }
+.ez-mode:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.ez-mode[aria-checked="true"] { border-color: var(--blue); background: #15243a; color: var(--text); }
+.ez-mode-name { font-weight: 600; }
+.ez-mode-count { font-size: 13px; color: var(--dim); }
+.ez-mode-desc { margin: 8px 0 0; font-size: 14px; line-height: 1.55; }
+
+/* ---------- near-miss cards (home, only when nothing qualified) ---------- */
+.ez-nm-title { font-weight: 700; font-size: 16px; color: var(--text); margin-top: 18px; }
+.ez-nm {
+  border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
+  margin-top: 10px; background: var(--surface);
+}
+.ez-nm-head { font-weight: 600; color: var(--text); font-size: 15px; }
+.ez-nm-checks { margin-top: 10px; display: grid; gap: 8px; }
+.ez-nm-line {
+  display: grid; grid-template-columns: 24px 1fr; gap: 8px; align-items: start;
+  color: var(--secondary); font-size: 15px; line-height: 1.55;
+}
+.ez-nm-line > span[role="img"] { text-align: center; }
+.ez-nm-line .ez-neg { color: var(--red); }
+.ez-nm-why { margin: 6px 0 0; }
+.ez-nm-why summary { font-size: 14px; }
+.ez-nm-why .ez-c100-body p { font-size: 14px; }
+
 /* easy mode on narrow windows: keep the mode switch and data badge visible */
 @media (max-width: 640px) {
   .app.easy .global-search { display: none; }
@@ -338,4 +399,187 @@
   .app.easy .appbar { gap: 8px; padding-left: 10px; padding-right: 10px; }
   .app.easy .tag-demo { font-size: 10px; padding: 2px 6px; margin-left: auto; }
   .app.easy .statusbar { overflow: hidden; white-space: nowrap; }
+}
+
+/* ---------- lesson: เรียนพื้นฐานก่อนตัดสินใจ (ported from
+   docs/dev/lesson-prototype.html, scoped under .ez-lesson) ---------- */
+
+/* pele theming: the diagrams read the app tokens through these variables */
+.ez-lesson {
+  --pele-bg: var(--surface2);
+  --pele-fg: var(--text);
+  --pele-muted: var(--secondary);
+  --pele-line: var(--secondary);
+  --pele-border: var(--border);
+  --pele-surface: var(--canvas);
+  --pele-surface-alt: var(--surface2);
+  --pele-accent: var(--blue);
+  --pele-font: var(--sans);
+  --pele-font-mono: var(--sans);
+}
+
+/* full-screen panel above whatever screen opened it; below the agent FAB (60)
+   and panel (61) so the assistant stays reachable while the lesson is open */
+.ez-lesson-entry { margin-top: 14px; }
+.ez-lesson {
+  position: fixed;
+  inset: 0;
+  z-index: 59;
+  overflow-y: auto;
+  background: var(--canvas);
+  font-size: 17px;
+  line-height: 1.75;
+}
+.ez-lesson-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: flex-start;
+  padding: 10px 16px;
+  background: color-mix(in srgb, var(--canvas) 88%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--border-soft);
+}
+.ez-lesson-col {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.ez-lesson h1 { font-size: 30px; line-height: 1.3; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+.ez-lesson h2 { font-size: 21px; line-height: 1.4; font-weight: 700; text-wrap: balance; }
+.ez-lesson h3 { font-size: 17px; line-height: 1.4; font-weight: 700; }
+.ez-lesson p { margin: 0; }
+.ez-lesson-lead { color: var(--secondary); }
+
+.ez-lesson-step { display: flex; flex-direction: column; gap: 12px; }
+.ez-lesson-stephead { display: flex; align-items: baseline; gap: 12px; }
+.ez-lesson-no { font-weight: 700; color: var(--blue); font-size: 16px; min-width: 3.6em; flex: none; }
+
+.ez-lesson-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.ez-lesson-fact {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.ez-lesson-fact b { display: block; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
+.ez-lesson-fact span { font-size: 13px; color: var(--secondary); line-height: 1.4; }
+
+.ez-lesson-dg {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+  overflow-x: auto;
+}
+.ez-lesson-dg svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+
+.ez-lesson-remember {
+  border-left: 4px solid var(--blue);
+  background: var(--blue-soft);
+  padding: 10px 14px;
+  border-radius: 0 10px 10px 0;
+}
+.ez-lesson-note { font-size: 14px; color: var(--secondary); }
+
+/* ขั้น 4 — the two worked endings */
+.ez-lesson-endings { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.ez-lesson-end {
+  border-radius: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ez-lesson-end.good { background: #12332b; }
+.ez-lesson-end.warn { background: #3a2e1a; }
+
+/* ขั้น 6 — ladder + slider + result */
+.ez-lesson-ladwrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.ez-lesson-ladder { padding: 12px; }
+.ez-lesson-ladder svg { width: 100%; height: auto; display: block; }
+.ez-lesson-slider { display: flex; flex-direction: column; gap: 6px; }
+.ez-lesson-slider input { width: 100%; accent-color: var(--blue); }
+.ez-lesson-result { border-radius: 12px; padding: 12px 14px; font-weight: 500; }
+.ez-lesson-result.good { background: #12332b; }
+.ez-lesson-result.warn { background: #3a2e1a; }
+.ez-lesson-result.bad { background: #3a1c24; }
+
+/* ladder svg parts (fills/strokes via CSS so vars resolve) */
+.ez-lad-good { fill: #12332b; }
+.ez-lad-warn { fill: #3a2e1a; }
+.ez-lad-bad { fill: #3a1c24; }
+.ez-lad-spot { stroke: var(--blue); }
+.ez-lad-k { stroke: var(--text); }
+.ez-lad-be { stroke: var(--red); }
+.ez-lad-price { fill: var(--text); font-size: 15px; }
+.ez-lad-lab { fill: var(--secondary); font-size: 14px; }
+.ez-lad-zone { font-size: 15px; font-weight: 600; }
+.ez-lad-zone.good { fill: var(--green); }
+.ez-lad-zone.warn { fill: var(--amber); }
+.ez-lad-zone.bad { fill: var(--red); }
+.ez-lad-foot { fill: var(--dim); font-size: 12px; }
+.ez-lad-dot { fill: var(--blue); stroke: var(--canvas); stroke-width: 3; }
+
+/* ขั้น 7 — history chart */
+.ez-lesson-chart { display: flex; flex-direction: column; gap: 10px; }
+.ez-lesson-chart svg { width: 100%; height: auto; display: block; }
+.ez-lesson-chart p { font-size: 15px; color: var(--text); }
+.ez-lesson-chartfall {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  color: var(--secondary);
+}
+.ez-ch-grid { stroke: var(--border); stroke-width: 1; }
+.ez-ch-lab { fill: var(--secondary); font-size: 13px; }
+.ez-ch-line { fill: none; stroke: var(--blue); stroke-width: 2.5; }
+.ez-ch-strike { stroke: var(--red); stroke-width: 2; stroke-dasharray: 6 5; }
+.ez-ch-strikelab { fill: var(--red); font-size: 14px; font-weight: 600; }
+
+/* ขั้น 8 — quiz */
+.ez-lesson-quizbox { display: flex; flex-direction: column; gap: 8px; }
+.ez-lesson-q { font-size: 16px; }
+.ez-lesson-opt {
+  font: inherit;
+  text-align: left;
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+.ez-lesson-opt:hover { border-color: var(--blue); }
+.ez-lesson-opt:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+.ez-lesson-opt.right { background: #12332b; border-color: var(--green); }
+.ez-lesson-opt.wrong { background: #3a1c24; border-color: var(--red); }
+.ez-lesson-fb { min-height: 1.5em; font-size: 15px; color: var(--text); }
+
+/* อยากรู้เพิ่ม */
+.ez-lesson-more {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 16px;
+}
+.ez-lesson-more summary { cursor: pointer; font-weight: 600; }
+.ez-lesson-more summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 4px; }
+.ez-lesson-more[open] summary { margin-bottom: 10px; }
+.ez-lesson-morein { display: flex; flex-direction: column; gap: 10px; }
+
+@media (max-width: 640px) {
+  .ez-lesson { font-size: 16px; }
+  .ez-lesson-no { min-width: 3em; }
+  .ez-lad-lab { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ez-lesson * { transition: none !important; animation: none !important; }
 }

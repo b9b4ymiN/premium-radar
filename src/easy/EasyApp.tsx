@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { EasyIdeas, EasyProfile, Stance, UniverseIdeas } from "../types/easy";
+import type { EasyIdeas, EasyProfile, RiskLevel, Stance, UniverseIdeas } from "../types/easy";
 import { Onboarding } from "./Onboarding";
 import { EasyHome, type HeldContract } from "./EasyHome";
 import { IdeasStep } from "./IdeasStep";
@@ -27,6 +27,11 @@ import { EzSprite } from "./icons";
 import { daysUntil } from "./util";
 import { SAMPLE_HELD, sampleIdeas, sampleProfile, sampleUniverse } from "./sample";
 import { easyInvoke } from "./invoke";
+import { AgentPanel } from "../agent/AgentPanel";
+import { useScreenState } from "../agent/anchors";
+import { registerUiHandler } from "../agent/bus";
+import { clearPointing } from "../agent/point";
+import { requestWhatIfPrice } from "../agent/requests";
 import "./easy.css";
 
 type Screen = "boot" | "ob1" | "ob2" | "home" | "s2" | "s3" | "s4" | "s5" | "notyet";
@@ -102,9 +107,11 @@ export interface EasyAppProps {
   loading: boolean;
   scanMsg: string;
   stock: { symbol: string; price: number } | null;
+  llmInfo: { label: string; model: string } | null;
+  openSetup: () => void;
 }
 
-export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stock }: EasyAppProps) {
+export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stock, llmInfo, openSetup }: EasyAppProps) {
   const browserPreview = !hasTauri;
   const [screen, setScreen] = useState<Screen>(() => (hasTauri ? "boot" : "ob1"));
   const [profile, setProfile] = useState<EasyProfile>(() => sampleProfile(false));
@@ -123,11 +130,17 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
   const universeRef = useRef(universe);
   const saveChain = useRef<Promise<void>>(Promise.resolve());
   const bag = useRef<RetryBag>({ timers: {}, tries: {} });
+  // mirrors for the agent ui handlers (registered once, must read fresh state)
+  const focusedRef = useRef(focused);
+  const pickedOccRef = useRef(pickedOcc);
+  const openPickRef = useRef<(sym: string) => void>(() => {});
 
   // mirrors for async callbacks (never written during render)
   useEffect(() => { profileRef.current = profile; }, [profile]);
   useEffect(() => { ideasStateRef.current = ideasState; }, [ideasState]);
   useEffect(() => { universeRef.current = universe; }, [universe]);
+  useEffect(() => { focusedRef.current = focused; }, [focused]);
+  useEffect(() => { pickedOccRef.current = pickedOcc; }, [pickedOcc]);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -240,8 +253,10 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
     prevLoading.current = loading;
   }, [loading, hasTauri, fetchIdeas]);
 
-  // new screen: back to the top, focus the heading (as the prototype does)
+  // new screen: back to the top, focus the heading (as the prototype does);
+  // whatever the agent was pointing at left the screen with the old one
   useEffect(() => {
+    clearPointing();
     mainRef.current?.scrollTo({ top: 0 });
     const h = mainRef.current?.querySelector<HTMLElement>(".ez-body h1, .ez-body .ez-say");
     if (h) {
@@ -301,6 +316,52 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
     void fetchIdeas(S);
     go("s2");
   };
+  useEffect(() => { openPickRef.current = openPick; });
+
+  // ---------- agent ui wiring (easy) ----------
+  // the agent chat and its handlers exist only once onboarding is done; pro
+  // mode unmounts this component and registers its own handlers instead
+  const postOnboarding = screen !== "boot" && screen !== "ob1" && screen !== "ob2";
+  useScreenState({ mode: "easy", page: screen, symbol: focused, selected: pickedOcc });
+
+  useEffect(() => {
+    if (!postOnboarding) return;
+    const NOT_ON_SCREEN = "ยังไม่มีไอเดียนี้บนจอ — เปิดรายการไอเดียของหุ้นนั้นก่อน";
+    const ideaLoaded = (ref: string) => {
+      const f = focusedRef.current;
+      const ideas = f ? ideasStateRef.current[f]?.data?.ideas : undefined;
+      return ideas?.some(i => i.occ === ref) ?? false;
+    };
+    const unGo = registerUiHandler("go", a => {
+      if (a.mode !== "easy") return { ok: false, detail: "คำสั่งนี้เป็นของโหมดละเอียด — สลับไปโหมดละเอียดก่อน" };
+      if (a.page === "home") {
+        setScreen("home");
+        return { ok: true };
+      }
+      if (a.page === "s2") {
+        if (!a.symbol) return { ok: false, detail: "ต้องบอกชื่อหุ้นด้วย เช่น NVDA" };
+        openPickRef.current(a.symbol);
+        return { ok: true };
+      }
+      if (a.page === "s3" || a.page === "s4") {
+        const ref = a.ref ?? pickedOccRef.current;
+        if (!ref) return { ok: false, detail: "ยังไม่ได้เลือกสัญญา — เปิดรายการไอเดียของหุ้นก่อน" };
+        if (!ideaLoaded(ref)) return { ok: false, detail: NOT_ON_SCREEN };
+        setPickedOcc(ref);
+        setScreen(a.page);
+        return { ok: true };
+      }
+      return { ok: false, detail: `ไม่มีหน้า "${a.page}" ในโหมดง่าย — มี home, s2, s3, s4` };
+    });
+    const unSelect = registerUiHandler("select", a => {
+      if (!ideaLoaded(a.ref)) return { ok: false, detail: NOT_ON_SCREEN };
+      setPickedOcc(a.ref);
+      setScreen("s3");
+      if (a.open === "what_if" && a.price != null) requestWhatIfPrice({ ref: a.ref, price: a.price });
+      return { ok: true };
+    });
+    return () => { unGo(); unSelect(); };
+  }, [postOnboarding]);
 
   // the stance answers given on the home idea cards — upsert, never hide the card
   const onStance = (sym: string, stance: Stance) => {
@@ -314,6 +375,12 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
           : [...cur.stocks, { symbol: S, stance }],
       };
     });
+  };
+
+  // the risk-mode switch on home: saved like a stance answer; the universe
+  // refetch below keys on `${cash}|${risk}` so the picks reload for the new mode
+  const onRisk = (risk: RiskLevel) => {
+    setProfile(cur => (cur.risk === risk ? cur : { ...cur, risk }));
   };
 
   // ---------- flow bar ----------
@@ -364,6 +431,7 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
             onRetry={retryUniverse}
             onOpenPick={openPick}
             onStance={onStance}
+            onRisk={onRisk}
             onGo={s => go(s)}
           />
         )}
@@ -420,6 +488,8 @@ export function EasyApp({ tauriReady, hasTauri, symbol, setSymbol, loading, stoc
       {toast && (
         <div className="ez-toast on" role="status" aria-live="polite">{toast}</div>
       )}
+
+      {postOnboarding && <AgentPanel mode="easy" llmInfo={llmInfo} openSetup={openSetup} />}
     </div>
   );
 }
