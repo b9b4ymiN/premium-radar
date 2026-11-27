@@ -204,6 +204,42 @@ mod tests {
         }
     }
 
+    /// The read tools each mode sees after P2 (ui/present/save_watchlist
+    /// land in P3/P4 and bring Easy to 12 and Pro to 17).
+    #[test]
+    fn p2_read_tools_per_mode() {
+        let registry = build_registry().expect("all tool families register cleanly");
+        let names = |mode| {
+            let mut names: Vec<String> = registry
+                .for_mode(mode)
+                .iter()
+                .map(|spec| spec.name.clone())
+                .collect();
+            names.sort();
+            names
+        };
+        let easy = [
+            "contract_detail",
+            "find_ideas",
+            "market_pulse",
+            "my_portfolio",
+            "my_profile",
+            "read_playbook",
+            "stock_brief",
+            "what_if",
+        ];
+        let mut pro: Vec<&str> = easy.to_vec();
+        pro.extend([
+            "chain_stats",
+            "my_watchlists",
+            "price_behavior",
+            "scan_chain",
+        ]);
+        pro.sort();
+        assert_eq!(names(Mode::Easy), easy);
+        assert_eq!(names(Mode::Pro), pro);
+    }
+
     /// The guard must free the slot on ANY exit — an early `?`/Err return
     /// drops it, so a failed run never leaves the agent stuck "busy".
     #[test]
