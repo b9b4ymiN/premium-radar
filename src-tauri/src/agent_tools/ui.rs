@@ -142,16 +142,17 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Option<Result<String,
     Some(execute_ui(ctx, name, args))
 }
 
-fn execute_ui(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String> {
-    let screen = crate::lock(&ctx.screen).clone();
-    let action = match plan_ui_call(name, args, screen.as_ref()) {
-        Ok(action) => action,
-        // error JSON ส่งกลับเป็น Ok เฉยๆ — โมเดลต้องอ่าน hint/allowed
-        // เพื่อแก้การเรียกเองได้
-        Err(error) => return Ok(error.to_string()),
-    };
+/// ส่ง UiAction หนึ่งออกทาง bridge ของ run แล้วรอ ack จนกว่าจะหมดเวลา —
+/// แบบเดียวกับที่ ui tools ใช้ เผื่อครอบครัวอื่น (เช่น `present_idea`)
+/// สั่ง UI ด้วย action ที่สร้างเองแล้วอยากรอผลด้วย
+/// `Err` = run นี้ไม่มี bridge (ข้อความเป็น error JSON สำหรับโมเดล)
+pub(crate) fn emit_and_wait(
+    ctx: &ToolCtx,
+    action: Value,
+    timeout: Duration,
+) -> Result<AckOutcome, String> {
     let Some(bridge) = ctx.ui.as_ref() else {
-        return Ok(json!({
+        return Err(json!({
             "error": "ui_unavailable",
             "message": "ระบบหน้าจอไม่พร้อมใช้งานในตอนนี้ — ตอบผู้ใช้เป็นข้อความแทน",
         })
@@ -163,8 +164,24 @@ fn execute_ui(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String>
         ui_id: ui_id.clone(),
         action,
     });
-    let outcome = wait_for_ack(&rx, &ctx.cancel, ACK_TIMEOUT);
+    let outcome = wait_for_ack(&rx, &ctx.cancel, timeout);
     bridge.acks.remove(&ui_id);
+    Ok(outcome)
+}
+
+fn execute_ui(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String> {
+    let screen = crate::lock(&ctx.screen).clone();
+    let action = match plan_ui_call(name, args, screen.as_ref()) {
+        Ok(action) => action,
+        // error JSON ส่งกลับเป็น Ok เฉยๆ — โมเดลต้องอ่าน hint/allowed
+        // เพื่อแก้การเรียกเองได้
+        Err(error) => return Ok(error.to_string()),
+    };
+
+    let outcome = match emit_and_wait(ctx, action, ACK_TIMEOUT) {
+        Err(unavailable) => return Ok(unavailable),
+        Ok(outcome) => outcome,
+    };
 
     match outcome {
         AckOutcome::Cancelled => Err("หยุดตามที่ผู้ใช้สั่ง".into()),

@@ -243,11 +243,11 @@ mod tests {
         }
     }
 
-    /// The tools each mode sees after P3: the P2 read set plus the three ui
-    /// tools (Easy 11 = 8 read + 3 ui; Pro 15 = 12 read + 3 ui). P4's
-    /// present/save_watchlist land later.
+    /// The tools each mode sees after P4-T1: the P3 set plus `present_idea`
+    /// (Easy 12 = 8 read + 3 ui + 1 present; Pro 16). P4's save_watchlist
+    /// lands later.
     #[test]
-    fn p3_tools_per_mode() {
+    fn p4_tools_per_mode() {
         let registry = build_registry().expect("all tool families register cleanly");
         let names = |mode| {
             let mut names: Vec<String> = registry
@@ -264,6 +264,7 @@ mod tests {
             "market_pulse",
             "my_portfolio",
             "my_profile",
+            "present_idea",
             "read_playbook",
             "stock_brief",
             "ui_go",
@@ -282,7 +283,7 @@ mod tests {
         assert_eq!(names(Mode::Easy), easy);
         assert_eq!(names(Mode::Pro), pro);
         // ui tools are Tier::Ui, not silent read tools
-        for name in ["ui_go", "ui_select", "ui_point"] {
+        for name in ["ui_go", "ui_select", "ui_point", "present_idea"] {
             assert_eq!(
                 registry.get(name).map(|spec| spec.tier),
                 Some(radar_core::agent::Tier::Ui)
