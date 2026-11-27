@@ -94,6 +94,12 @@ eval:  crates/radar-core/examples/agent_eval.rs + tests/fixtures/agent_eval/*.js
 | P2-T2 ⚡🧠max | `find_ideas`, `scan_chain`, `contract_detail`, `chain_stats`, `what_if` | `agent/tools/ideas.rs` | `scan_chain` รอ ≤ 90 วินาที + ส่ง progress · `what_if` ใช้ `lab_analyze` · ตัวเลขทุกตัวมาจาก `radar_core` |
 | P2-T3 ⚡🧠high | `my_portfolio` (ตัดเลขบัญชี), `my_profile`, `my_watchlists`, `read_playbook` + playbook ร่างแรก 5 ไฟล์ | `agent/tools/{mine,playbook}.rs`, `agent/playbooks/*.md` | test ยืนยันว่าไม่มีเลขบัญชี/`account_id` หลุดในผล · playbook ภาษาไทยตาม PRODUCT.md |
 
+**หมายเหตุระหว่างทำ (2026-11-27):**
+- โครงสร้างโค้ด: สเปก tool และตัวสรุปผลอยู่ที่ `radar-core/agent/tools/<family>.rs` (ทดสอบด้วย fixture) ส่วนการดึงข้อมูลอยู่ที่ `src-tauri/src/agent_tools/<family>.rs` ผ่าน `ToolCtx` + `dispatch`
+- เอา `top_candidates` ออกจาก agent เพราะ `scan_chain` ทำแทนแล้ว (แชทเดิมยังใช้ได้จนถึง P4-T4) · `chain_stats` เหลือแค่โหมดละเอียด
+- เลื่อน progress ระหว่างรอ scan ไปทำใน P3-T4 เพราะตอนนี้ UI รู้จาก `ToolStart` อยู่แล้ว
+- เลื่อน `agent_ui_result` และ `agent_confirm` จาก P1-T4 ไปทำใน P3-T1 / P4-T3
+
 ทุก tool ต้องมี: คำอธิบายแบบ "ใช้เมื่อ / ไม่ใช้เมื่อ" + ตัวอย่างการเรียก 1–3 แบบ · enum ทุกที่ที่ทำได้ · error ที่บอกวิธีแก้ · unit test ด้วย fixture (ไม่เรียก Webull จริง)
 
 **DoD ของ Phase:** โหมดง่ายเห็น 12 tools, โหมดละเอียดเห็น 17 (นับรวม ui/present) · `cargo test --workspace` เขียว · Claude ตรวจผลย่อของทุก tool ด้วยตัวเอง
