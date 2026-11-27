@@ -5,12 +5,14 @@
 //! before every LLM round-trip (the same contract as `ask_copilot`).
 
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use radar_core::agent::{AgentEvent, AgentOutcome, AgentRequest, Mode, Registry, RunLimits};
 use radar_core::copilot::ChatMessage;
 use serde::Deserialize;
 
+use crate::agent_tools::ui::{PendingAcks, UiBridge};
 use crate::agent_tools::{ToolCtx, dispatch};
 use crate::{AppState, lock, off_ui_thread};
 
@@ -26,7 +28,7 @@ pub struct AgentAskInput {
 /// failure is a programming bug (bad or duplicate spec name), so it
 /// surfaces as the command's Err — never a panic.
 pub fn build_registry() -> Result<Registry, String> {
-    use radar_core::agent::tools::{ideas, market, mine, playbook, screener};
+    use radar_core::agent::tools::{ideas, market, mine, playbook, screener, ui};
     let mut registry = Registry::new();
     let families = [
         screener::screener_specs(),
@@ -34,6 +36,7 @@ pub fn build_registry() -> Result<Registry, String> {
         ideas::specs(),
         mine::specs(),
         playbook::specs(),
+        ui::specs(),
     ];
     for spec in families.into_iter().flatten() {
         registry.register(spec)?;
@@ -45,9 +48,12 @@ pub fn build_registry() -> Result<Registry, String> {
 /// makes a second concurrent `agent_ask` fail fast instead of interleaving
 /// two event streams, `cancel` is what the runner checks before every HTTP
 /// round-trip. The Arc lets the blocking-pool run share the same flag.
+/// `acks` pairs emitted `ui_action` events with the `agent_ui_result`
+/// acks coming back from the frontend.
 pub struct AgentControl {
     running: AtomicBool,
     cancel: Arc<AtomicBool>,
+    acks: Arc<PendingAcks>,
 }
 
 impl AgentControl {
@@ -55,6 +61,7 @@ impl AgentControl {
         Self {
             running: AtomicBool::new(false),
             cancel: Arc::new(AtomicBool::new(false)),
+            acks: Arc::new(PendingAcks::new()),
         }
     }
 
@@ -127,18 +134,38 @@ pub async fn agent_ask(
     let _running = state.agent.begin_run()?;
 
     let cancel = state.agent.cancel.clone();
+    // The screen context rides in two places: the request (a system message
+    // for the model) and the tool ctx (the anchor source for ui calls).
+    let req_screen_context = input.screen_context;
+    // The ui bridge emits on a clone of the run's event channel (a dead
+    // channel flips the cancel flag, same rule as the run's own emitter) and
+    // parks on the shared ack table that `agent_ui_result` resolves.
+    let ui_bridge = {
+        let on_event = on_event.clone();
+        let cancel_on_dead_channel = cancel.clone();
+        UiBridge::new(
+            state.agent.acks.clone(),
+            Box::new(move |event: AgentEvent| {
+                if on_event.send(event).is_err() {
+                    cancel_on_dead_channel.store(true, Ordering::SeqCst);
+                }
+            }),
+        )
+    };
     let ctx = ToolCtx {
         engine: state.engine.clone(),
         settings,
         app_data_dir: state.app_data_dir.clone(),
         cancel: cancel.clone(),
         app: Some(app),
+        screen: Arc::new(Mutex::new(req_screen_context.clone())),
+        ui: Some(ui_bridge),
     };
     let req = AgentRequest {
         mode,
         system_prompt: radar_core::copilot::system_prompt(),
         history: input.messages,
-        screen_context: input.screen_context,
+        screen_context: req_screen_context,
     };
 
     // The whole loop is blocking HTTP — off the UI thread. The engine lock
@@ -180,6 +207,17 @@ pub fn agent_cancel(state: tauri::State<'_, AppState>) -> bool {
     state.agent.request_cancel()
 }
 
+/// The frontend's ack for one `ui_action` the agent emitted. Returns true
+/// when a ui call was still waiting for this `ui_id` — a late or unknown
+/// ack (e.g. after a timeout) simply reports false.
+#[tauri::command]
+pub fn agent_ui_result(
+    state: tauri::State<'_, AppState>,
+    result: crate::agent_tools::ui::UiResult,
+) -> bool {
+    state.agent.acks.resolve(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,10 +242,11 @@ mod tests {
         }
     }
 
-    /// The read tools each mode sees after P2 (ui/present/save_watchlist
-    /// land in P3/P4 and bring Easy to 12 and Pro to 17).
+    /// The tools each mode sees after P3: the P2 read set plus the three ui
+    /// tools (Easy 11 = 8 read + 3 ui; Pro 15 = 12 read + 3 ui). P4's
+    /// present/save_watchlist land later.
     #[test]
-    fn p2_read_tools_per_mode() {
+    fn p3_tools_per_mode() {
         let registry = build_registry().expect("all tool families register cleanly");
         let names = |mode| {
             let mut names: Vec<String> = registry
@@ -226,6 +265,9 @@ mod tests {
             "my_profile",
             "read_playbook",
             "stock_brief",
+            "ui_go",
+            "ui_point",
+            "ui_select",
             "what_if",
         ];
         let mut pro: Vec<&str> = easy.to_vec();
@@ -235,9 +277,16 @@ mod tests {
             "price_behavior",
             "scan_chain",
         ]);
-        pro.sort();
+        pro.sort_unstable();
         assert_eq!(names(Mode::Easy), easy);
         assert_eq!(names(Mode::Pro), pro);
+        // ui tools are Tier::Ui, not silent read tools
+        for name in ["ui_go", "ui_select", "ui_point"] {
+            assert_eq!(
+                registry.get(name).map(|spec| spec.tier),
+                Some(radar_core::agent::Tier::Ui)
+            );
+        }
     }
 
     /// The guard must free the slot on ANY exit — an early `?`/Err return
