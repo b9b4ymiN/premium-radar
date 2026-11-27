@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import type { EnrichedRow } from "../../types/screener";
+import { anchorId, useAgentAnchor } from "../../agent/anchors";
 import { SkelPanel } from "../shared/Skeleton";
 
 async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -40,6 +41,14 @@ export default function OptionLab({
   const [err, setErr] = useState<string | null>(null);
   const [covered, setCovered] = useState(false);
   const [freezeMsg, setFreezeMsg] = useState<string | null>(null);
+
+  // agent anchors — registered before the early returns so the hooks stay
+  // unconditional; breakeven/max_loss only exist on the covered-call line
+  const contract = `${symbol}${row ? ` ${row.q.strike}` : ""}`;
+  const popRef = useAgentAnchor(anchorId("lab", "pop"), `โอกาสกำไร (POP) ${contract}`);
+  const scenariosRef = useAgentAnchor(anchorId("lab", "scenarios"), `ตารางสถานการณ์ ${contract}`);
+  const beRef = useAgentAnchor(anchorId("lab", "breakeven"), `จุดคุ้มทุนแบบคุ้มหุ้น ${contract}`);
+  const maxLossRef = useAgentAnchor(anchorId("lab", "max_loss"), `ขาดทุนสูงสุดแบบคุ้มหุ้น ${contract}`);
 
   const isCall = row?.q.option_type === "C";
   const iv = row?.iv ?? 0;
@@ -92,7 +101,7 @@ export default function OptionLab({
           <strong className="pos">{usd(leg?.max_profit)}</strong>
           <small>หลัง fee เข้า+ออก {usd(a?.fees_round_trip)} · ไม่รวม slippage</small>
         </div>
-        <div className="lab-cell">
+        <div className="lab-cell" ref={popRef}>
           <label>{a?.pop ? "โอกาสกำไร (POP)" : "โอกาสกำไร"}</label>
           <strong>{a?.pop ? pct(a.pop.p) : "--"}</strong>
           <small>{a?.pop ? "ราคาปิดวันหมดอายุเกินจุดคุ้มทุน · BS proxy" : "รอ IV ที่ใช้ได้"}</small>
@@ -135,8 +144,8 @@ export default function OptionLab({
           {covered && a?.covered_call && (
             <div className="lab-ccline">
               กำไรสูงสุดแบบคุ้มหุ้น <strong className="pos">{usd(a.covered_call.max_profit)}</strong>
-              {" · "}จุดคุ้มทุน <strong>{usd(a.covered_call.breakeven)}</strong>
-              {" · "}ขาดทุนสูงสุด (หุ้นเหลือศูนย์) <strong className="neg">{usd(a.covered_call.max_loss)}</strong>
+              {" · "}จุดคุ้มทุน <strong ref={beRef}>{usd(a.covered_call.breakeven)}</strong>
+              {" · "}ขาดทุนสูงสุด (หุ้นเหลือศูนย์) <strong className="neg" ref={maxLossRef}>{usd(a.covered_call.max_loss)}</strong>
             </div>
           )}
         </div>
@@ -144,7 +153,7 @@ export default function OptionLab({
 
       {/* ตาราง scenario */}
       {a && (
-        <div className="lab-tablewrap">
+        <div className="lab-tablewrap" ref={scenariosRef}>
           <table className="screener-table lab-table">
             <thead><tr><th>สถานการณ์ (ราคาหุ้นตอนหมดอายุ)</th><th className="num">กำไร/ขาดทุน</th>{covered && isCall && <th className="num">แบบคุ้มหุ้น</th>}</tr></thead>
             <tbody>

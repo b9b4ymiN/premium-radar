@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { OpenOrder } from "../../types/webull";
+import { anchorId, useAgentAnchor } from "../../agent/anchors";
 import { thaiDateWithDays } from "../../lib/format";
 
 async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -48,6 +49,10 @@ export default function PortfolioPage() {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const cashRef = useAgentAnchor(anchorId("pf", "cash"), "เงินสดรวมในพอร์ต");
+  const mvRef = useAgentAnchor(anchorId("pf", "market_value"), "มูลค่าถือครองรวมในพอร์ต");
+  const plRef = useAgentAnchor(anchorId("pf", "pl"), "กำไร/ขาดทุนลอยรวมของพอร์ต");
+
   const load = useCallback(() => {
     if (!hasTauri) {
       setErr("เปิดแอปเดสก์ท็อปเพื่อดูข้อมูลพอร์ต Webull");
@@ -79,14 +84,14 @@ export default function PortfolioPage() {
 
       {b && (
         <div className="pf-summary">
-          <div className="lab-cell">
+          <div className="lab-cell" ref={cashRef}>
             <label>เงินสดรวม</label><strong>{amount(b.total_cash_balance, b.total_asset_currency)}</strong>
           </div>
-          <div className="lab-cell">
+          <div className="lab-cell" ref={mvRef}>
             <label>มูลค่าถือครอง</label><strong>{amount(b.total_market_value, b.total_asset_currency)}</strong>
             <small>ตามราคาล่าสุดของโบรกเกอร์</small>
           </div>
-          <div className="lab-cell">
+          <div className="lab-cell" ref={plRef}>
             <label>กำไร/ขาดทุนลอยรวม</label>
             <strong className={pnlClass(b.total_unrealized_profit_loss)}>
               {amount(b.total_unrealized_profit_loss, b.total_asset_currency)}
@@ -115,27 +120,7 @@ export default function PortfolioPage() {
           </thead>
           <tbody>
             {p?.positions.length ? (
-              p.positions.map((pos, i) => (
-                <tr key={i}>
-                  <td title={pos.legs.map(l => l.symbol).join(" · ")}>
-                    {pos.symbol}
-                    {pos.option_strategy && <small className="pf-strat"> {pos.option_strategy}</small>}
-                    {pos.legs.map((l, j) => (
-                      <div key={j} className="pf-leg">
-                        {l.option_type === "CALL" ? "C" : l.option_type === "PUT" ? "P" : "?"}
-                        {" "}{l.exercise_price ?? "--"} · หมดอายุ {l.expire_date ?? "--"} ×{l.quantity ?? "--"}
-                      </div>
-                    ))}
-                  </td>
-                  <td>{pos.instrument_type === "OPTION" ? "Option" : "หุ้น"}</td>
-                  <td className="num">{pos.quantity ?? "--"}</td>
-                  <td className="num">{amount(pos.cost_price, pos.currency, 4)}</td>
-                  <td className="num">{amount(pos.last_price, pos.currency, 4)}</td>
-                  <td className={`num ${pnlClass(pos.unrealized_profit_loss)}`}>
-                    {amount(pos.unrealized_profit_loss, pos.currency)}
-                  </td>
-                </tr>
-              ))
+              p.positions.map((pos, i) => <PositionRow key={i} pos={pos} />)
             ) : (
               <tr><td colSpan={6} className="pf-empty">{loading ? "กำลังโหลดสถานะถือครอง…" : p?.as_of ? "ไม่มีสถานะถือครอง" : "ไม่มีข้อมูลสถานะถือครอง"}</td></tr>
             )}
@@ -160,20 +145,8 @@ export default function PortfolioPage() {
             </thead>
             <tbody>
               {(p?.open_orders ?? []).length ? (
-                p!.open_orders!.map(order => (
-                  <tr key={`${order.combo_type ?? ""}-${order.client_order_id}`}>
-                    <td>
-                      {order.symbol ?? "--"}
-                      {order.combo_type && order.combo_type !== "NORMAL" && <small className="pf-strat"> {order.combo_type}</small>}
-                    </td>
-                    <td>{order.instrument_type === "OPTION" ? "Option" : order.instrument_type === "EQUITY" ? "หุ้น" : order.instrument_type ?? "--"}</td>
-                    <td className={order.side === "SELL" ? "pos" : order.side === "BUY" ? "neg" : ""}>{order.side === "SELL" ? "ขาย" : order.side === "BUY" ? "ซื้อ" : order.side ?? "--"}</td>
-                    <td>{[order.order_type, order.time_in_force].filter(Boolean).join(" · ") || "--"}</td>
-                    <td className="num">{order.total_quantity ?? "--"}{order.filled_quantity != null && order.filled_quantity > 0 && <small> ({order.filled_quantity})</small>}</td>
-                    <td className="num">{order.limit_price ?? "--"}</td>
-                    <td>{order.status ?? "--"}</td>
-                    <td title={order.place_time ?? undefined}>{order.place_time ? thaiDateWithDays(order.place_time.slice(0, 10)) : "--"}</td>
-                  </tr>
+                p!.open_orders!.map((order, i) => (
+                  <OrderRow key={`${order.combo_type ?? ""}-${order.client_order_id}`} order={order} n={i + 1} />
                 ))
               ) : (
                 <tr>
@@ -186,5 +159,56 @@ export default function PortfolioPage() {
       )}
       <small className="pc-note">ตัวเลขทั้งหมดรายงานโดยโบรกเกอร์ · แอปนี้ไม่มีการส่งคำสั่งซื้อขาย · กำไรลอย ≠ กำไรที่รับรอง</small>
     </div>
+  );
+}
+
+/** One position row — its own component so each row can register its own
+ *  agent anchor (hooks cannot be called inside the `.map` loop). */
+function PositionRow({ pos }: { pos: Position }) {
+  const ref = useAgentAnchor(anchorId("pos", pos.symbol), `สถานะถือครอง ${pos.symbol}`);
+  return (
+    <tr ref={ref}>
+      <td title={pos.legs.map(l => l.symbol).join(" · ")}>
+        {pos.symbol}
+        {pos.option_strategy && <small className="pf-strat"> {pos.option_strategy}</small>}
+        {pos.legs.map((l, j) => (
+          <div key={j} className="pf-leg">
+            {l.option_type === "CALL" ? "C" : l.option_type === "PUT" ? "P" : "?"}
+            {" "}{l.exercise_price ?? "--"} · หมดอายุ {l.expire_date ?? "--"} ×{l.quantity ?? "--"}
+          </div>
+        ))}
+      </td>
+      <td>{pos.instrument_type === "OPTION" ? "Option" : "หุ้น"}</td>
+      <td className="num">{pos.quantity ?? "--"}</td>
+      <td className="num">{amount(pos.cost_price, pos.currency, 4)}</td>
+      <td className="num">{amount(pos.last_price, pos.currency, 4)}</td>
+      <td className={`num ${pnlClass(pos.unrealized_profit_loss)}`}>
+        {amount(pos.unrealized_profit_loss, pos.currency)}
+      </td>
+    </tr>
+  );
+}
+
+/** One open-order row — its own component so each row can register its own
+ *  agent anchor; the anchor uses the 1-based row number, never an order id. */
+function OrderRow({ order, n }: { order: OpenOrder; n: number }) {
+  const ref = useAgentAnchor(
+    anchorId("order", String(n)),
+    `คำสั่งที่ยังทำงาน ลำดับ ${n}${order.symbol ? ` · ${order.symbol}` : ""}`,
+  );
+  return (
+    <tr ref={ref}>
+      <td>
+        {order.symbol ?? "--"}
+        {order.combo_type && order.combo_type !== "NORMAL" && <small className="pf-strat"> {order.combo_type}</small>}
+      </td>
+      <td>{order.instrument_type === "OPTION" ? "Option" : order.instrument_type === "EQUITY" ? "หุ้น" : order.instrument_type ?? "--"}</td>
+      <td className={order.side === "SELL" ? "pos" : order.side === "BUY" ? "neg" : ""}>{order.side === "SELL" ? "ขาย" : order.side === "BUY" ? "ซื้อ" : order.side ?? "--"}</td>
+      <td>{[order.order_type, order.time_in_force].filter(Boolean).join(" · ") || "--"}</td>
+      <td className="num">{order.total_quantity ?? "--"}{order.filled_quantity != null && order.filled_quantity > 0 && <small> ({order.filled_quantity})</small>}</td>
+      <td className="num">{order.limit_price ?? "--"}</td>
+      <td>{order.status ?? "--"}</td>
+      <td title={order.place_time ?? undefined}>{order.place_time ? thaiDateWithDays(order.place_time.slice(0, 10)) : "--"}</td>
+    </tr>
   );
 }

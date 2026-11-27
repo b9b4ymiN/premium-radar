@@ -5,7 +5,9 @@
  *  so a cash-short user cannot pass the gate. */
 
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import type { EasyIdea, EasyIdeas, EasyProfile } from "../types/easy";
+import { anchorId, useAgentAnchor } from "../agent/anchors";
 import { EzIcon } from "./icons";
 import { expiryTh, usd } from "./util";
 
@@ -37,6 +39,14 @@ export function Checklist(p: Props) {
   // every item must be ticked by hand; a disabled item (cash short) can never
   // count, so the ready button stays disabled until the user can actually pay
   const all = checked.every(c => c);
+  const toggle = (i: number) => setChecked(c => c.map((v, j) => (j === i ? !v : v)));
+
+  // short anchor labels, one per checklist item, naming the contract
+  const checkLabels = [
+    `เช็กข้อ 1 เข้าใจสัญญา ${d.symbol} ${o.strike}`,
+    `เช็กข้อ 2 เงินสดพอ ${d.symbol} ${o.strike}`,
+    `เช็กข้อ 3 พร้อมรับผล ${d.symbol} ${o.strike}`,
+  ];
 
   return (
     <section className="ez-screen">
@@ -45,23 +55,21 @@ export function Checklist(p: Props) {
       <p className="ez-lead">ติ๊กได้ครบเมื่อเข้าใจจริง ถ้ายังไม่แน่ใจข้อไหน ถามผู้ช่วยหรือเลือก “ยังไม่ทำ” ได้เสมอ</p>
       <div className="ez-list ez-gap-l">
         {items.map(([t, desc], i) => (
-          <button
+          <CheckItem
             key={i}
-            className="ez-check"
-            role="checkbox"
-            aria-checked={checked[i]}
-            disabled={i === 1 && !enough}
-            onClick={() => setChecked(c => c.map((v, j) => (j === i ? !v : v)))}
-          >
-            <span className="ez-box"><EzIcon name="check" /></span>
-            <span>
-              <span className="ez-t">{t}</span>
-              <span className="ez-d" style={{ display: "block" }}>
+            index={i}
+            title={t}
+            desc={
+              <>
                 {desc}
                 {i === 1 && !enough && <span className="ez-neg"> · เงินไม่พอ</span>}
-              </span>
-            </span>
-          </button>
+              </>
+            }
+            checked={checked[i]}
+            disabled={i === 1 && !enough}
+            label={checkLabels[i]}
+            onToggle={toggle}
+          />
         ))}
       </div>
       <div className="ez-actions">
@@ -69,5 +77,35 @@ export function Checklist(p: Props) {
         <button className="ez-btn ghost" onClick={p.onNotYet}>ยังไม่ทำ</button>
       </div>
     </section>
+  );
+}
+
+/** One checklist row — its own component so each item can register its own
+ *  agent anchor (hooks cannot be called inside the `.map` loop). */
+function CheckItem({ index, title, desc, checked, disabled, label, onToggle }: {
+  index: number;
+  title: string;
+  desc: ReactNode;
+  checked: boolean;
+  disabled: boolean;
+  label: string;
+  onToggle: (i: number) => void;
+}) {
+  const ref = useAgentAnchor(anchorId("check", String(index + 1)), label);
+  return (
+    <button
+      ref={ref}
+      className="ez-check"
+      role="checkbox"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onToggle(index)}
+    >
+      <span className="ez-box"><EzIcon name="check" /></span>
+      <span>
+        <span className="ez-t">{title}</span>
+        <span className="ez-d" style={{ display: "block" }}>{desc}</span>
+      </span>
+    </button>
   );
 }

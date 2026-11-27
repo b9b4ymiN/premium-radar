@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import type { EasyProfile, Stance, UniverseIdeas, UniversePick } from "../types/easy";
+import { anchorId, useAgentAnchor } from "../agent/anchors";
 import { marketClockText, usSession } from "../components/shared/usSession";
 import { EzIcon } from "./icons";
 import { asOfTh, badgeText, daysUntil, expiryTh, usd } from "./util";
@@ -198,20 +199,24 @@ function PickCard({ pick, stance, onStance, onOpen }: {
   onOpen: () => void;
 }) {
   const i = pick.idea;
+  const when = expiryTh(i.expiry).replace(/^\S+ /, "");
+  const cardRef = useAgentAnchor(anchorId("pick", i.symbol), `ไอเดีย ${i.symbol} ยอมซื้อที่ $${i.strike} (${when})`);
+  const premiumRef = useAgentAnchor(anchorId("pick", i.symbol, "premium"), `เงินที่ได้ทันที ${i.symbol} ${i.strike} (${when})`);
+  const assignRef = useAgentAnchor(anchorId("pick", i.symbol, "assign"), `โอกาสต้องซื้อหุ้น ${i.symbol} ${i.strike} (${when})`);
   return (
-    <article className={`ez-pick${pick.rank === 1 ? " top" : ""}`}>
+    <article ref={cardRef} className={`ez-pick${pick.rank === 1 ? " top" : ""}`}>
       <div className="ez-pick-head">
         <div>
           <div className="ez-what">
             {i.symbol} · ยอมซื้อที่ ${i.strike} (ถูกกว่าราคาตอนนี้ {i.below_spot_pct.toFixed(1)}%)
             {pick.rank === 1 && <span className="ez-tag">ผู้ช่วยแนะนำ</span>}
           </div>
-          <div className="ez-big ez-money ez-pos">{usd(i.credit)}</div>
+          <div ref={premiumRef} className="ez-big ez-money ez-pos">{usd(i.credit)}</div>
           <div className="ez-sub">
             รับเงินตอนนี้ · กันเงินไว้ {usd(i.cost)} · รอ {i.days} วัน ถึง{expiryTh(i.expiry)}
           </div>
         </div>
-        <span className={`ez-chance ${i.warn ? "warn" : ""}`}>
+        <span ref={assignRef} className={`ez-chance ${i.warn ? "warn" : ""}`}>
           {i.warn && <EzIcon name="alert" className="ez-warn" />}โอกาสต้องซื้อหุ้น {Math.round(i.assign_pct)}%
         </span>
       </div>
