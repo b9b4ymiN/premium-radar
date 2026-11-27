@@ -21,6 +21,7 @@ use crate::settings::AppSettings;
 pub mod ideas;
 pub mod market;
 pub mod mine;
+pub mod present;
 pub mod ui;
 
 /// Everything a tool executor may read. `settings` is a snapshot taken when
@@ -48,6 +49,9 @@ pub struct ToolCtx {
 pub fn dispatch(ctx: &ToolCtx, spec: &ToolSpec, args: &Value) -> Result<String, String> {
     let name = spec.name.as_str();
     if let Some(result) = ui::execute(ctx, name, args) {
+        return result;
+    }
+    if let Some(result) = present::execute(ctx, name, args) {
         return result;
     }
     if let Some(result) = market::execute(ctx, name, args) {

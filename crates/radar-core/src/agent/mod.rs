@@ -3,6 +3,7 @@
 
 pub mod contract;
 pub mod grounding;
+pub mod prompts;
 pub mod registry;
 pub mod runner;
 pub mod tools;

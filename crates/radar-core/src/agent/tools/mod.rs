@@ -6,6 +6,7 @@ pub mod ideas;
 pub mod market;
 pub mod mine;
 pub mod playbook;
+pub mod present;
 pub mod screener;
 pub mod ui;
 

@@ -28,7 +28,7 @@ pub struct AgentAskInput {
 /// failure is a programming bug (bad or duplicate spec name), so it
 /// surfaces as the command's Err — never a panic.
 pub fn build_registry() -> Result<Registry, String> {
-    use radar_core::agent::tools::{ideas, market, mine, playbook, screener, ui};
+    use radar_core::agent::tools::{ideas, market, mine, playbook, present, screener, ui};
     let mut registry = Registry::new();
     let families = [
         screener::screener_specs(),
@@ -37,6 +37,7 @@ pub fn build_registry() -> Result<Registry, String> {
         mine::specs(),
         playbook::specs(),
         ui::specs(),
+        present::specs(),
     ];
     for spec in families.into_iter().flatten() {
         registry.register(spec)?;
@@ -163,7 +164,7 @@ pub async fn agent_ask(
     };
     let req = AgentRequest {
         mode,
-        system_prompt: radar_core::copilot::system_prompt(),
+        system_prompt: radar_core::agent::prompts::system_prompt(mode),
         history: input.messages,
         screen_context: req_screen_context,
     };
