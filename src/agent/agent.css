@@ -1,0 +1,101 @@
+/* Agent pointing effects (W6 P3-T3). Hand-drawn circle/underline/highlight/
+   box come from rough-notation; this file is the CSS half: blink, pulse,
+   spotlight, bubble. The step color arrives as the inline --agent-mark var
+   (resolved from tokens.css by point.ts), so a future theme only needs to
+   keep defining --accent / --amber / --red for every effect to follow it. */
+
+.agent-mark {
+  outline: 3px solid var(--agent-mark, var(--accent, #4b8cf7));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Blinks the outline only — the element's own text never flickers. After 3
+   iterations the animation drops back to the static outline above. */
+.agent-blink {
+  animation: agent-blink 0.42s ease-in-out 3;
+}
+
+@keyframes agent-blink {
+  50% {
+    outline-color: transparent;
+  }
+}
+
+.agent-pulse-ring {
+  position: fixed;
+  z-index: 79;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 3px solid var(--agent-mark, var(--accent, #4b8cf7));
+  border-radius: 8px;
+}
+
+/* Rests on the static ring once the 3 pulses finish (no fill-mode). */
+.agent-pulse-ring.agent-anim {
+  transform-origin: center;
+  animation: agent-pulse 0.9s ease-out 3;
+}
+
+@keyframes agent-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  70%,
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+/* Spotlight = a transparent hole laid over the target; the huge box-shadow
+   dims everything else. Fixed + pointer-events:none, so scrolling and clicks
+   pass straight through to the app underneath. */
+.agent-spotlight-overlay {
+  position: fixed;
+  z-index: 78;
+  pointer-events: none;
+  box-sizing: border-box;
+  border-radius: 6px;
+  box-shadow: 0 0 0 200vmax rgba(5, 8, 13, 0.62);
+  animation: agent-fade-in 0.18s ease-out;
+}
+
+.agent-bubble {
+  position: fixed;
+  z-index: 90;
+  pointer-events: none;
+  box-sizing: border-box;
+  max-width: min(300px, calc(100vw - 24px));
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong, #384251);
+  border-left: 3px solid var(--agent-mark, var(--accent, #4b8cf7));
+  background: var(--surface2, #171c24);
+  color: var(--text, #f0f3f8);
+  font-family: var(--sans, "Noto Sans Thai", sans-serif);
+  font-size: 12.5px;
+  line-height: 1.5;
+  font-weight: 500;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  animation: agent-fade-in 0.18s ease-out;
+}
+
+@keyframes agent-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-blink,
+  .agent-pulse-ring.agent-anim,
+  .agent-spotlight-overlay,
+  .agent-bubble {
+    animation: none;
+  }
+}
