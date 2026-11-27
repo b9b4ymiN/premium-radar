@@ -10,8 +10,9 @@ import remarkGfm from "remark-gfm";
 import { ForgeBird } from "../components/RadarAssistant/ForgeBird";
 import { getAnchorElement } from "./anchors";
 import { cancelAgent, registerUiHandler, runAgentTurn, type ChatMessage } from "./bus";
+import { IdeaCard } from "./IdeaCard";
 import { point } from "./point";
-import type { AgentEvent } from "./types";
+import type { AgentEvent, IdeaCardData } from "./types";
 import "./agent.css";
 
 interface Props {
@@ -37,6 +38,7 @@ const TOOL_LABELS: Record<string, string> = {
   ui_go: "พาไปหน้าจอ",
   ui_select: "เลือกสัญญา",
   ui_point: "ชี้บนจอ",
+  present_idea: "สรุปคำแนะนำ",
 };
 
 interface TimelineStep {
@@ -51,6 +53,8 @@ interface TurnItem {
   question: string;
   steps: TimelineStep[];
   collapsed: boolean;
+  /** The recommendation card `present_idea` attached to this turn. */
+  card: IdeaCardData | null;
   answer: { text: string; unverified: boolean; ungrounded: string[] } | null;
   error: string | null;
   cancelled: boolean;
@@ -155,7 +159,18 @@ export function AgentPanel(p: Props) {
     : null;
   const finishedCount = turns.filter(t => t.answer || t.error || t.cancelled).length;
 
-  // the panel owns pointing for whichever mode it is mounted in
+  // the panel owns pointing and the recommendation card for whichever mode it
+  // is mounted in; the card handler attaches it to the turn that asked for it
+  // (the running turn, or the newest one as a fallback)
+  useEffect(() => registerUiHandler("card", a => {
+    setTurns(prev => {
+      if (prev.length === 0) return prev;
+      const running = prev.findIndex(t => t.running);
+      const target = running === -1 ? prev.length - 1 : running;
+      return prev.map((t, i) => (i === target ? { ...t, card: a.card } : t));
+    });
+    return { ok: true };
+  }), []);
   useEffect(() => registerUiHandler("point", a => point(a.steps, getAnchorElement)), []);
 
   useEffect(() => {
@@ -197,6 +212,7 @@ export function AgentPanel(p: Props) {
       question: q,
       steps: [],
       collapsed: false,
+      card: null,
       answer: null,
       error: null,
       cancelled: false,
@@ -336,6 +352,7 @@ export function AgentPanel(p: Props) {
                         )}
                       </>
                     )}
+                    {t.card && <IdeaCard card={t.card} mode={p.mode} />}
                     {t.answer && (
                       <div className="bubble assistant">
                         <Markdown remarkPlugins={[remarkGfm]}>{t.answer.text}</Markdown>
