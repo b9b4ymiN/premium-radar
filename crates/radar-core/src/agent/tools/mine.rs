@@ -72,6 +72,39 @@ pub fn specs() -> Vec<ToolSpec> {
             timeout_ms: 20000,
             webull_cost: 1,
         },
+        ToolSpec {
+            name: "save_watchlist".into(),
+            tier: Tier::WriteLocal,
+            modes: vec![Mode::Pro],
+            description: "เพิ่มหรือเอาหุ้นออกจากลิสต์ของแอปเอง (local watchlist) — ก่อนทำแอปจะโชว์การ์ดให้ผู้ใช้กด 'อนุญาต' หรือ 'ไม่' เสมอ และรอผู้ใช้ได้สูงสุด 2 นาที ถ้าผู้ใช้กด 'ไม่' ถือว่าปฏิเสธแล้ว ห้ามขอซ้ำในคำถามเดียวกัน การแก้ครั้งนี้เปลี่ยนเฉพาะลิสต์ที่เก็บไว้ในแอป ไม่ได้ซื้อขายหุ้น ไม่ได้แตะบัญชี และไม่ได้แก้ watchlist ของโบรกเกอร์\nใช้เมื่อ: ผู้ใช้ขอให้เพิ่ม/ลบหุ้นในลิสต์ของแอปเอง — แอปจะถามผู้ใช้ให้กดอนุญาตก่อนเสมอ ถ้าไม่แน่ใจชื่อลิสต์ให้เรียก my_watchlists ดูก่อน\nไม่ใช้เมื่อ: ผู้ใช้ไม่ได้ขอ — ห้ามเพิ่มเอง หรือผู้ใช้ขอแก้ watchlist ของโบรกเกอร์ (แอปทำไม่ได้ ให้แจ้งผู้ใช้)".into(),
+            examples: vec![
+                json!({"action": "add", "symbol": "VLO"}),
+                json!({"action": "remove", "symbol": "TSLA", "list": "เทรดสั้น"}),
+            ],
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["add", "remove"],
+                        "description": "add = เพิ่มหุ้นเข้าลิสต์, remove = เอาหุ้นออกจากลิสต์"
+                    },
+                    "symbol": {
+                        "type": "string",
+                        "description": "รหัสหุ้น (ticker) เช่น NVDA หรือ BRK.B"
+                    },
+                    "list": {
+                        "type": "string",
+                        "description": "ชื่อลิสต์ — ไม่ระบุ = ลิสต์ที่กำลังใช้อยู่ ดูชื่อที่มีทั้งหมดได้จาก my_watchlists"
+                    }
+                },
+                "required": ["action", "symbol"],
+                "additionalProperties": false
+            }),
+            // 125 วินาที = รอผู้ใช้กดอนุญาตบนการ์ด 120 วินาที + เผื่อเขียนไฟล์
+            timeout_ms: 125000,
+            webull_cost: 0,
+        },
     ]
 }
 
@@ -397,6 +430,32 @@ pub fn summarize_watchlists(
     Value::Object(m)
 }
 
+// ---------- save_watchlist confirm card ----------
+
+/// ข้อความการ์ดยืนยันก่อนแก้ลิสต์: `(title, detail)` ภาษาไทยตรงๆ บอกชัดว่า
+/// แก้เฉพาะลิสต์ของแอปเอง ไม่แตะบัญชีหรือ watchlist ของโบรกเกอร์ — registry
+/// ล็อก `action` อยู่ใน enum แล้ว ที่นี่จึงแยกแค่กริยา เพิ่ม/เอาออก
+pub fn confirm_text(action: &str, symbol: &str, list_name: &str) -> (String, String) {
+    let symbol = symbol.trim();
+    let list_name = list_name.trim();
+    match action {
+        "remove" => (
+            format!("เอา {symbol} ออกจากลิสต์ '{list_name}'?"),
+            format!(
+                "จะเอาหุ้น {symbol} ออกจากลิสต์ '{list_name}' ที่เก็บไว้ในแอปนี้เท่านั้น \
+                 ไม่ได้ขายหุ้น ไม่ได้แก้อะไรในบัญชี และไม่ได้แก้ watchlist ของโบรกเกอร์"
+            ),
+        ),
+        _ => (
+            format!("เพิ่ม {symbol} เข้าลิสต์ '{list_name}'?"),
+            format!(
+                "จะเพิ่มหุ้น {symbol} เข้าลิสต์ '{list_name}' ของแอปนี้เท่านั้น \
+                 ไม่ได้ซื้อหุ้น ไม่ได้แก้อะไรในบัญชี และไม่ได้แก้ watchlist ของโบรกเกอร์"
+            ),
+        ),
+    }
+}
+
 // ---------- shared number formatting ----------
 
 /// Round to 2 decimals and emit whole numbers without a trailing `.0` so
@@ -545,11 +604,10 @@ mod tests {
     }
 
     #[test]
-    fn three_specs_follow_the_tool_conventions() {
+    fn four_specs_follow_the_tool_conventions() {
         let specs = specs();
-        assert_eq!(specs.len(), 3);
+        assert_eq!(specs.len(), 4);
         for spec in &specs {
-            assert_eq!(spec.tier, Tier::Read);
             assert!(
                 spec.description.contains("ใช้เมื่อ:"),
                 "{}: {}",
@@ -577,6 +635,7 @@ mod tests {
             );
         }
         let portfolio = spec(&specs, "my_portfolio");
+        assert_eq!(portfolio.tier, Tier::Read);
         assert_eq!(portfolio.modes, vec![Mode::Easy, Mode::Pro]);
         assert_eq!(
             portfolio.webull_cost, 4,
@@ -584,13 +643,29 @@ mod tests {
         );
         assert_eq!(portfolio.timeout_ms, 20000);
         let profile = spec(&specs, "my_profile");
+        assert_eq!(profile.tier, Tier::Read);
         assert_eq!(profile.modes, vec![Mode::Easy, Mode::Pro]);
         assert_eq!(profile.webull_cost, 0);
         assert_eq!(profile.timeout_ms, 5000);
         let watchlists = spec(&specs, "my_watchlists");
+        assert_eq!(watchlists.tier, Tier::Read);
         assert_eq!(watchlists.modes, vec![Mode::Pro]);
         assert_eq!(watchlists.webull_cost, 1);
         assert_eq!(watchlists.timeout_ms, 20000);
+        // the first local write: gated by a user confirm, never a broker call
+        let save = spec(&specs, "save_watchlist");
+        assert_eq!(save.tier, Tier::WriteLocal);
+        assert_eq!(save.modes, vec![Mode::Pro]);
+        assert_eq!(save.webull_cost, 0);
+        assert_eq!(
+            save.timeout_ms, 125000,
+            "120 s human wait + headroom for the file write"
+        );
+        assert_eq!(
+            save.parameters["properties"]["action"]["enum"],
+            json!(["add", "remove"])
+        );
+        assert_eq!(save.parameters["required"], json!(["action", "symbol"]));
     }
 
     #[test]
@@ -638,13 +713,39 @@ mod tests {
             "my_profile",
             "my_watchlists",
             "read_playbook",
+            "save_watchlist",
         ] {
             assert!(pro.contains(&visible), "pro hides {visible}");
         }
+        assert!(
+            !easy.contains(&"save_watchlist"),
+            "save_watchlist is pro-only"
+        );
         let err = reg
             .validate("my_watchlists", Mode::Easy, "{}")
             .expect_err("pro-only tool must be rejected in easy");
         assert_eq!(err.code, crate::agent::ToolErrorCode::NotInMode);
+    }
+
+    #[test]
+    fn confirm_text_names_symbol_list_and_scopes_to_the_app() {
+        let (title, detail) = confirm_text("add", "VLO", "หลัก");
+        assert_eq!(title, "เพิ่ม VLO เข้าลิสต์ 'หลัก'?");
+        assert!(detail.contains("VLO"));
+        assert!(detail.contains("ลิสต์ 'หลัก'"));
+        assert!(detail.contains("ไม่ได้ซื้อหุ้น"), "detail: {detail}");
+        assert!(
+            detail.contains("ไม่ได้แก้ watchlist ของโบรกเกอร์"),
+            "detail: {detail}"
+        );
+
+        let (title, detail) = confirm_text("remove", "TSLA", "เทรดสั้น");
+        assert_eq!(title, "เอา TSLA ออกจากลิสต์ 'เทรดสั้น'?");
+        assert!(detail.contains("ไม่ได้ขายหุ้น"), "detail: {detail}");
+        assert!(
+            detail.contains("ไม่ได้แก้ watchlist ของโบรกเกอร์"),
+            "detail: {detail}"
+        );
     }
 
     /// The security rule: the executor holds an AccountInfo (used only to
