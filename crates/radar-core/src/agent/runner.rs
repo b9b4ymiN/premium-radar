@@ -1,13 +1,11 @@
-//! Agent runner loop — the copilot loop's replacement for the agent.
-//!
-//! Differences from `copilot::chat_with_tool_runner`: tools come from the
-//! mode-aware [`Registry`] (defs + argument validation with Thai
-//! how-to-fix errors), one model reply may carry several `tool_calls`,
-//! typed [`AgentEvent`]s stream out through a callback, call/cost/round
-//! budgets are enforced, repeated identical calls are answered from
-//! cache, and a cancel flag stops the loop before any further HTTP.
-//! The executor is the only place caller locks may live — nothing is
-//! held across an LLM round-trip (same contract as the copilot loop).
+//! Agent runner loop — the app's single LLM conversation loop (it replaced
+//! the retired copilot chat). Tools come from the mode-aware [`Registry`]
+//! (defs + argument validation with Thai how-to-fix errors), one model
+//! reply may carry several `tool_calls`, typed [`AgentEvent`]s stream out
+//! through a callback, call/cost/round budgets are enforced, repeated
+//! identical calls are answered from cache, and a cancel flag stops the
+//! loop before any further HTTP. The executor is the only place caller
+//! locks may live — nothing is held across an LLM round-trip.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -215,9 +213,9 @@ fn build_messages(req: &AgentRequest) -> Vec<ChatMessage> {
     messages
 }
 
-/// Request body with the same shape as `copilot::build_request`, but the
-/// tool list is a parameter (`None` = the final no-tools request) and
-/// `max_tokens` only appears when configured.
+/// OpenAI-compatible chat completion request body; the tool list is a
+/// parameter (`None` = the final no-tools request) and `max_tokens` only
+/// appears when configured.
 #[cfg(any(test, feature = "client"))]
 fn build_request_body(
     config: &LlmConfig,
@@ -547,7 +545,7 @@ pub fn run_agent(
         };
 
         // No caller lock is held across this request: the only lock site
-        // is the executor above (same contract as `chat_with_tool_runner`).
+        // is the executor above.
         let response = http
             .post(config.chat_url())
             .bearer_auth(&config.api_key)

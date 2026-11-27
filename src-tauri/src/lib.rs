@@ -1546,30 +1546,6 @@ fn lab_predictions(state: tauri::State<'_, AppState>) -> Result<Vec<serde_json::
         .collect())
 }
 
-/// Ask the AI copilot a question, grounded in the live engine data via
-/// function calling (top_candidates / contract_detail / chain_stats).
-#[tauri::command]
-async fn ask_copilot(
-    state: tauri::State<'_, AppState>,
-    messages: Vec<radar_core::copilot::ChatMessage>,
-) -> Result<String, String> {
-    let cfg = lock(&state.settings)
-        .llm_config()
-        .ok_or("ยังไม่ได้ตั้งค่า AI — เปิดหน้า Setup (ไอคอน ⚙) เพื่อใส่ LLM")?;
-    // the model call takes seconds to a minute — off the UI thread. The
-    // engine lock is taken only while a tool executes inside the runner and
-    // released before each LLM HTTP round-trip, so `get_snapshot` polling
-    // and the scan worker never block on a slow answer.
-    let engine = state.engine.clone();
-    off_ui_thread(move || {
-        radar_core::copilot::chat_with_tool_runner(&cfg, &messages, &mut |name, arguments| {
-            let mut engine = lock(&engine);
-            radar_core::copilot::execute_tool(name, arguments, &mut engine)
-        })
-    })
-    .await
-}
-
 /// Probe the LLM endpoint with either the given values (setup screen,
 /// unsaved) or the stored settings — one tiny chat completion.
 #[tauri::command]
@@ -2356,7 +2332,6 @@ pub fn run() {
             lab_analyze,
             lab_freeze_prediction,
             lab_predictions,
-            ask_copilot,
             agent_cmd::agent_ask,
             agent_cmd::agent_cancel,
             agent_cmd::agent_ui_result,
