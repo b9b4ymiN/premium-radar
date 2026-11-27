@@ -8,6 +8,7 @@ import type {
   EasyIdeas,
   EasyProfile,
   IdeaLevel,
+  ModeCount,
   OiContext,
   ScoreParts,
   UniverseIdeas,
@@ -285,6 +286,13 @@ export function sampleUniverse(profile: EasyProfile): UniverseIdeas {
   ];
 
   const cheapest = Math.min(...picks.map(p => p.idea.cost));
+  // mode_counts mirror the Rust rule on the sample picks: cap 15/25/30 per
+  // risk, affordability first — so the preview's mode buttons count live
+  const modeCounts: ModeCount[] = ([1, 2, 3] as const).map(risk => {
+    const cap = [0, 15, 25, 30][risk];
+    const passing = picks.filter(p => p.idea.cost <= profile.cash && p.idea.assign_pct <= cap);
+    return { risk, picks: Math.min(3, passing.length), candidate_symbols: passing.length };
+  });
   // "เงินที่ต้องมี" demo rows — same shape/wording the Rust command returns
   const watchCash: WatchCash[] = [
     {
@@ -312,8 +320,10 @@ export function sampleUniverse(profile: EasyProfile): UniverseIdeas {
       source: "DEMO",
       scanned_symbols: 104,
       candidate_symbols: 12,
+      mode_counts: modeCounts,
       market_note_th: marketNote,
       picks: [],
+      near_misses: [],
       budget_short: {
         min_cash_usd: cheapest,
         cheapest_symbol: cheapestSym,
@@ -339,8 +349,10 @@ export function sampleUniverse(profile: EasyProfile): UniverseIdeas {
     source: "DEMO",
     scanned_symbols: 104,
     candidate_symbols: 12,
+    mode_counts: modeCounts,
     market_note_th: marketNote,
     picks: fit,
+    near_misses: [],
     budget_short: null,
     watch_cash: watchCash,
     agent_say_th,

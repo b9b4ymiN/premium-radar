@@ -224,10 +224,18 @@ pub fn source_token(src: &str) -> &'static str {
 
 // ---------- selection ----------
 
-/// Comfort cap on assign_pct: "want" ⇒ risk×10+5 % (15/25/35), "avoid" ⇒ 15 %.
+/// Comfort cap on assign_pct, %: "avoid" stays 15 whatever the risk; "want"
+/// scales 15 / 25 / 30 with the saved risk. Practitioners selling
+/// cash-secured puts mostly work around delta 16–30 at 30–45 DTE (delta ≈
+/// chance of being assigned), so risk 3 stops at 30% to stay inside that
+/// range — the old risk×10+5 ladder let it reach 35%.
 pub fn comfort_cap(stance: Stance, risk: u8) -> f64 {
     match stance {
-        Stance::Want => f64::from(risk.clamp(1, 3)) * 10.0 + 5.0,
+        Stance::Want => match risk.clamp(1, 3) {
+            1 => 15.0,
+            2 => 25.0,
+            _ => 30.0,
+        },
         Stance::Avoid => 15.0,
     }
 }
@@ -714,9 +722,10 @@ mod tests {
         let rows = vec![
             put_row(150.0, 0.05, 0.98, 55.0, Some(3.0)),
             put_row(160.0, 0.20, 0.81, 175.0, Some(10.0)),
-            put_row(165.0, 0.33, 0.69, 260.0, Some(16.0)),
+            put_row(165.0, 0.29, 0.69, 260.0, Some(16.0)),
         ];
-        // want: cap = risk×10+5 ⇒ 15/25/35
+        // want: cap 15/25/30 (risk 3 capped at 30 to stay inside the
+        // practitioner delta ≈16–30 range; the old ladder reached 35)
         let want = |risk: u8| build(&rows, &profile(20_000.0, risk, Stance::Want));
         assert!(find(&want(1), IdeaLevel::Safe).recommended);
         assert!(!find(&want(1), IdeaLevel::Balanced).recommended);
@@ -724,7 +733,8 @@ mod tests {
             find(&want(2), IdeaLevel::Balanced).recommended,
             "assign 20 ≤ cap 25 beats safe"
         );
-        assert!(find(&want(3), IdeaLevel::High).recommended);
+        assert!(!find(&want(2), IdeaLevel::High).recommended, "29 > 25");
+        assert!(find(&want(3), IdeaLevel::High).recommended, "29 ≤ cap 30");
         // avoid: cap 15 regardless of risk
         let avoid = build(&rows, &profile(20_000.0, 3, Stance::Avoid));
         assert!(find(&avoid, IdeaLevel::Safe).recommended);
