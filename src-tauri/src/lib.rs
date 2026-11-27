@@ -4,6 +4,7 @@
 use std::sync::Mutex;
 
 use chrono::Utc;
+pub mod agent_cmd;
 pub mod easy_universe;
 pub mod recorder_api;
 pub mod scan;
@@ -30,6 +31,9 @@ pub struct AppState {
     /// native; `save_credentials` picks it up (typed > pending > saved) and
     /// clears it once the save commits.
     pub pending_token: Mutex<Option<String>>,
+    /// One agent run at a time plus the shared stop flag (`agent_ask` /
+    /// `agent_cancel`).
+    pub agent: agent_cmd::AgentControl,
 }
 
 // ---------- Tauri commands ----------
@@ -2132,6 +2136,7 @@ mod tests {
             scan: ScanControl::default(),
             app_data_dir: String::new(),
             pending_token: Mutex::new(None),
+            agent: agent_cmd::AgentControl::new(),
         };
         let lock = &state.settings;
         std::thread::scope(|scope| {
@@ -2306,6 +2311,7 @@ pub fn run() {
             scan: ScanControl::default(),
             app_data_dir,
             pending_token: Mutex::new(None),
+            agent: agent_cmd::AgentControl::new(),
         })
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
@@ -2339,6 +2345,8 @@ pub fn run() {
             lab_freeze_prediction,
             lab_predictions,
             ask_copilot,
+            agent_cmd::agent_ask,
+            agent_cmd::agent_cancel,
             test_llm,
             save_lab_source,
             recorder_test_connection,
