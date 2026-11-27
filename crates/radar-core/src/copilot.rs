@@ -365,7 +365,7 @@ pub fn execute_tool(name: &str, arguments: &str, engine: &mut Engine) -> String 
                         "dte": r.dte,
                         "grade": r.grade.map(|g| g.as_str()),
                         "premium_usd": r.credit,
-                        "annualized_pct": r.ann.map(|v| v * 100.0),
+                        "annualized_pct": r.ann, // already a percentage (screener.rs)
                         "pop_pct": r.pop.map(|v| v * 100.0),
                         "p_itm_pct": r.p_itm.map(|v| v * 100.0),
                         "cushion_pct": r.cushion,
