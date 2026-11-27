@@ -6,6 +6,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { EasyIdea } from "../types/easy";
+import { anchorId, useAgentAnchor } from "../agent/anchors";
+import { useWhatIfRequest } from "../agent/requests";
 import { expiryTh, signed, usd } from "./util";
 
 const MIN = -40;
@@ -22,6 +24,16 @@ export function WhatIf({ idea, spot, symbol }: Props) {
   const [display, setDisplay] = useState<number | null>(null);
   const shownRef = useRef<number | null>(null);
   const raf = useRef(0);
+
+  const priceRef = useAgentAnchor(anchorId("whatif", "price"), `สไลเดอร์ลองราคา ${symbol} วันหมดอายุ`);
+  const resultRef = useAgentAnchor(anchorId("whatif", "result"), `ผลลัพธ์ลองราคา ${symbol} ${idea.strike}`);
+
+  // the agent asks for a concrete expiry price; the slider works in % of
+  // today's spot, so convert and clamp into its allowed range (step 1)
+  useWhatIfRequest(idea.occ, price => {
+    const pct = (price / spot - 1) * 100;
+    setChg(Math.round(Math.max(MIN, Math.min(MAX, pct))));
+  });
 
   const toPos = (px: number) => ((px / spot - 1) * 100 - MIN) / (MAX - MIN) * 100;
   const price = spot * (1 + chg / 100);
@@ -79,6 +91,7 @@ export function WhatIf({ idea, spot, symbol }: Props) {
         <span className="ez-tick" style={{ left: `${k}%` }} />
         <span className="ez-tick-label" style={{ left: `${k}%` }}>ต่ำกว่า ${idea.strike} ต้องซื้อหุ้น</span>
         <input
+          ref={priceRef}
           type="range"
           min={MIN}
           max={MAX}
@@ -93,7 +106,7 @@ export function WhatIf({ idea, spot, symbol }: Props) {
         <span style={{ left: `${toPos(spot)}%` }}>เท่าวันนี้</span>
         <span style={{ left: "100%" }}>ขึ้น 25%</span>
       </div>
-      <div className="ez-outcome">
+      <div className="ez-outcome" ref={resultRef}>
         <div className={`ez-money ${price >= idea.strike ? "ez-pos" : money >= 0 ? "ez-warn" : "ez-neg"}`}>
           {display == null ? signed(money) : signed(display)}
         </div>

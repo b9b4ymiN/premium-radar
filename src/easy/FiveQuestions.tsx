@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import type { EasyIdea, EasyIdeas, EasyProfile } from "../types/easy";
+import { anchorId, useAgentAnchor } from "../agent/anchors";
 import { EzIcon } from "./icons";
 import { WhatIf } from "./WhatIf";
 import { LEVEL_TH, badgeText, expiryTh, signed, usd } from "./util";
@@ -36,6 +37,14 @@ export function FiveQuestions(p: Props) {
 
   const [thread, setThread] = useState<Array<{ q: string; a: string; sample: boolean }>>([]);
   const [busy, setBusy] = useState(false);
+
+  // one anchor per answer block, in the fixed order of the five questions
+  const when = expiryTh(o.expiry).replace(/^\S+ /, "");
+  const q1Ref = useAgentAnchor(anchorId("five", o.occ, "q1"), `ได้เงินเท่าไร ${o.symbol} ${o.strike} (${when})`);
+  const q2Ref = useAgentAnchor(anchorId("five", o.occ, "q2"), `แลกกับอะไร ${o.symbol} ${o.strike} (${when})`);
+  const q3Ref = useAgentAnchor(anchorId("five", o.occ, "q3"), `โอกาสแค่ไหน ${o.symbol} ${o.strike} (${when})`);
+  const q4Ref = useAgentAnchor(anchorId("five", o.occ, "q4"), `ทำไมช่วงนี้ ${o.symbol} ${o.strike} (${when})`);
+  const q5Ref = useAgentAnchor(anchorId("five", o.occ, "q5"), `แย่สุดคืออะไร ${o.symbol} ${o.strike} (${when})`);
 
   const ask = async (q: string) => {
     if (busy) return;
@@ -70,14 +79,14 @@ export function FiveQuestions(p: Props) {
       </p>
 
       <div className="ez-panel ez-gap-l" style={{ paddingTop: 8 }}>
-        <div className="ez-q5">
+        <div className="ez-q5" ref={q1Ref}>
           <h2>ได้เงินเท่าไร</h2>
           <div className="ez-ans">
             <span className="ez-money ez-pos">{usd(o.credit)} ทันที</span>
             เงินเข้าบัญชีวันนี้ และเป็นของคุณไม่ว่าจะเกิดอะไรขึ้น คิดเป็น {o.period_pct.toFixed(2)}% ของเงินที่กันไว้ ใน {o.days} วัน
           </div>
         </div>
-        <div className="ez-q5">
+        <div className="ez-q5" ref={q2Ref}>
           <h2>แลกกับอะไร</h2>
           <div
             className="ez-ans"
@@ -86,7 +95,7 @@ export function FiveQuestions(p: Props) {
             }}
           />
         </div>
-        <div className="ez-q5">
+        <div className="ez-q5" ref={q3Ref}>
           <h2>โอกาสแค่ไหน</h2>
           <div className="ez-ans">
             <div className="ez-cases">
@@ -108,11 +117,11 @@ export function FiveQuestions(p: Props) {
             </div>
           </div>
         </div>
-        <div className="ez-q5">
+        <div className="ez-q5" ref={q4Ref}>
           <h2>ทำไมช่วงนี้น่าทำ</h2>
           <div className="ez-ans" dangerouslySetInnerHTML={{ __html: d.why_now.text_th }} />
         </div>
-        <div className="ez-q5">
+        <div className="ez-q5" ref={q5Ref}>
           <h2>แย่สุดคืออะไร</h2>
           <div
             className="ez-ans"
